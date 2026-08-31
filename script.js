@@ -80,6 +80,25 @@ const STUDENTS = [
    sem o seletor de irmãos e sem a aba financeira. */
 const ALUNO_LOGADO = STUDENTS[1];
 
+/* Dados do acesso demonstrativo do responsável. */
+const RESPONSAVEL_LOGADO = { name: "Mariana Souza" };
+
+const PROFESSOR_LOGADO = { name: "Carlos Mendes", disciplina: "Inglês e Recreação" };
+const PROFESSOR_TURMAS = [
+  {
+    id: "5b", nome: "Inglês — Básico", horario: "13:30 – 14:20", sala: "Sala 5", escola: "Salto do Lontra", disciplina: "Inglês",
+    alunos: ["Ana Beatriz Souza", "Bruno Oliveira", "Clara Martins", "Davi Costa", "Elisa Rocha"],
+  },
+  {
+    id: "6a", nome: "Recreação — Turma A", horario: "14:30 – 15:20", sala: "Pátio", escola: "Nova Prata do Iguaçu", disciplina: "Recreação",
+    alunos: ["Felipe Lima", "Giovana Alves", "Henrique Santos", "Isabela Melo", "João Pedro"],
+  },
+  {
+    id: "7c", nome: "Inglês — Intermediário", horario: "16:00 – 16:50", sala: "Sala 10", escola: "Salto do Lontra", disciplina: "Inglês",
+    alunos: ["Larissa Freitas", "Mateus Silva", "Nicolas Ramos", "Olivia Barros", "Pedro Henrique"],
+  },
+];
+
 /* ================================================================== */
 /* Mock data — escolas (institucional)                                  */
 /* ================================================================== */
@@ -183,6 +202,8 @@ const ICONS = {
   search: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>`,
   trendUp: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="m3 17 6-6 4 4 8-8"/><path d="M17 7h4v4"/></svg>`,
   trendDown: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="m3 7 6 6 4-4 8 8"/><path d="M17 17h4v-4"/></svg>`,
+  menu: `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>`,
+  close: `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18"/></svg>`,
 };
 
 function markSvg(size){
@@ -208,9 +229,46 @@ const state = {
   escolaId: null,          // "salto" | "novaprata"
   instTab: "turmas",
   alunosBusca: "",
+  professorTab: "aulas",
+  professorTurmaId: null,
+  professorPresencas: {},
+  professorObservacoes: {},
+  professorConteudo: "",
+  professorNotas: {},
+  professorAvisoEnviado: "",
+  professorRegistroSalvo: false,
+  professorNotasSalvas: false,
+  mobileMenuOpen: false,
+  instituicaoMensagem: "",
 };
 
 const app = document.getElementById("app");
+
+function greeting(name){
+  const hour = new Date().getHours();
+  const period = hour < 12 ? "Bom dia" : hour < 18 ? "Boa tarde" : "Boa noite";
+  return `${period}, ${name.split(" ")[0]}!`;
+}
+
+function classStatus(){
+  const hour = new Date().getHours();
+  if(hour < 14) return { label: "Programação de hoje", message: "Sua aula de Inglês começa às 14h.", tone: "gold" };
+  if(hour < 15) return { label: "Atividade em andamento", message: "Sua aula de Inglês está acontecendo agora.", tone: "green" };
+  if(hour < 16) return { label: "Atividade em andamento", message: "Sua atividade de Recreação está acontecendo agora.", tone: "green" };
+  return { label: "Programação de hoje", message: "Confira seu calendário para as próximas atividades.", tone: "gold" };
+}
+
+function classStatusCard(student, forFamily = false){
+  const status = classStatus();
+  return `
+    <section class="course-agenda">
+      <div class="course-agenda-head">
+        <div><div class="course-agenda-label">${forFamily ? `Atividades de ${student.name.split(" ")[0]}` : "Minhas atividades de hoje"}</div><div class="course-agenda-subtitle">Inglês e Recreação</div></div>
+        <span class="course-live ${status.tone === "green" ? "active" : ""}">${status.tone === "green" ? (forFamily ? "Presente agora" : "Em andamento") : "Agenda do dia"}</span>
+      </div>
+      <div class="course-agenda-items"><div><strong>Inglês</strong><span>14:00 – 15:00</span></div><div><strong>Recreação</strong><span>15:00 – 16:00</span></div></div>
+    </section>`;
+}
 
 function render(){
   if(state.screen === "login") app.innerHTML = renderLogin();
@@ -219,30 +277,8 @@ function render(){
   else if(state.screen === "aluno") app.innerHTML = renderAluno();
   else if(state.screen === "familia") app.innerHTML = renderFamilia();
   else if(state.screen === "instituicao") app.innerHTML = renderInstituicao();
+  else if(state.screen === "professor") app.innerHTML = renderProfessor();
   bindEvents();
-}
-
-/* ---------------- LOGIN ---------------- */
-function renderLogin(){
-  return `
-  <div class="screen">
-    <div class="login-box">
-      <div class="brand-mark">${markSvg(56)}</div>
-      <div class="brand-word">Educa<span class="plus">+</span></div>
-      <div class="brand-sub">Centro Educacional</div>
-      <form id="login-form" class="login-card" style="margin-top:30px;">
-        <label class="field-label">E-mail</label>
-        <input class="field-input" type="email" required placeholder="seunome@email.com" />
-        <label class="field-label" style="margin-top:16px;">Senha</label>
-        <input class="field-input" type="password" required placeholder="••••••••" />
-        <div class="forgot-row">
-          <button type="button" class="link-btn">Esqueci minha senha</button>
-        </div>
-        <button type="submit" class="btn-gold">Entrar</button>
-      </form>
-      <p class="login-foot">Precisa de acesso? Fale com a secretaria da unidade.</p>
-    </div>
-  </div>`;
 }
 
 /* ---------------- ROLE SELECT ---------------- */
@@ -253,7 +289,7 @@ function renderRole(){
       <button class="back-btn" data-action="back-to-login">${ICONS.chevronLeft} Voltar</button>
       <h1 class="picker-title">Como você acessa o Educa+?</h1>
       <p class="picker-desc">Escolha o tipo de acesso para ver as informações certas para você.</p>
-      <div class="picker-grid three">
+      <div class="picker-grid four">
         <button class="picker-card" data-action="go-aluno">
           <div class="picker-icon">${ICONS.user}</div>
           <div>
@@ -275,6 +311,14 @@ function renderRole(){
           <div>
             <div class="picker-card-title">Sou da instituição</div>
             <div class="picker-card-desc">Turmas, frequência, financeiro e gestão escolar.</div>
+          </div>
+          <div class="picker-cta">Continuar ${ICONS.chevronRight}</div>
+        </button>
+        <button class="picker-card" data-action="go-professor">
+          <div class="picker-icon">${ICONS.user}</div>
+          <div>
+            <div class="picker-card-title">Sou professor</div>
+            <div class="picker-card-desc">Aulas, chamada, notas e recados para as turmas.</div>
           </div>
           <div class="picker-cta">Continuar ${ICONS.chevronRight}</div>
         </button>
@@ -320,20 +364,16 @@ function shell({ navItems, active, headerSub, headerTitle, bodyHtml, navAction, 
       ${ICONS[item.icon]} ${item.label}
     </button>`).join("");
 
-  const mobileBtns = navItems.map(item => `
-    <button class="mobile-nav-btn ${active===item.key?'active':''}" data-action="${navAction}" data-key="${item.key}">
+  const mobileDrawerBtns = navItems.map(item => `
+    <button class="mobile-drawer-btn ${active===item.key?'active':''}" data-action="${navAction}" data-key="${item.key}">
       ${ICONS[item.icon]} <span>${item.label}</span>
     </button>`).join("");
 
   return `
   <div class="shell">
     <aside class="sidebar">
-      <div class="sidebar-brand">
-        ${markSvg(30)}
-        <div>
-          <div class="sidebar-brand-word">Educa<span class="plus">+</span></div>
-          <div class="sidebar-brand-sub">CENTRO EDUCACIONAL</div>
-        </div>
+      <div class="sidebar-brand sidebar-brand-logo">
+        <img src="imgs/logoeduca.jpeg" alt="Educa+ Centro Educacional" />
       </div>
       ${schoolBadge ? `<div class="sidebar-school">${schoolBadge}</div>` : ""}
       <nav class="sidebar-nav">${navBtns}</nav>
@@ -348,7 +388,15 @@ function shell({ navItems, active, headerSub, headerTitle, bodyHtml, navAction, 
       </div>
       ${bodyHtml}
     </main>
-    <nav class="mobile-nav">${mobileBtns}</nav>
+    <button class="mobile-menu-toggle" data-action="toggle-mobile-menu" aria-label="Abrir menu" aria-expanded="${state.mobileMenuOpen}">
+      ${state.mobileMenuOpen ? ICONS.close : ICONS.menu}<span>Menu</span>
+    </button>
+    <div class="mobile-menu-backdrop ${state.mobileMenuOpen ? "open" : ""}" data-action="close-mobile-menu"></div>
+    <nav class="mobile-drawer ${state.mobileMenuOpen ? "open" : ""}" aria-label="Menu principal">
+      <div class="mobile-drawer-head"><strong>Menu</strong><button data-action="close-mobile-menu" aria-label="Fechar menu">${ICONS.close}</button></div>
+      <div class="mobile-drawer-nav">${mobileDrawerBtns}</div>
+      <button class="mobile-drawer-logout" data-action="logout">${ICONS.logout} Sair da conta</button>
+    </nav>
   </div>`;
 }
 
@@ -368,8 +416,8 @@ function renderAluno(){
 
   return shell({
     navItems, active: state.alunoTab,
-    headerSub: `ALUNO · ${student.turma}`, headerTitle: student.name,
-    bodyHtml: body,
+    headerSub: `ALUNO · ${student.turma}`, headerTitle: greeting(student.name),
+    bodyHtml: classStatusCard(student) + body,
     navAction: "set-aluno-tab",
   });
 }
@@ -402,8 +450,8 @@ function renderFamilia(){
 
   return shell({
     navItems, active: state.familiaTab,
-    headerSub: "RESPONSÁVEL", headerTitle: student.name,
-    bodyHtml: switcher + body,
+    headerSub: "RESPONSÁVEL", headerTitle: greeting(RESPONSAVEL_LOGADO.name),
+    bodyHtml: switcher + classStatusCard(student, true) + body,
     navAction: "set-familia-tab",
   });
 }
@@ -491,6 +539,124 @@ function comunicadosView(student){
     <div>${items}</div>`;
 }
 
+/* ---------------- PROFESSOR ---------------- */
+function professorTurmaAtual(){
+  return PROFESSOR_TURMAS.find(turma => turma.id === state.professorTurmaId);
+}
+
+function escapeHtml(value){
+  return String(value || "").replace(/[&<>"]/g, char => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" })[char]);
+}
+
+function professorTurmaSelect(){
+  return `<div class="teacher-class-list">${PROFESSOR_TURMAS.map(turma => `
+    <button class="teacher-class-card ${turma.id === state.professorTurmaId ? "active" : ""}" data-action="set-professor-class" data-id="${turma.id}">
+      <span>${turma.horario}</span><strong>${turma.nome}</strong><small>${turma.escola} · ${turma.sala}</small>
+    </button>`).join("")}</div>`;
+}
+
+function renderProfessor(){
+  const navItems = [
+    { key:"aulas", label:"Aulas & chamada", icon:"clipboard" },
+    { key:"avaliacoes", label:"Notas & atividades", icon:"cap" },
+    { key:"recados", label:"Recados", icon:"megaphone" },
+  ];
+  const body = state.professorTab === "aulas" ? professorAulasView()
+    : state.professorTab === "avaliacoes" ? professorAvaliacoesView()
+    : professorRecadosView();
+
+  return shell({
+    navItems, active: state.professorTab,
+    headerSub: `PROFESSOR · ${PROFESSOR_LOGADO.disciplina.toUpperCase()}`,
+    headerTitle: greeting(PROFESSOR_LOGADO.name),
+    bodyHtml: body,
+    navAction: "set-professor-tab",
+  });
+}
+
+function professorAulasView(){
+  const turma = professorTurmaAtual();
+  if(!turma){
+    return `
+      <h2 class="section-title">Aulas de hoje</h2>
+      <p class="section-eyebrow">Escolha uma turma para abrir a chamada, registrar observações e o conteúdo da aula.</p>
+      ${professorTurmaSelect()}
+      <div class="teacher-empty-state"><strong>Selecione uma aula para começar.</strong><span>Você atende turmas em Salto do Lontra e Nova Prata do Iguaçu.</span></div>`;
+  }
+  const present = turma.alunos.filter(aluno => (state.professorPresencas[`${turma.id}-${aluno}`] || "presente") === "presente").length;
+  const rows = turma.alunos.map(aluno => {
+    const key = `${turma.id}-${aluno}`;
+    const status = state.professorPresencas[key] || "presente";
+    return `<div class="attendance-row">
+      <div class="attendance-student"><strong>${aluno}</strong><input class="teacher-observation" data-observation="${escapeHtml(key)}" value="${escapeHtml(state.professorObservacoes[key])}" placeholder="Observação (opcional)" /></div>
+      <div class="attendance-actions">
+        <button class="attendance-btn ${status === "presente" ? "active present" : ""}" data-action="set-presence" data-student="${escapeHtml(aluno)}" data-status="presente">Presente</button>
+        <button class="attendance-btn ${status === "falta" ? "active absent" : ""}" data-action="set-presence" data-student="${escapeHtml(aluno)}" data-status="falta">Falta</button>
+        <button class="attendance-btn ${status === "justificada" ? "active justified" : ""}" data-action="set-presence" data-student="${escapeHtml(aluno)}" data-status="justificada">Justificada</button>
+      </div>
+    </div>`;
+  }).join("");
+
+  return `
+    <h2 class="section-title">Aulas de hoje</h2>
+    <p class="section-eyebrow">Selecione uma turma para fazer a chamada e registrar a aula.</p>
+    ${professorTurmaSelect()}
+    <div class="teacher-panel">
+      <div class="teacher-panel-head"><div><h2>${turma.nome} · ${turma.disciplina}</h2><p>${turma.escola} · ${turma.horario} · ${turma.sala}</p></div><span class="pill pill-green">${present}/${turma.alunos.length} presentes</span></div>
+      <h3>Chamada</h3>
+      <div class="attendance-list">${rows}</div>
+      <div class="lesson-content">
+        <label for="lesson-content">Conteúdo trabalhado</label>
+        <textarea id="lesson-content" placeholder="Ex.: Frações equivalentes e resolução de exercícios.">${escapeHtml(state.professorConteudo)}</textarea>
+        <button class="teacher-primary-btn" data-action="save-lesson-content">${state.professorRegistroSalvo ? "Conteúdo registrado" : "Registrar conteúdo"}</button>
+      </div>
+    </div>`;
+}
+
+function professorAvaliacoesView(){
+  const turma = professorTurmaAtual();
+  if(!turma){
+    return `
+      <h2 class="section-title">Notas e atividades</h2>
+      <p class="section-eyebrow">Selecione a turma em que deseja lançar uma atividade ou notas.</p>
+      ${professorTurmaSelect()}`;
+  }
+  const rows = turma.alunos.map(aluno => {
+    const key = `${turma.id}-${aluno}`;
+    return `<div class="grade-row"><strong>${aluno}</strong><input class="grade-input" data-grade="${escapeHtml(key)}" type="number" min="0" max="10" step="0.1" value="${escapeHtml(state.professorNotas[key])}" placeholder="Nota" /></div>`;
+  }).join("");
+  return `
+    <h2 class="section-title">Notas e atividades</h2>
+    <p class="section-eyebrow">Lance uma atividade e as notas da turma selecionada.</p>
+    ${professorTurmaSelect()}
+    <div class="teacher-panel">
+      <div class="teacher-panel-head"><div><h2>${turma.nome}</h2><p>${turma.escola} · ${turma.disciplina}</p></div></div>
+      <label class="teacher-label" for="activity-name">Atividade ou avaliação</label>
+      <input id="activity-name" class="teacher-text-input" placeholder="Ex.: Lista de exercícios — Frações" />
+      <div class="grade-list">${rows}</div>
+      <button class="teacher-primary-btn" data-action="save-grades">Salvar notas e atividade</button>
+      ${state.professorNotasSalvas ? `<p class="teacher-success">Notas e atividade salvas para a turma.</p>` : ""}
+    </div>`;
+}
+
+function professorRecadosView(){
+  return `
+    <h2 class="section-title">Enviar recado</h2>
+    <p class="section-eyebrow">Escolha o público e envie uma comunicação pelo Educa+.</p>
+    <div class="teacher-panel teacher-message-panel">
+      <label class="teacher-label" for="notice-audience">Enviar para</label>
+      <select id="notice-audience" class="teacher-text-input"><option value="Aluno individual">Aluno individual</option><option value="Família">Família</option><option value="Turma">Turma</option><option value="Todos">Todos os responsáveis e alunos</option></select>
+      <label class="teacher-label" for="notice-recipient">Destinatário</label>
+      <input id="notice-recipient" class="teacher-text-input" placeholder="Ex.: Ana Beatriz, Família Souza ou 5º Ano B" />
+      <label class="teacher-label" for="notice-subject">Assunto</label>
+      <input id="notice-subject" class="teacher-text-input" placeholder="Ex.: Lembrete sobre a atividade" />
+      <label class="teacher-label" for="notice-message">Mensagem</label>
+      <textarea id="notice-message" placeholder="Escreva o recado aqui."></textarea>
+      <button class="teacher-primary-btn" data-action="send-notice">Enviar recado</button>
+      ${state.professorAvisoEnviado ? `<p class="teacher-success">${state.professorAvisoEnviado}</p>` : ""}
+    </div>`;
+}
+
 /* ---------------- INSTITUIÇÃO DASHBOARD ---------------- */
 function renderInstituicao(){
   const school = SCHOOLS[state.escolaId] || SCHOOLS.salto;
@@ -498,21 +664,46 @@ function renderInstituicao(){
     { key:"turmas", label:"Turmas & faltas", icon:"clipboard" },
     { key:"financeiro", label:"Financeiro", icon:"wallet" },
     { key:"alunos", label:"Alunos", icon:"users" },
+    { key:"gestao", label:"Gestão", icon:"building" },
   ];
-  const titles = { turmas:"Turmas e faltas", financeiro:"Financeiro", alunos:"Alunos" };
 
   let body = "";
   if(state.instTab === "turmas") body = turmasView(school);
   else if(state.instTab === "financeiro") body = financeiroInstituicaoView(school);
   else if(state.instTab === "alunos") body = alunosView(school);
+  else if(state.instTab === "gestao") body = gestaoInstituicaoView(school);
 
   return shell({
     navItems, active: state.instTab,
-    headerSub: "ÁREA DA INSTITUIÇÃO", headerTitle: titles[state.instTab],
+    headerSub: "ÁREA DA INSTITUIÇÃO", headerTitle: greeting("Equipe"),
     bodyHtml: body,
     navAction: "set-inst-tab",
     schoolBadge: `${ICONS.pinSmall} ${school.nome} — ${school.uf}`,
   });
+}
+
+function gestaoInstituicaoView(school){
+  return `
+    <h2 class="section-title">Gestão da unidade</h2>
+    <p class="section-eyebrow">Cadastros, contratos e planos de ${school.nome}.</p>
+    <div class="management-grid">
+      <div class="management-card">
+        <h3>Criar usuário</h3><p>Cadastre aluno, responsável, professor ou equipe.</p>
+        <input id="new-user-name" class="teacher-text-input" placeholder="Nome completo" />
+        <select id="new-user-role" class="teacher-text-input"><option>Aluno</option><option>Responsável</option><option>Professor</option><option>Equipe administrativa</option></select>
+        <button class="teacher-primary-btn" data-action="create-user">Criar usuário</button>
+      </div>
+      <div class="management-card">
+        <h3>Contratos</h3><p>Gere um contrato de matrícula em PDF para assinatura.</p>
+        <button class="teacher-primary-btn" data-action="generate-contract">Gerar contrato</button>
+      </div>
+      <div class="management-card">
+        <h3>Planos</h3><p>Plano atual: <strong>Profissional</strong></p>
+        <div class="plan-tags"><span>Alunos ilimitados</span><span>Financeiro</span><span>Comunicados</span></div>
+        <button class="teacher-primary-btn" data-action="manage-plan">Gerenciar plano</button>
+      </div>
+    </div>
+    ${state.instituicaoMensagem ? `<p class="teacher-success institution-success">${state.instituicaoMensagem}</p>` : ""}`;
 }
 
 function turmasView(school){
@@ -588,7 +779,12 @@ function financeiroInstituicaoView(school){
     </div>
     <h2 class="section-title">Famílias em atraso</h2>
     <p class="section-eyebrow">Ordenado por dias de atraso</p>
-    <div class="card flush">${inad}</div>`;
+    <div class="card flush">${inad}</div>
+    <div class="finance-tools">
+      <div class="finance-chart-card"><h3>Receita dos últimos meses</h3><div class="finance-bars"><span style="height:62%">Jun</span><span style="height:74%">Jul</span><span style="height:88%">Ago</span></div></div>
+      <div class="finance-actions"><h3>Cobranças</h3><p>Gere um boleto para uma matrícula ou envie uma segunda via.</p><button class="teacher-primary-btn" data-action="generate-boleto">Gerar boleto</button></div>
+    </div>
+    ${state.instituicaoMensagem ? `<p class="teacher-success institution-success">${state.instituicaoMensagem}</p>` : ""}`;
 }
 
 function alunosView(school){
@@ -610,46 +806,3 @@ function alunosView(school){
     <div class="card flush">${rows}</div>`;
 }
 
-/* ================================================================== */
-/* Event binding                                                       */
-/* ================================================================== */
-function bindEvents(){
-  const loginForm = document.getElementById("login-form");
-  if(loginForm){
-    loginForm.addEventListener("submit", (e) => {
-      e.preventDefault();
-      state.screen = "role";
-      render();
-    });
-  }
-
-  app.querySelectorAll("[data-action]").forEach(el => {
-    el.addEventListener("click", () => {
-      const action = el.getAttribute("data-action");
-      if(action === "back-to-login"){ state.screen = "login"; render(); }
-      else if(action === "back-to-role"){ state.screen = "role"; render(); }
-      else if(action === "go-aluno"){ state.screen = "aluno"; render(); }
-      else if(action === "go-familia"){ state.screen = "familia"; render(); }
-      else if(action === "go-escola"){ state.screen = "escola"; render(); }
-      else if(action === "select-escola"){ state.escolaId = el.getAttribute("data-escola"); state.screen = "instituicao"; render(); }
-      else if(action === "logout"){ state.screen = "login"; state.escolaId = null; render(); }
-      else if(action === "switch-student"){ state.familiaStudentId = el.getAttribute("data-id"); render(); }
-      else if(action === "set-aluno-tab"){ state.alunoTab = el.getAttribute("data-key"); render(); }
-      else if(action === "set-familia-tab"){ state.familiaTab = el.getAttribute("data-key"); render(); }
-      else if(action === "set-inst-tab"){ state.instTab = el.getAttribute("data-key"); render(); }
-    });
-  });
-
-  const buscaInput = document.getElementById("alunos-busca");
-  if(buscaInput){
-    buscaInput.addEventListener("input", (e) => {
-      state.alunosBusca = e.target.value;
-      const caret = e.target.selectionStart;
-      render();
-      const input2 = document.getElementById("alunos-busca");
-      if(input2){ input2.focus(); input2.setSelectionRange(caret, caret); }
-    });
-  }
-}
-
-render();

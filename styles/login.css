@@ -1,0 +1,48 @@
+/* Personalização exclusiva da tela de login. */
+.sign-in-screen {
+    padding: 44px 20px;
+    background:
+        radial-gradient(600px 420px at 14% 6%, rgba(201, 162, 74, .2), transparent 62%),
+        radial-gradient(580px 460px at 88% 90%, rgba(22, 48, 79, .72), transparent 64%),
+        linear-gradient(145deg, #081524, #0e2038 52%, #08111d);
+}
+
+.modern-login-box { max-width: 400px; }
+
+.modern-login-card {
+    padding: 38px 32px 28px;
+    text-align: center;
+    border-radius: 28px;
+    border-color: rgba(233, 206, 140, .2);
+    background: linear-gradient(135deg, rgba(255,255,255,.13), rgba(255,255,255,.035));
+    box-shadow: 0 30px 70px rgba(0, 0, 0, .35);
+    backdrop-filter: blur(16px);
+}
+
+.login-logo-wrap {
+    width: min(100%, 270px);
+    aspect-ratio: 1.13;
+    margin: 0 auto 26px;
+    overflow: hidden;
+    border-radius: 16px;
+    background: var(--navy);
+    box-shadow: 0 8px 22px rgba(0,0,0,.22);
+}
+
+.login-logo { width: 100%; height: 100%; display: block; object-fit: contain; }
+.login-fields { display: flex; flex-direction: column; gap: 12px; }
+.modern-field-input { padding: 13px 15px; border-radius: 13px; background: rgba(255,255,255,.1); }
+.modern-field-input:focus { border-color: rgba(233,206,140,.8); box-shadow: 0 0 0 3px rgba(201,162,74,.16); }
+.login-error { min-height: 18px; margin: 0; text-align: left; color: #ffb0a5; font-size: 12.5px; line-height: 1.35; }
+.login-divider { height: 1px; margin: 16px 0; background: rgba(255,255,255,.12); }
+.modern-sign-in-btn { margin-top: 0; border-radius: 999px; }
+.modern-forgot-row { justify-content: center; margin-top: 16px; }
+.modern-forgot-row .link-btn { color: var(--gold-light); }
+.modern-login-foot { margin: 18px 0 0; line-height: 1.5; }
+.inline-link { padding: 0; border: 0; color: var(--gold-light); background: transparent; font: inherit; cursor: pointer; text-decoration: underline; }
+
+@media (max-width: 430px) {
+    .sign-in-screen { padding: 20px 14px; }
+    .modern-login-card { padding: 30px 20px 24px; border-radius: 22px; }
+    .login-logo-wrap { width: min(100%, 230px); margin-bottom: 22px; }
+}
