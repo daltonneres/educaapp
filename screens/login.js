@@ -8,8 +8,8 @@ function renderLogin(){
           <img class="login-logo" src="imgs/logoeduca.jpeg" alt="Logo Educa+" />
         </div>
         <div class="login-fields">
-          <label class="sr-only" for="login-identifier">E-mail ou telefone</label>
-          <input id="login-identifier" class="field-input modern-field-input" type="text" autocomplete="username" inputmode="email" placeholder="E-mail ou telefone" />
+          <label class="sr-only" for="login-identifier">Informe seu e-mail ou usuário</label>
+          <input id="login-identifier" class="field-input modern-field-input" type="text" autocomplete="username" inputmode="email" placeholder="Informe seu e-mail ou usuário" />
           <label class="sr-only" for="login-password">Senha</label>
           <input id="login-password" class="field-input modern-field-input" type="password" autocomplete="current-password" placeholder="Senha" />
           <p id="login-error" class="login-error" aria-live="polite"></p>

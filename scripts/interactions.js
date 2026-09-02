@@ -12,11 +12,11 @@ function bindEvents(){
       const isPhone = phoneDigits.length === 10 || phoneDigits.length === 11;
 
       if(!identifier || !password){
-        error.textContent = "Informe seu e-mail ou telefone e sua senha para continuar.";
+        error.textContent = "Informe seu e-mail ou usuário e sua senha para continuar.";
         return;
       }
       if(!isEmail && !isPhone){
-        error.textContent = "Informe um e-mail ou telefone válido.";
+        error.textContent = "Informe um e-mail ou usuário válido.";
         return;
       }
       state.screen = "role";
