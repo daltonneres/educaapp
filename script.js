@@ -45,7 +45,7 @@ import {
   sendPasswordResetEmail,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
-  getFirestore,
+  initializeFirestore,
   doc,
   getDoc,
   collection,
@@ -57,7 +57,13 @@ import { firebaseConfig } from "./firebase-config.js";
 
 const firebaseApp = initializeApp(firebaseConfig);
 const auth = getAuth(firebaseApp);
-const db = getFirestore(firebaseApp);
+// Algumas redes (Wi-Fi de escola/empresa, certos antivírus/VPN) bloqueiam o
+// canal de conexão padrão do Firestore e geram o erro "client is offline"
+// mesmo com internet normal. Forçar long-polling resolve isso.
+const db = initializeFirestore(firebaseApp, {
+  experimentalAutoDetectLongPolling: true,
+  useFetchStreams: false,
+});
 
 /* ================================================================== */
 /* Icons (tiny inline SVGs)                                             */
