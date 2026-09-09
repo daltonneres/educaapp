@@ -227,6 +227,11 @@ button {
     width: 100%;
 }
 
+.picker-card-active {
+    border-color: rgba(201, 162, 74, 0.55);
+    background: rgba(201, 162, 74, 0.1);
+}
+
 .picker-card:hover {
     border-color: rgba(201, 162, 74, 0.55);
     background: rgba(255, 255, 255, 0.06);
@@ -333,6 +338,24 @@ button {
     margin: 0 6px 18px;
     font-weight: 600;
     letter-spacing: .2px;
+}
+
+.sidebar-school-clickable {
+    width: calc(100% - 12px);
+    border: none;
+    cursor: pointer;
+    justify-content: space-between;
+    transition: background .15s ease, color .15s ease;
+}
+
+.sidebar-school-clickable svg:last-child {
+    margin-left: auto;
+    opacity: .7;
+}
+
+.sidebar-school-clickable:hover {
+    background: rgba(201, 162, 74, 0.22);
+    color: #E9CE8C;
 }
 
 .sidebar-nav {
@@ -716,6 +739,10 @@ button {
 .management-card h3, .finance-chart-card h3, .finance-actions h3 { margin: 0; color: var(--ink); font-family: var(--font-display); font-size: 20px; font-weight: 500; }
 .management-card p, .finance-actions p { margin: 6px 0 14px; color: var(--slate); font-size: 13px; line-height: 1.45; }
 .management-card .teacher-text-input { margin-top: 8px; }
+.responsavel-vinculo-list { margin-top: 8px; max-height: 160px; overflow-y: auto; border: 1px solid rgba(18,32,50,.12); border-radius: 8px; padding: 6px 10px; }
+.responsavel-vinculo-item { display: flex; align-items: center; gap: 8px; padding: 5px 0; font-size: 13px; color: var(--ink); cursor: pointer; }
+.responsavel-vinculo-item input { width: auto; margin: 0; }
+.management-card .teacher-error { margin-bottom: 0; }
 .plan-tags { display: flex; flex-wrap: wrap; gap: 6px; }
 .plan-tags span { padding: 4px 7px; border-radius: 999px; color: var(--gold-deep); background: rgba(201,162,74,.12); font-size: 11px; font-weight: 600; }
 .finance-tools { display: grid; grid-template-columns: 1.2fr 1fr; gap: 14px; margin-top: 22px; }

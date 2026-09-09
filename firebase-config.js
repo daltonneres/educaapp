@@ -2,10 +2,10 @@
    Configuração do Firebase
    ================================================================== */
 export const firebaseConfig = {
-  apiKey: "AIzaSyCAPIcXFWDPNYIBUDZvFIOZWzlu9SS1ZL4",
-  authDomain: "educaapp-9b77f.firebaseapp.com",
-  projectId: "educaapp-9b77f",
-  storageBucket: "educaapp-9b77f.firebasestorage.app",
-  messagingSenderId: "216585164530",
-  appId: "1:216585164530:web:7c40835ab24faf0555626b",
+  apiKey: "AIzaSyDnJIqxMpoonAq5QK1kxmV5s5PZU-pJ1K8",
+  authDomain: "educaapp-a5bf9.firebaseapp.com",
+  projectId: "educaapp-a5bf9",
+  storageBucket: "educaapp-a5bf9.firebasestorage.app",
+  messagingSenderId: "182633283794",
+  appId: "1:182633283794:web:e0b9844da669c632c6ad0b"
 };
