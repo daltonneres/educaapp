@@ -54,11 +54,13 @@ import {
   getDoc,
   setDoc,
   updateDoc,
+  deleteDoc,
   collection,
   query,
   where,
   getDocs,
   arrayUnion,
+  arrayRemove,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { firebaseConfig } from "./firebase-config.js";
 
@@ -109,8 +111,48 @@ const ICONS = {
   trendDown: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="m3 7 6 6 4-4 8 8"/><path d="M17 17h4v-4"/></svg>`,
   menu: `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>`,
   close: `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18"/></svg>`,
+  trash: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>`,
   spinner: `<svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2a10 10 0 0 1 10 10"/></svg>`,
 };
+
+/* Contatos de WhatsApp da secretaria, por unidade. Ajuste os números aqui
+   se eles mudarem — não precisa mexer em mais nenhum lugar do código. */
+const SECRETARIA_WHATSAPP = [
+  { id: "salto", nome: "Escola Salto do Lontra", numero: "469938578" },
+  { id: "prata", nome: "Escola Nova Prata do Iguaçu", numero: "4699274677" },
+];
+
+function whatsappLink(numero){
+  const digits = String(numero).replace(/\D/g, "");
+  const comDdi = digits.startsWith("55") ? digits : `55${digits}`;
+  return `https://wa.me/${comDdi}`;
+}
+
+/* Manuais e materiais de apoio mostrados na página "Meu perfil" da equipe
+   administrativa. Ajuste título/descrição/link aqui — não precisa mexer em
+   mais nenhum lugar do código. Pode ser um PDF, um vídeo, uma página, etc. */
+const MANUAIS_INSTITUICAO = [
+  { titulo: "Manual da instituição", descricao: "Passo a passo de cadastro de alunos, turmas e responsáveis.", url: "#" },
+  { titulo: "Como lançar frequência e notas", descricao: "Guia rápido para a equipe orientar os professores.", url: "#" },
+  { titulo: "Perguntas frequentes", descricao: "Dúvidas comuns sobre financeiro, acessos e comunicados.", url: "#" },
+];
+
+/* Cursos oferecidos por unidade. Usado no cadastro de aluno (escolhe o
+   curso em que ele entra) e no cadastro de professor (restringe a
+   disciplina às opções que a unidade realmente oferece). Se a escola não
+   bater com nenhum nome abaixo, cai no catálogo completo por segurança. */
+const CURSOS_POR_ESCOLA = {
+  salto: ["Inglês", "Recreação", "Robótica", "Informática"],
+  prata: ["Inglês", "Informática"],
+};
+const TODOS_OS_CURSOS = ["Inglês", "Recreação", "Robótica", "Informática"];
+
+function cursosDaEscola(nomeEscola){
+  const nome = (nomeEscola || "").toLowerCase();
+  if(nome.includes("prata")) return CURSOS_POR_ESCOLA.prata;
+  if(nome.includes("salto")) return CURSOS_POR_ESCOLA.salto;
+  return TODOS_OS_CURSOS;
+}
 
 function markSvg(size){
   return `<svg width="${size}" height="${size}" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -144,7 +186,7 @@ const state = {
     aluno: null,               // { id, nome, turma, foto, notas, presenca, financeiro, comunicados }
     familiaAlunos: [],         // mesma forma acima, um por filho
     professorNome: "",
-    professorDisciplina: "",
+    professorDisciplinas: [],  // pode dar mais de uma disciplina
     professorTurmas: [],       // [{ id, nome, horario, sala, escola, disciplina, alunos:[nomes] }]
     escolas: {},                // { [escolaId]: { nome, uf, data, turmas, faltantes, financeiro, inadimplentes, alunos } }
   },
@@ -165,6 +207,7 @@ const state = {
   professorRegistroSalvo: false,
   professorNotasSalvas: false,
   mobileMenuOpen: false,
+  secretariaModalOpen: false,
   instituicaoMensagem: "",
   instituicaoErro: "",
   novoUsuarioRole: "aluno",       // aluno | responsavel | professor | instituicao
@@ -172,12 +215,43 @@ const state = {
   novoUsuarioEmail: "",
   novoUsuarioSenha: "",
   novoUsuarioTurma: "",
-  novoUsuarioDisciplina: "",
+  novoUsuarioDisciplinas: [],
   novoUsuarioContato: "",
   novoUsuarioSalvando: false,
   novoUsuarioAlunosVinculados: [], // ids de alunos escolhidos (role == responsavel)
   gestaoAlunosEscola: null,        // [{id,nome,turma}] carregado sob demanda p/ vincular responsável
   gestaoAlunosCarregando: false,
+  perfilNomeInput: "",
+  perfilNomeSalvando: false,
+  perfilNomeErro: "",
+  perfilSenhaResetEnviando: false,
+  perfilSenhaResetMensagem: "",
+  perfilSenhaResetErro: "",
+
+  // aba "Alunos" da instituição — lista carregada direto da coleção `alunos`
+  // (com id de verdade, ao contrário do array resumido salvo em escolas/{id}.alunos)
+  instAlunos: null,               // [{id,nome,turma,contato,...}] ou null se ainda não carregou
+  instAlunosEscolaId: null,        // escola a que a lista carregada pertence
+  instAlunosCarregando: false,
+  instAlunosErro: "",
+
+  // ficha do aluno (modal aberto ao clicar num aluno da lista)
+  alunoDetalheId: null,
+  alunoDetalheContatoInput: "",
+  alunoDetalheSalvandoContato: false,
+  alunoDetalheMensagem: "",
+  alunoDetalheErro: "",
+  alunoExcluirConfirmando: false,
+  alunoExcluindo: false,
+
+  // responsáveis vinculados ao aluno aberto na ficha + form de novo responsável
+  alunoRespVinculados: null,
+  alunoRespCarregando: false,
+  alunoRespNome: "",
+  alunoRespContato: "",
+  alunoRespSalvando: false,
+  alunoRespErro: "",
+  alunoRespMensagem: "",
 };
 
 const app = document.getElementById("app");
@@ -213,7 +287,9 @@ async function carregarDadosDoPerfil(){
 
   if(perfil.role === "professor"){
     state.data.professorNome = perfil.nome || "Professor(a)";
-    state.data.professorDisciplina = perfil.disciplina || "";
+    state.data.professorDisciplinas = Array.isArray(perfil.disciplinas)
+      ? perfil.disciplinas
+      : (perfil.disciplina ? [perfil.disciplina] : []);
     const q = query(collection(db, "turmas"), where("professorId", "==", state.authUser.uid));
     const snaps = await getDocs(q);
     state.data.professorTurmas = snaps.docs.map(d => ({ id: d.id, ...d.data(), alunos: d.data().alunos || [] }));
@@ -251,6 +327,8 @@ function normalizeAluno(id, dados){
     id,
     nome: dados.nome || "",
     turma: dados.turma || "",
+    contato: dados.contato || "",
+    escolaId: dados.escolaId || "",
     foto: dados.foto || (dados.nome || "?").split(" ").map(p=>p[0]).slice(0,2).join("").toUpperCase(),
     notas: Array.isArray(dados.notas) ? dados.notas : [],
     presenca: {
@@ -352,6 +430,31 @@ function renderCarregando(){
   </div>`;
 }
 
+function renderSecretariaModal(){
+  if(!state.secretariaModalOpen) return "";
+  const cards = SECRETARIA_WHATSAPP.map(escola => `
+    <button type="button" class="secretaria-option" data-action="whatsapp-secretaria" data-escola="${escola.id}">
+      <span class="secretaria-option-icon">${ICONS.pin}</span>
+      <span>
+        <span class="secretaria-option-name">${escapeHtml(escola.nome)}</span>
+        <span class="secretaria-option-desc">Abrir WhatsApp da secretaria</span>
+      </span>
+      ${ICONS.chevronRight}
+    </button>`).join("");
+
+  return `
+  <div class="secretaria-modal-backdrop" data-action="close-secretaria-modal">
+    <div class="secretaria-modal" role="dialog" aria-modal="true" aria-label="Falar com a secretaria" data-action="noop">
+      <div class="secretaria-modal-head">
+        <h2>Falar com a secretaria</h2>
+        <button type="button" class="secretaria-modal-close" data-action="close-secretaria-modal" aria-label="Fechar">${ICONS.close}</button>
+      </div>
+      <p class="secretaria-modal-desc">Em qual unidade você (ou seu filho) está matriculado?</p>
+      <div class="secretaria-options">${cards}</div>
+    </div>
+  </div>`;
+}
+
 function renderLogin(){
   return `
   <div class="screen sign-in-screen">
@@ -376,6 +479,7 @@ function renderLogin(){
         <p class="login-foot modern-login-foot">Precisa de acesso? <button type="button" class="inline-link" data-action="contact-secretaria">Fale com a secretaria.</button></p>
       </form>
     </div>
+    ${renderSecretariaModal()}
   </div>`;
 }
 
@@ -644,7 +748,7 @@ function renderProfessor(){
 
   return shell({
     navItems, active: state.professorTab,
-    headerSub: `PROFESSOR${state.data.professorDisciplina ? " · " + state.data.professorDisciplina.toUpperCase() : ""}`,
+    headerSub: `PROFESSOR${state.data.professorDisciplinas.length ? " · " + state.data.professorDisciplinas.join(" · ").toUpperCase() : ""}`,
     headerTitle: greeting(state.data.professorNome),
     bodyHtml: body,
     navAction: "set-professor-tab",
@@ -735,6 +839,21 @@ function professorRecadosView(){
 }
 
 /* ---------------- INSTITUIÇÃO DASHBOARD ---------------- */
+function nomeEquipePendenteBanner(){
+  return `
+    <div class="profile-name-banner">
+      <div class="profile-name-banner-text">
+        <strong>Complete seu cadastro</strong>
+        <p>Ainda não temos o seu nome salvo. Adicione para vermos você por aqui em vez de "Equipe".</p>
+      </div>
+      <div class="profile-name-form">
+        <input id="profile-name-input" class="teacher-text-input" placeholder="Seu nome completo" value="${escapeHtml(state.perfilNomeInput || "")}" />
+        <button class="teacher-primary-btn" data-action="save-profile-name" ${state.perfilNomeSalvando ? "disabled" : ""}>${state.perfilNomeSalvando ? "Salvando…" : "Salvar nome"}</button>
+      </div>
+      ${state.perfilNomeErro ? `<p class="teacher-error" style="color:var(--red,#C4544A);font-size:12.5px;margin-top:8px;">${escapeHtml(state.perfilNomeErro)}</p>` : ""}
+    </div>`;
+}
+
 function renderInstituicao(){
   const school = state.data.escolas[state.escolaSelecionadaId];
   const navItems = [
@@ -742,6 +861,7 @@ function renderInstituicao(){
     { key:"financeiro", label:"Financeiro", icon:"wallet" },
     { key:"alunos", label:"Alunos", icon:"users" },
     { key:"gestao", label:"Gestão", icon:"building" },
+    { key:"perfil", label:"Meu perfil", icon:"user" },
   ];
 
   let body = "";
@@ -749,28 +869,46 @@ function renderInstituicao(){
   else if(state.instTab === "financeiro") body = financeiroInstituicaoView(school);
   else if(state.instTab === "alunos") body = alunosView(school);
   else if(state.instTab === "gestao") body = gestaoInstituicaoView(school);
+  else if(state.instTab === "perfil") body = perfilInstituicaoView(school);
 
   const temMaisDeUmaEscola = Object.keys(state.data.escolas).length > 1;
+  const nomePessoaLogada = (state.perfil?.nome || "").trim();
+  // A própria aba "Meu perfil" já tem o campo de nome — evita duplicar o
+  // aviso/input ali em cima quando a pessoa já está na aba certa pra isso.
+  const avisoNomePendente = (!nomePessoaLogada && state.instTab !== "perfil") ? nomeEquipePendenteBanner() : "";
 
   return shell({
     navItems, active: state.instTab,
-    headerSub: "ÁREA DA INSTITUIÇÃO", headerTitle: greeting("Equipe"),
-    bodyHtml: body,
+    headerSub: "ÁREA DA INSTITUIÇÃO", headerTitle: greeting(nomePessoaLogada || "Equipe"),
+    bodyHtml: avisoNomePendente + body,
     navAction: "set-inst-tab",
     schoolBadge: `${ICONS.pinSmall} ${escapeHtml(school.nome)} — ${escapeHtml(school.uf)}`,
     schoolBadgeClickable: temMaisDeUmaEscola,
-  });
+  }) + alunoDetalheModal();
 }
 
 function gestaoInstituicaoView(school){
   const role = state.novoUsuarioRole;
-  const precisaLogin = role === "professor" || role === "instituicao";
+  const precisaLogin = role === "professor" || role === "instituicao" || role === "aluno";
+
+  const cursosDisponiveis = cursosDaEscola(school.nome);
 
   const campoTurma = role === "aluno" ? `
-        <input id="new-user-turma" class="teacher-text-input" placeholder="Turma (ex.: 5º Ano B)" value="${escapeHtml(state.novoUsuarioTurma || "")}" />` : "";
+        <label class="teacher-label" for="new-user-turma" style="margin-top:2px;">Curso</label>
+        <select id="new-user-turma" class="teacher-text-input">
+          <option value="" ${!state.novoUsuarioTurma ? "selected" : ""} disabled>Selecione o curso</option>
+          ${cursosDisponiveis.map(curso => `<option value="${escapeHtml(curso)}" ${state.novoUsuarioTurma === curso ? "selected" : ""}>${escapeHtml(curso)}</option>`).join("")}
+        </select>` : "";
 
   const campoDisciplina = role === "professor" ? `
-        <input id="new-user-disciplina" class="teacher-text-input" placeholder="Disciplina (ex.: Matemática)" value="${escapeHtml(state.novoUsuarioDisciplina || "")}" />` : "";
+        <div class="responsavel-vinculo-list" style="margin-top:8px;">
+          <p class="section-eyebrow" style="margin:6px 0 4px;">Disciplinas que dá aula (pode marcar mais de uma)</p>
+          ${cursosDisponiveis.map(curso => `
+            <label class="responsavel-vinculo-item">
+              <input type="checkbox" data-action="toggle-disciplina-professor" data-curso="${escapeHtml(curso)}" ${state.novoUsuarioDisciplinas.includes(curso) ? "checked" : ""} />
+              <span>${escapeHtml(curso)}</span>
+            </label>`).join("")}
+        </div>` : "";
 
   const campoContato = (role === "aluno" || role === "responsavel") ? `
         <input id="new-user-contato" class="teacher-text-input" placeholder="Contato (telefone ou e-mail) — opcional" value="${escapeHtml(state.novoUsuarioContato || "")}" />` : "";
@@ -804,14 +942,14 @@ function gestaoInstituicaoView(school){
 
   const textoRodape = precisaLogin
     ? `Combine a senha provisória com a pessoa por fora — ela pode trocar depois com "Esqueci minha senha" na tela de login.`
-    : `Esse cadastro fica só nas coleções do banco, sem login — hoje só professor e equipe entram no app com e-mail e senha.`;
+    : `Esse cadastro de responsável fica só nas coleções do banco, sem login — hoje só o responsável não entra no app com e-mail e senha.`;
 
   return `
     <h2 class="section-title">Gestão da unidade</h2>
     <p class="section-eyebrow">Cadastros, contratos e planos de ${escapeHtml(school.nome)}.</p>
     <div class="management-grid">
       <div class="management-card">
-        <h3>Criar cadastro</h3><p>Aluno e responsável entram só como cadastro. Professor e equipe já ganham login (e-mail/senha).</p>
+        <h3>Criar cadastro</h3><p>Aluno, professor e equipe já ganham login (e-mail/senha). Responsável entra só como cadastro.</p>
         <input id="new-user-name" class="teacher-text-input" placeholder="Nome completo" value="${escapeHtml(state.novoUsuarioNome || "")}" />
         <select id="new-user-role" class="teacher-text-input" data-action="change-new-user-role">
           <option value="aluno" ${role === "aluno" ? "selected" : ""}>Aluno</option>
@@ -843,6 +981,61 @@ function gestaoInstituicaoView(school){
     ${state.instituicaoMensagem ? `<p class="teacher-success institution-success">${escapeHtml(state.instituicaoMensagem)}</p>` : ""}`;
 }
 
+/* Aba "Meu perfil" da equipe administrativa: dados da conta (nome, e-mail,
+   escola vinculada), troca de senha e manuais/materiais de apoio. */
+function perfilInstituicaoView(school){
+  const nome = (state.perfil?.nome || "").trim();
+  const email = state.authUser?.email || "—";
+
+  const escolasVinculadas = Object.values(state.data.escolas || {}).map(e => e.nome).filter(Boolean);
+  const escolasTexto = escolasVinculadas.length ? escolasVinculadas.join(", ") : escapeHtml(school?.nome || "—");
+
+  const manuais = MANUAIS_INSTITUICAO.map(m => `
+    <a class="manual-item" href="${escapeHtml(m.url)}" target="_blank" rel="noopener">
+      <span class="manual-item-icon">${ICONS.clipboard}</span>
+      <span class="manual-item-text">
+        <span class="manual-item-title">${escapeHtml(m.titulo)}</span>
+        <span class="manual-item-desc">${escapeHtml(m.descricao)}</span>
+      </span>
+      ${ICONS.chevronRight}
+    </a>`).join("");
+
+  return `
+    <h2 class="section-title">Meu perfil</h2>
+    <p class="section-eyebrow">Seus dados de acesso e materiais de apoio da equipe.</p>
+
+    <div class="management-grid">
+      <div class="management-card">
+        <h3>Meus dados</h3>
+        <p>Como seu nome aparece pro resto da equipe e da escola.</p>
+        <input id="profile-name-input" class="teacher-text-input" placeholder="Seu nome completo" value="${escapeHtml(state.perfilNomeInput || "")}" />
+        ${nome ? `<p class="section-eyebrow" style="margin:8px 0 0;">Nome atual: <strong style="color:var(--ink);">${escapeHtml(nome)}</strong></p>` : ""}
+        <button class="teacher-primary-btn" data-action="save-profile-name" ${state.perfilNomeSalvando ? "disabled" : ""}>${state.perfilNomeSalvando ? "Salvando…" : (nome ? "Atualizar nome" : "Salvar nome")}</button>
+        ${state.perfilNomeErro ? `<p class="teacher-error" style="color:var(--red);font-size:12.5px;margin-top:8px;">${escapeHtml(state.perfilNomeErro)}</p>` : ""}
+        <p class="section-eyebrow" style="margin-top:12px;">E-mail de acesso: <strong style="color:var(--ink);">${escapeHtml(email)}</strong></p>
+        <p class="section-eyebrow" style="margin-top:2px;">Unidade(s) vinculada(s): <strong style="color:var(--ink);">${escolasTexto}</strong></p>
+      </div>
+
+      <div class="management-card">
+        <h3>Segurança</h3>
+        <p>Enviamos um e-mail com um link para você trocar sua senha.</p>
+        <button class="teacher-primary-btn" data-action="reset-senha-perfil" ${state.perfilSenhaResetEnviando ? "disabled" : ""}>${state.perfilSenhaResetEnviando ? "Enviando…" : "Trocar minha senha"}</button>
+        ${state.perfilSenhaResetErro ? `<p class="teacher-error" style="color:var(--red);font-size:12.5px;margin-top:8px;">${escapeHtml(state.perfilSenhaResetErro)}</p>` : ""}
+        ${state.perfilSenhaResetMensagem ? `<p class="teacher-success" style="margin-top:8px;">${escapeHtml(state.perfilSenhaResetMensagem)}</p>` : ""}
+      </div>
+
+      <div class="management-card">
+        <h3>Precisa de ajuda?</h3>
+        <p>Fale direto com a secretaria da unidade por WhatsApp.</p>
+        <button class="teacher-primary-btn" data-action="contact-secretaria">Falar com a secretaria</button>
+      </div>
+    </div>
+
+    <h2 class="section-title" style="margin-top:28px;">Manuais e materiais de apoio</h2>
+    <p class="section-eyebrow">Guias rápidos para o dia a dia da equipe.</p>
+    <div class="card flush manual-list">${manuais}</div>`;
+}
+
 async function carregarAlunosParaVinculo(escolaId){
   state.gestaoAlunosCarregando = true;
   render();
@@ -859,44 +1052,134 @@ async function carregarAlunosParaVinculo(escolaId){
   }
 }
 
+/* Carrega os alunos de uma escola direto da coleção `alunos` (com o id de
+   verdade do documento), usado pela aba "Alunos" da instituição. O array
+   escolas/{id}.alunos guarda só um resumo (nome+turma) sem id, então não dá
+   pra abrir/editar/excluir a partir dele — por isso a lista real é buscada
+   aqui, do mesmo jeito que carregarAlunosParaVinculo já faz. */
+async function carregarAlunosDaInstituicao(escolaId){
+  state.instAlunosCarregando = true;
+  state.instAlunosErro = "";
+  render();
+  try {
+    const q = query(collection(db, "alunos"), where("escolaId", "==", escolaId));
+    const snaps = await getDocs(q);
+    state.instAlunos = snaps.docs.map(d => normalizeAluno(d.id, d.data()));
+    state.instAlunosEscolaId = escolaId;
+  } catch(err){
+    state.instAlunos = [];
+    state.instAlunosErro = "Não foi possível carregar a lista de alunos. Tente de novo.";
+  } finally {
+    state.instAlunosCarregando = false;
+    render();
+  }
+}
+
+/* Busca, na coleção `responsaveis`, quem já está vinculado a um aluno
+   específico — usado na ficha do aluno pra mostrar os responsáveis dele. */
+async function carregarResponsaveisDoAluno(alunoId){
+  state.alunoRespCarregando = true;
+  render();
+  try {
+    const q = query(
+      collection(db, "responsaveis"),
+      where("escolaId", "==", state.escolaSelecionadaId),
+      where("alunosIds", "array-contains", alunoId),
+    );
+    const snaps = await getDocs(q);
+    state.alunoRespVinculados = snaps.docs.map(d => ({
+      id: d.id, nome: d.data().nome || "", contato: d.data().contato || "",
+    }));
+  } catch(err){
+    state.alunoRespVinculados = [];
+  } finally {
+    state.alunoRespCarregando = false;
+    render();
+  }
+}
+
+/* Exclui o cadastro do aluno (coleção `alunos`) e tenta manter o resumo
+   guardado em escolas/{id}.alunos em sincronia. Se a instituição criou o
+   aluno com login (Firebase Auth), esse login não é apagado por aqui —
+   a exclusão de contas de autenticação exige privilégio de admin, então
+   fica registrado só o cadastro; se for preciso, revogue o acesso à parte. */
+async function excluirAlunoDaInstituicao(aluno, escolaId){
+  state.alunoExcluindo = true;
+  state.alunoDetalheErro = "";
+  render();
+  try {
+    await deleteDoc(doc(db, "alunos", aluno.id));
+    try {
+      await updateDoc(doc(db, "escolas", escolaId), {
+        alunos: arrayRemove({ nome: aluno.nome, turma: aluno.turma }),
+      });
+    } catch(_syncErr) {
+      // Não bloqueia a exclusão principal se só esse resumo falhar em atualizar.
+    }
+    state.instAlunos = (state.instAlunos || []).filter(a => a.id !== aluno.id);
+    state.alunoDetalheId = null;
+    state.alunoExcluirConfirmando = false;
+    state.instituicaoMensagem = `Aluno "${aluno.nome}" excluído com sucesso.`;
+  } catch(err){
+    state.alunoDetalheErro = `Não foi possível excluir o aluno agora${err.code ? ` (${err.code})` : ""}. Tente de novo.`;
+  } finally {
+    state.alunoExcluindo = false;
+    render();
+  }
+}
+
 /* Cria o login (Firebase Auth) e os documentos no Firestore para um novo
    aluno, responsável, professor ou membro da equipe administrativa.
    Usa o app secundário do Firebase para não deslogar a instituição. */
 /* Cria o cadastro de um novo aluno, responsável, professor ou membro da
    equipe administrativa.
-   - aluno / responsavel: só grava nas coleções (`alunos` / `responsaveis`),
-     sem login — o cadastro fica pronto, e um acesso pode ser criado depois
-     se algum dia for preciso.
-   - professor / instituicao: além do documento, cria o login (Firebase
-     Auth) usando o app secundário, pra não deslogar quem está usando a
-     Gestão. */
-async function criarUsuarioNaInstituicao({ role, nome, email, senha, escolaId, turma, disciplina, contato, alunosIds }){
-  const precisaLogin = role === "professor" || role === "instituicao";
+   - responsavel: só grava na coleção `responsaveis`, sem login — o
+     cadastro fica pronto, e um acesso pode ser criado depois se algum
+     dia for preciso.
+   - aluno / professor / instituicao: além do(s) documento(s), cria o
+     login (Firebase Auth) usando o app secundário, pra não deslogar
+     quem está usando a Gestão. */
+async function criarUsuarioNaInstituicao({ role, nome, email, senha, escolaId, turma, disciplinas, contato, alunosIds }){
+  if(role === "responsavel"){
+    const novoResponsavelRef = doc(collection(db, "responsaveis"));
+    await setDoc(novoResponsavelRef, {
+      nome, escolaId, contato: contato || "",
+      alunosIds: alunosIds || [],
+    });
+    return { responsavelId: novoResponsavelRef.id };
+  }
 
-  if(!precisaLogin){
-    if(role === "aluno"){
-      const novoAlunoRef = doc(collection(db, "alunos"));
-      await setDoc(novoAlunoRef, {
-        nome, turma: turma || "", escolaId, contato: contato || "",
-        foto: "",
-        notas: [],
-        presenca: { percentual: 0, faltasMes: 0, registros: [] },
-        financeiro: { status: "", proxima: "", valor: "", historico: [] },
-        comunicados: [],
-      });
-      await updateDoc(doc(db, "escolas", escolaId), {
-        alunos: arrayUnion({ nome, turma: turma || "" }),
-      });
-      return { alunoId: novoAlunoRef.id };
-    }
+  if(role === "aluno"){
+    // 1. grava o cadastro do aluno primeiro (é o que alimenta o dashboard dele)
+    const novoAlunoRef = doc(collection(db, "alunos"));
+    await setDoc(novoAlunoRef, {
+      nome, turma: turma || "", escolaId, contato: contato || "",
+      foto: "",
+      notas: [],
+      presenca: { percentual: 0, faltasMes: 0, registros: [] },
+      financeiro: { status: "", proxima: "", valor: "", historico: [] },
+      comunicados: [],
+    });
+    await updateDoc(doc(db, "escolas", escolaId), {
+      alunos: arrayUnion({ nome, turma: turma || "" }),
+    });
 
-    if(role === "responsavel"){
-      const novoResponsavelRef = doc(collection(db, "responsaveis"));
-      await setDoc(novoResponsavelRef, {
-        nome, escolaId, contato: contato || "",
-        alunosIds: alunosIds || [],
-      });
-      return { responsavelId: novoResponsavelRef.id };
+    // 2. cria o login do aluno (Firebase Auth) no app secundário, pra não
+    //    deslogar a instituição que está fazendo o cadastro.
+    const cred = await createUserWithEmailAndPassword(secondaryAuth, email, senha);
+    const uid = cred.user.uid;
+    try {
+      await setDoc(doc(db, "usuarios", uid), { role: "aluno", nome, alunoId: novoAlunoRef.id });
+      return { alunoId: novoAlunoRef.id, uid };
+    } catch(err){
+      // A gravação em "usuarios" falhou depois do login já ter sido criado.
+      // Desfaz o login pra não deixar uma conta "fantasma" presa no e-mail
+      // (o cadastro em "alunos" continua valendo e pode ganhar um login
+      // depois, se for tentado de novo).
+      try { await cred.user.delete(); } catch(_deleteErr) { /* segue mesmo se não conseguir apagar */ }
+      throw err;
+    } finally {
+      try { await signOut(secondaryAuth); } catch(_signOutErr) { /* ignora */ }
     }
   }
 
@@ -906,7 +1189,7 @@ async function criarUsuarioNaInstituicao({ role, nome, email, senha, escolaId, t
 
   try {
     const usuarioDoc = { role, nome };
-    if(role === "professor") usuarioDoc.disciplina = disciplina || "";
+    if(role === "professor") usuarioDoc.disciplinas = disciplinas || [];
     if(role === "instituicao") usuarioDoc.escolasIds = [escolaId];
 
     await setDoc(doc(db, "usuarios", uid), usuarioDoc);
@@ -1004,21 +1287,114 @@ function financeiroInstituicaoView(school){
 
 function alunosView(school){
   const busca = state.alunosBusca.toLowerCase();
-  const filtrados = school.alunos.filter(s => s.nome.toLowerCase().includes(busca));
-  const rows = filtrados.map(s => `
-    <div class="row">
-      <span style="font-size:14.5px;color:var(--ink);font-weight:500;">${escapeHtml(s.nome)}</span>
-      <span style="font-size:12.5px;color:var(--slate);">${escapeHtml(s.turma)}</span>
-    </div>`).join("") || `<div style="padding:20px;font-size:14px;color:var(--slate);">Nenhum aluno encontrado.</div>`;
+  const lista = state.instAlunos;
+
+  let rows;
+  let total;
+  if(state.instAlunosCarregando){
+    rows = `<div style="padding:20px;font-size:14px;color:var(--slate);">Carregando alunos…</div>`;
+    total = school.alunos.length;
+  } else if(state.instAlunosErro){
+    rows = `<div style="padding:20px;font-size:14px;color:var(--red);">${escapeHtml(state.instAlunosErro)}</div>`;
+    total = school.alunos.length;
+  } else {
+    const filtrados = (lista || []).filter(s => s.nome.toLowerCase().includes(busca));
+    rows = filtrados.map(s => `
+      <button type="button" class="row aluno-row" data-action="abrir-aluno" data-id="${escapeHtml(s.id)}">
+        <span style="font-size:14.5px;color:var(--ink);font-weight:500;">${escapeHtml(s.nome)}</span>
+        <span style="font-size:12.5px;color:var(--slate);display:flex;align-items:center;gap:8px;">${escapeHtml(s.turma)} ${ICONS.chevronRight}</span>
+      </button>`).join("") || `<div style="padding:20px;font-size:14px;color:var(--slate);">Nenhum aluno encontrado.</div>`;
+    total = (lista || []).length;
+  }
 
   return `
     <h2 class="section-title">Alunos matriculados</h2>
-    <p class="section-eyebrow">${school.alunos.length} alunos ativos em ${escapeHtml(school.nome)}</p>
+    <p class="section-eyebrow">${total} alunos ativos em ${escapeHtml(school.nome)} · toque em um aluno para ver a ficha completa</p>
     <div class="search-wrap">
       ${ICONS.search}
       <input class="search-input" id="alunos-busca" placeholder="Buscar aluno pelo nome" value="${escapeHtml(state.alunosBusca)}" />
     </div>
-    <div class="card flush">${rows}</div>`;
+    <div class="card flush">${rows}</div>
+    ${state.instituicaoMensagem ? `<p class="teacher-success institution-success">${escapeHtml(state.instituicaoMensagem)}</p>` : ""}`;
+}
+
+/* Ficha do aluno — modal aberto ao clicar num aluno na aba "Alunos". Mostra
+   contato editável, resumo de frequência/financeiro, responsáveis já
+   vinculados, um formulário pra cadastrar um novo responsável e o botão
+   de excluir o aluno (com confirmação em dois passos). */
+function alunoDetalheModal(){
+  if(!state.alunoDetalheId) return "";
+  const aluno = (state.instAlunos || []).find(a => a.id === state.alunoDetalheId);
+  if(!aluno) return "";
+
+  let respHtml;
+  if(state.alunoRespCarregando){
+    respHtml = `<p class="section-eyebrow" style="margin:6px 0;">Carregando responsáveis…</p>`;
+  } else if(!state.alunoRespVinculados || state.alunoRespVinculados.length === 0){
+    respHtml = `<p class="section-eyebrow" style="margin:6px 0;">Nenhum responsável vinculado ainda.</p>`;
+  } else {
+    respHtml = `<div class="aluno-modal-resp-list">${state.alunoRespVinculados.map(r => `
+      <div class="aluno-modal-resp-item">
+        <span style="font-weight:600;color:var(--ink);font-size:13.5px;">${escapeHtml(r.nome)}</span>
+        <span style="color:var(--slate);font-size:12px;">${escapeHtml(r.contato || "Sem contato informado")}</span>
+      </div>`).join("")}</div>`;
+  }
+
+  const excluirHtml = state.alunoExcluirConfirmando ? `
+    <div class="aluno-modal-confirm">
+      <p>Tem certeza? Essa ação apaga o cadastro do aluno e não pode ser desfeita.</p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        <button type="button" class="btn-danger" data-action="confirmar-exclusao-aluno" ${state.alunoExcluindo ? "disabled" : ""}>${state.alunoExcluindo ? "Excluindo…" : `${ICONS.trash} Sim, excluir`}</button>
+        <button type="button" class="btn-secondary" data-action="cancelar-exclusao-aluno" ${state.alunoExcluindo ? "disabled" : ""}>Cancelar</button>
+      </div>
+    </div>` : `
+    <button type="button" class="btn-danger" data-action="iniciar-exclusao-aluno">${ICONS.trash} Excluir aluno</button>`;
+
+  return `
+  <div class="aluno-modal-backdrop" data-action="fechar-aluno-modal">
+    <div class="aluno-modal" role="dialog" aria-modal="true" aria-label="Ficha do aluno" data-action="noop">
+      <div class="aluno-modal-head">
+        <div>
+          <h2>${escapeHtml(aluno.nome)}</h2>
+          <p class="section-eyebrow" style="margin:2px 0 0;">${escapeHtml(aluno.turma)}</p>
+        </div>
+        <button type="button" class="secretaria-modal-close" style="color:var(--slate);" data-action="fechar-aluno-modal" aria-label="Fechar">${ICONS.close}</button>
+      </div>
+
+      <div class="aluno-modal-section">
+        <h3 class="teacher-label">Contato do aluno</h3>
+        <input id="aluno-detalhe-contato" class="teacher-text-input" placeholder="Telefone ou e-mail de contato" value="${escapeHtml(state.alunoDetalheContatoInput)}" />
+        <button type="button" class="teacher-primary-btn" data-action="salvar-aluno-contato" ${state.alunoDetalheSalvandoContato ? "disabled" : ""}>${state.alunoDetalheSalvandoContato ? "Salvando…" : "Salvar contato"}</button>
+      </div>
+
+      <div class="aluno-modal-section">
+        <h3 class="teacher-label">Resumo</h3>
+        <p class="section-eyebrow" style="margin:0;">Frequência: ${aluno.presenca.percentual}% · ${aluno.presenca.faltasMes} faltas no mês</p>
+        <p class="section-eyebrow" style="margin:4px 0 0;">Financeiro: ${escapeHtml(aluno.financeiro.status || "—")}</p>
+      </div>
+
+      <div class="aluno-modal-section">
+        <h3 class="teacher-label">Responsáveis vinculados</h3>
+        ${respHtml}
+      </div>
+
+      <div class="aluno-modal-section">
+        <h3 class="teacher-label">Cadastrar responsável</h3>
+        <input id="aluno-resp-nome" class="teacher-text-input" placeholder="Nome completo do responsável" value="${escapeHtml(state.alunoRespNome)}" />
+        <input id="aluno-resp-contato" class="teacher-text-input" style="margin-top:8px;" placeholder="Contato (telefone ou e-mail) — opcional" value="${escapeHtml(state.alunoRespContato)}" />
+        <button type="button" class="teacher-primary-btn" data-action="cadastrar-responsavel-do-aluno" ${state.alunoRespSalvando ? "disabled" : ""}>${state.alunoRespSalvando ? "Salvando…" : "Cadastrar e vincular"}</button>
+        ${state.alunoRespErro ? `<p class="teacher-error" style="color:var(--red);font-size:12.5px;margin-top:8px;">${escapeHtml(state.alunoRespErro)}</p>` : ""}
+        ${state.alunoRespMensagem ? `<p class="teacher-success" style="margin-top:8px;">${escapeHtml(state.alunoRespMensagem)}</p>` : ""}
+      </div>
+
+      ${state.alunoDetalheErro ? `<p class="teacher-error" style="color:var(--red);font-size:12.5px;margin-top:4px;">${escapeHtml(state.alunoDetalheErro)}</p>` : ""}
+      ${state.alunoDetalheMensagem ? `<p class="teacher-success" style="margin-top:4px;">${escapeHtml(state.alunoDetalheMensagem)}</p>` : ""}
+
+      <div class="aluno-modal-section aluno-modal-danger">
+        ${excluirHtml}
+      </div>
+    </div>
+  </div>`;
 }
 
 /* ================================================================== */
@@ -1076,12 +1452,16 @@ function bindEvents(){
     if(t.id === "new-user-email"){ state.novoUsuarioEmail = t.value; return; }
     if(t.id === "new-user-senha"){ state.novoUsuarioSenha = t.value; return; }
     if(t.id === "new-user-turma"){ state.novoUsuarioTurma = t.value; return; }
-    if(t.id === "new-user-disciplina"){ state.novoUsuarioDisciplina = t.value; return; }
     if(t.id === "new-user-contato"){ state.novoUsuarioContato = t.value; return; }
+    if(t.id === "profile-name-input"){ state.perfilNomeInput = t.value; return; }
+    if(t.id === "aluno-detalhe-contato"){ state.alunoDetalheContatoInput = t.value; return; }
+    if(t.id === "aluno-resp-nome"){ state.alunoRespNome = t.value; return; }
+    if(t.id === "aluno-resp-contato"){ state.alunoRespContato = t.value; return; }
   });
 
   app.addEventListener("change", async (e) => {
     const t = e.target;
+    if(t.id === "new-user-turma"){ state.novoUsuarioTurma = t.value; return; }
     if(t.id === "new-user-role"){
       state.novoUsuarioRole = t.value;
       state.instituicaoErro = "";
@@ -1106,6 +1486,8 @@ function bindEvents(){
       case "select-escola":
         state.escolaSelecionadaId = el.dataset.escola;
         state.instTab = "turmas";
+        state.instAlunos = null;
+        state.instAlunosEscolaId = null;
         state.screen = "instituicao";
         render();
         break;
@@ -1130,7 +1512,13 @@ function bindEvents(){
         state.familiaStudentId = el.dataset.id; render();
         break;
       case "set-inst-tab":
-        state.instTab = el.dataset.key; render();
+        state.instTab = el.dataset.key;
+        render();
+        if(state.instTab === "alunos" && state.escolaSelecionadaId
+          && (state.instAlunos === null || state.instAlunosEscolaId !== state.escolaSelecionadaId)
+          && !state.instAlunosCarregando){
+          carregarAlunosDaInstituicao(state.escolaSelecionadaId);
+        }
         break;
       case "set-professor-tab":
         state.professorTab = el.dataset.key; render();
@@ -1171,14 +1559,23 @@ function bindEvents(){
         break;
       }
 
+      case "toggle-disciplina-professor": {
+        const curso = el.dataset.curso;
+        const lista = state.novoUsuarioDisciplinas;
+        state.novoUsuarioDisciplinas = lista.includes(curso) ? lista.filter(x => x !== curso) : [...lista, curso];
+        render();
+        break;
+      }
+
       case "create-user": {
         state.instituicaoErro = "";
         state.instituicaoMensagem = "";
         const role = state.novoUsuarioRole;
-        const precisaLogin = role === "professor" || role === "instituicao";
+        const precisaLogin = role === "professor" || role === "instituicao" || role === "aluno";
         const nome = (state.novoUsuarioNome || "").trim();
         const email = (state.novoUsuarioEmail || "").trim();
         const senha = state.novoUsuarioSenha || "";
+        const turmaSelecionada = state.novoUsuarioTurma || "";
         const escolaId = state.escolaSelecionadaId;
 
         if(!nome){
@@ -1201,14 +1598,24 @@ function bindEvents(){
           render();
           break;
         }
+        if(role === "aluno" && !state.novoUsuarioTurma){
+          state.instituicaoErro = "Selecione o curso do aluno.";
+          render();
+          break;
+        }
+        if(role === "professor" && state.novoUsuarioDisciplinas.length === 0){
+          state.instituicaoErro = "Selecione ao menos uma disciplina para o professor.";
+          render();
+          break;
+        }
 
         state.novoUsuarioSalvando = true;
         render();
         try {
           await criarUsuarioNaInstituicao({
             role, nome, email, senha, escolaId,
-            turma: state.novoUsuarioTurma,
-            disciplina: state.novoUsuarioDisciplina,
+            turma: turmaSelecionada,
+            disciplinas: state.novoUsuarioDisciplinas,
             contato: state.novoUsuarioContato,
             alunosIds: state.novoUsuarioAlunosVinculados,
           });
@@ -1220,12 +1627,14 @@ function bindEvents(){
           state.novoUsuarioEmail = "";
           state.novoUsuarioSenha = "";
           state.novoUsuarioTurma = "";
-          state.novoUsuarioDisciplina = "";
+          state.novoUsuarioDisciplinas = [];
           state.novoUsuarioContato = "";
           state.novoUsuarioAlunosVinculados = [];
           if(role === "aluno" && state.data.escolas[escolaId]){
             // reflete o novo aluno na lista local sem precisar recarregar
-            state.data.escolas[escolaId].alunos.push({ nome, turma: state.novoUsuarioTurma || "" });
+            state.data.escolas[escolaId].alunos.push({ nome, turma: turmaSelecionada });
+            // força recarregar a lista de verdade (com id) na próxima vez que a aba Alunos abrir
+            state.instAlunos = null;
           }
         } catch(err){
           const isAuthErr = typeof err.code === "string" && err.code.startsWith("auth/");
@@ -1249,6 +1658,52 @@ function bindEvents(){
         state.instituicaoMensagem = "Ação simulada — a integração de escrita com o banco entra na próxima etapa.";
         render();
         break;
+
+      case "save-profile-name": {
+        const nomeInformado = (state.perfilNomeInput || document.getElementById("profile-name-input")?.value || "").trim();
+        state.perfilNomeErro = "";
+        if(!nomeInformado){
+          state.perfilNomeErro = "Digite seu nome completo.";
+          render();
+          break;
+        }
+        state.perfilNomeSalvando = true;
+        render();
+        try {
+          await updateDoc(doc(db, "usuarios", state.authUser.uid), { nome: nomeInformado });
+          state.perfil = { ...state.perfil, nome: nomeInformado };
+          state.perfilNomeInput = "";
+        } catch(err){
+          state.perfilNomeErro = "Não foi possível salvar seu nome agora. Tente de novo.";
+        } finally {
+          state.perfilNomeSalvando = false;
+          render();
+        }
+        break;
+      }
+
+      case "reset-senha-perfil": {
+        state.perfilSenhaResetErro = "";
+        state.perfilSenhaResetMensagem = "";
+        const email = state.authUser?.email;
+        if(!email){
+          state.perfilSenhaResetErro = "Não encontramos seu e-mail de acesso. Fale com a secretaria.";
+          render();
+          break;
+        }
+        state.perfilSenhaResetEnviando = true;
+        render();
+        try {
+          await sendPasswordResetEmail(auth, email);
+          state.perfilSenhaResetMensagem = `Enviamos um e-mail para ${email} com o link para trocar sua senha.`;
+        } catch(err){
+          state.perfilSenhaResetErro = mensagemErroFirebase(err.code);
+        } finally {
+          state.perfilSenhaResetEnviando = false;
+          render();
+        }
+        break;
+      }
 
       case "toggle-mobile-menu":
         state.mobileMenuOpen = !state.mobileMenuOpen; render();
@@ -1277,9 +1732,122 @@ function bindEvents(){
       }
 
       case "contact-secretaria":
-        state.loginAviso = "";
-        state.loginErro = "Fale com a secretaria da sua unidade para solicitar acesso.";
+        state.secretariaModalOpen = true;
         render();
+        break;
+
+      case "close-secretaria-modal":
+        state.secretariaModalOpen = false;
+        render();
+        break;
+
+      case "whatsapp-secretaria": {
+        const escola = SECRETARIA_WHATSAPP.find(e => e.id === el.dataset.escola);
+        if(escola){
+          window.open(whatsappLink(escola.numero), "_blank", "noopener");
+        }
+        state.secretariaModalOpen = false;
+        render();
+        break;
+      }
+
+      case "abrir-aluno": {
+        const id = el.dataset.id;
+        const aluno = (state.instAlunos || []).find(a => a.id === id);
+        state.alunoDetalheId = id;
+        state.alunoDetalheContatoInput = aluno ? (aluno.contato || "") : "";
+        state.alunoDetalheErro = "";
+        state.alunoDetalheMensagem = "";
+        state.alunoExcluirConfirmando = false;
+        state.alunoRespVinculados = null;
+        state.alunoRespNome = "";
+        state.alunoRespContato = "";
+        state.alunoRespErro = "";
+        state.alunoRespMensagem = "";
+        render();
+        carregarResponsaveisDoAluno(id);
+        break;
+      }
+
+      case "fechar-aluno-modal":
+        state.alunoDetalheId = null;
+        state.alunoExcluirConfirmando = false;
+        render();
+        break;
+
+      case "salvar-aluno-contato": {
+        const aluno = (state.instAlunos || []).find(a => a.id === state.alunoDetalheId);
+        if(!aluno) break;
+        const contato = (document.getElementById("aluno-detalhe-contato")?.value || "").trim();
+        state.alunoDetalheSalvandoContato = true;
+        state.alunoDetalheErro = "";
+        state.alunoDetalheMensagem = "";
+        render();
+        try {
+          await updateDoc(doc(db, "alunos", aluno.id), { contato });
+          aluno.contato = contato;
+          state.alunoDetalheContatoInput = contato;
+          state.alunoDetalheMensagem = "Contato atualizado.";
+        } catch(err){
+          state.alunoDetalheErro = "Não foi possível salvar o contato agora. Tente de novo.";
+        } finally {
+          state.alunoDetalheSalvandoContato = false;
+          render();
+        }
+        break;
+      }
+
+      case "iniciar-exclusao-aluno":
+        state.alunoExcluirConfirmando = true;
+        render();
+        break;
+
+      case "cancelar-exclusao-aluno":
+        state.alunoExcluirConfirmando = false;
+        render();
+        break;
+
+      case "confirmar-exclusao-aluno": {
+        const aluno = (state.instAlunos || []).find(a => a.id === state.alunoDetalheId);
+        if(!aluno || !state.escolaSelecionadaId) break;
+        await excluirAlunoDaInstituicao(aluno, state.escolaSelecionadaId);
+        break;
+      }
+
+      case "cadastrar-responsavel-do-aluno": {
+        const alunoId = state.alunoDetalheId;
+        if(!alunoId || !state.escolaSelecionadaId) break;
+        const nome = (document.getElementById("aluno-resp-nome")?.value || "").trim();
+        const contato = (document.getElementById("aluno-resp-contato")?.value || "").trim();
+        state.alunoRespErro = "";
+        state.alunoRespMensagem = "";
+        if(!nome){
+          state.alunoRespErro = "Digite o nome do responsável.";
+          render();
+          break;
+        }
+        state.alunoRespSalvando = true;
+        render();
+        try {
+          await criarUsuarioNaInstituicao({
+            role: "responsavel", nome, contato,
+            escolaId: state.escolaSelecionadaId,
+            alunosIds: [alunoId],
+          });
+          state.alunoRespNome = "";
+          state.alunoRespContato = "";
+          state.alunoRespMensagem = `Responsável "${nome}" cadastrado e vinculado.`;
+          await carregarResponsaveisDoAluno(alunoId);
+        } catch(err){
+          state.alunoRespErro = `Não foi possível cadastrar o responsável agora${err.code ? ` (${err.code})` : ""}.`;
+        } finally {
+          state.alunoRespSalvando = false;
+          render();
+        }
+        break;
+      }
+
+      case "noop":
         break;
     }
   });
