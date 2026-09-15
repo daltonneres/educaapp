@@ -15,8 +15,8 @@
      alunosIds: string[]        // só quando role == "responsavel"
      disciplina: string         // só quando role == "professor"
      disciplinas: string[]      // idem — professor pode dar mais de uma
-     escolaId: string           // só quando role == "professor" (pra listar na Gestão)
-     escolasIds: string[]       // só quando role == "instituicao"
+     escolaId: string           // role == "professor": 1ª escola da lista abaixo, mantido só por compatibilidade
+     escolasIds: string[]       // role == "professor" (pode dar aula em +1 unidade) ou "instituicao"
 
    alunos/{alunoId}
      nome, turma, foto, escolaId, contato
@@ -130,6 +130,7 @@ const ICONS = {
   trash: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>`,
   spinner: `<svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2a10 10 0 0 1 10 10"/></svg>`,
   book: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z"/></svg>`,
+  chart: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><rect x="7" y="12" width="3" height="6"/><rect x="12.5" y="8" width="3" height="10"/><rect x="18" y="5" width="3" height="13"/></svg>`,
 };
 
 /* Contatos de WhatsApp da secretaria, por unidade. Ajuste os números aqui
@@ -169,6 +170,19 @@ function cursosDaEscola(nomeEscola){
   if(nome.includes("prata")) return CURSOS_POR_ESCOLA.prata;
   if(nome.includes("salto")) return CURSOS_POR_ESCOLA.salto;
   return TODOS_OS_CURSOS;
+}
+
+/* Une os cursos oferecidos por um conjunto de escolas — usado no cadastro
+   de professor quando ele dá aula em mais de uma unidade, pra mostrar só
+   as disciplinas que fazem sentido pra pelo menos uma delas. */
+function cursosDasEscolas(escolaIds){
+  if(!Array.isArray(escolaIds) || escolaIds.length === 0) return TODOS_OS_CURSOS;
+  const combinados = new Set();
+  escolaIds.forEach(id => {
+    const nome = state.data.escolas?.[id]?.nome || "";
+    cursosDaEscola(nome).forEach(c => combinados.add(c));
+  });
+  return combinados.size ? Array.from(combinados) : TODOS_OS_CURSOS;
 }
 
 function markSvg(size){
@@ -213,7 +227,7 @@ const state = {
   familiaStudentId: null,
   escolaSelecionadaId: null,
   instTab: "turmas",
-  gestaoSubTab: "cadastro",   // cadastro | equipe | contratos — sub-abas dentro de "Gestão"
+  gestaoSubTab: "cadastro",   // cadastro | contratos — sub-abas dentro de "Gestão"
   alunosBusca: "",
   professorTab: "aulas",
   professorTurmaId: null,
@@ -249,12 +263,13 @@ const state = {
   novoUsuarioSenha: "",
   novoUsuarioTurma: "",
   novoUsuarioDisciplinas: [],
+  novoUsuarioEscolasIds: [],      // escola(s) em que o professor dá aula (pode ser mais de uma)
   novoUsuarioContato: "",
   novoUsuarioSalvando: false,
   novoUsuarioAlunosVinculados: [], // ids de alunos escolhidos (role == responsavel)
   gestaoAlunosEscola: null,        // [{id,nome,turma}] carregado sob demanda p/ vincular responsável
 
-  // --- Gestão > Professores e responsáveis ---
+  // --- Professores e responsáveis (abas separadas) ---
   gestaoEquipeCarregando: false,
   gestaoEquipeEscolaId: null,      // escolaId da última carga, p/ recarregar ao trocar de unidade
   gestaoProfessores: null,         // [{id,nome,disciplinas}]
@@ -262,6 +277,7 @@ const state = {
   gestaoEquipeErro: "",
 
   // modal "Turmas do professor"
+  profTurmasModalAberto: false,    // controla a visibilidade do modal (independe de já ter professor escolhido)
   profTurmasModalId: null,         // uid do professor aberto
   profTurmasModalNome: "",
   profTurmasModalTurmas: null,     // [{id,nome,horario,sala,disciplina,alunos:[nomes]}]
@@ -986,17 +1002,23 @@ function nomeEquipePendenteBanner(){
 function renderInstituicao(){
   const school = state.data.escolas[state.escolaSelecionadaId];
   const navItems = [
-    { key:"turmas", label:"Turmas & faltas", icon:"clipboard" },
+    { key:"turmas", label:"Turmas", icon:"clipboard" },
+    { key:"estatisticas", label:"Estatísticas", icon:"chart" },
     { key:"financeiro", label:"Financeiro", icon:"wallet" },
     { key:"alunos", label:"Alunos", icon:"users" },
+    { key:"professores", label:"Professores", icon:"users2" },
+    { key:"responsaveis", label:"Responsáveis", icon:"users2" },
     { key:"gestao", label:"Gestão", icon:"building" },
     { key:"perfil", label:"Meu perfil", icon:"user" },
   ];
 
   let body = "";
   if(state.instTab === "turmas") body = turmasView(school);
+  else if(state.instTab === "estatisticas") body = estatisticasView(school);
   else if(state.instTab === "financeiro") body = financeiroInstituicaoView(school);
   else if(state.instTab === "alunos") body = alunosView(school);
+  else if(state.instTab === "professores") body = professoresView(school);
+  else if(state.instTab === "responsaveis") body = responsaveisView(school);
   else if(state.instTab === "gestao") body = gestaoInstituicaoView(school);
   else if(state.instTab === "perfil") body = perfilInstituicaoView(school);
 
@@ -1019,7 +1041,6 @@ function renderInstituicao(){
 function gestaoInstituicaoView(school){
   const subTabs = [
     { key: "cadastro", label: "Criar cadastro", icon: ICONS.user },
-    { key: "equipe", label: "Professores e responsáveis", icon: ICONS.users2 },
     { key: "contratos", label: "Contratos & plano", icon: ICONS.wallet },
   ];
   const subNav = `<div class="subtab-bar">${subTabs.map(t => `
@@ -1028,15 +1049,35 @@ function gestaoInstituicaoView(school){
     </button>`).join("")}</div>`;
 
   let corpo;
-  if(state.gestaoSubTab === "equipe") corpo = professoresResponsaveisSection();
-  else if(state.gestaoSubTab === "contratos") corpo = gestaoContratosPlanoView();
+  if(state.gestaoSubTab === "contratos") corpo = gestaoContratosPlanoView();
   else corpo = gestaoCadastroView(school);
 
   return `
     <h2 class="section-title">Gestão da unidade</h2>
-    <p class="section-eyebrow">Cadastros, turmas, contratos e plano de ${escapeHtml(school.nome)}.</p>
+    <p class="section-eyebrow">Cadastros, contratos e plano de ${escapeHtml(school.nome)}. Para editar turmas de professores e vínculos de responsáveis, veja as abas "Professores" e "Responsáveis" no menu.</p>
     ${subNav}
     ${corpo}
+    ${state.instituicaoMensagem ? `<p class="teacher-success institution-success">${escapeHtml(state.instituicaoMensagem)}</p>` : ""}`;
+}
+
+/* Aba "Professores": lista de quem já está cadastrado na unidade, com um
+   modal por professor pra ver/criar turmas dele. Antes vivia junto com
+   "Responsáveis" numa aba só; agora cada um tem seu próprio menu. */
+function professoresView(school){
+  return `
+    <h2 class="section-title">Professores</h2>
+    <p class="section-eyebrow">Turmas de cada professor de ${escapeHtml(school.nome)}.</p>
+    ${professoresSection()}
+    ${state.instituicaoMensagem ? `<p class="teacher-success institution-success">${escapeHtml(state.instituicaoMensagem)}</p>` : ""}`;
+}
+
+/* Aba "Responsáveis": lista de responsáveis cadastrados, com modal pra
+   ajustar os alunos vinculados a cada um. */
+function responsaveisView(school){
+  return `
+    <h2 class="section-title">Responsáveis</h2>
+    <p class="section-eyebrow">Alunos vinculados a cada responsável de ${escapeHtml(school.nome)}.</p>
+    ${responsaveisSection()}
     ${state.instituicaoMensagem ? `<p class="teacher-success institution-success">${escapeHtml(state.instituicaoMensagem)}</p>` : ""}`;
 }
 
@@ -1046,7 +1087,11 @@ function gestaoCadastroView(school){
   const role = state.novoUsuarioRole;
   const precisaLogin = role === "professor" || role === "instituicao" || role === "aluno" || role === "responsavel";
 
-  const cursosDisponiveis = cursosDaEscola(school.nome);
+  const escolasDisponiveis = Object.entries(state.data.escolas || {}).map(([id, e]) => ({ id, nome: e.nome }));
+
+  const cursosDisponiveis = role === "professor"
+    ? cursosDasEscolas(state.novoUsuarioEscolasIds.length ? state.novoUsuarioEscolasIds : [state.escolaSelecionadaId])
+    : cursosDaEscola(school.nome);
 
   const campoTurma = role === "aluno" ? `
         <label class="teacher-label" for="new-user-turma" style="margin-top:2px;">Curso</label>
@@ -1054,6 +1099,18 @@ function gestaoCadastroView(school){
           <option value="" ${!state.novoUsuarioTurma ? "selected" : ""} disabled>Selecione o curso</option>
           ${cursosDisponiveis.map(curso => `<option value="${escapeHtml(curso)}" ${state.novoUsuarioTurma === curso ? "selected" : ""}>${escapeHtml(curso)}</option>`).join("")}
         </select>` : "";
+
+  // Só mostra o seletor de unidade(s) se a instituição tiver mais de uma
+  // escola vinculada — professor de unidade única não precisa escolher.
+  const campoEscolasProfessor = (role === "professor" && escolasDisponiveis.length > 1) ? `
+        <div class="responsavel-vinculo-list" style="margin-top:8px;">
+          <p class="section-eyebrow" style="margin:6px 0 4px;">Dá aula em qual(is) unidade(s)?</p>
+          ${escolasDisponiveis.map(esc => `
+            <label class="responsavel-vinculo-item">
+              <input type="checkbox" data-action="toggle-escola-professor" data-escola="${escapeHtml(esc.id)}" ${state.novoUsuarioEscolasIds.includes(esc.id) ? "checked" : ""} />
+              <span>${escapeHtml(esc.nome)}</span>
+            </label>`).join("")}
+        </div>` : "";
 
   const campoDisciplina = role === "professor" ? `
         <div class="responsavel-vinculo-list" style="margin-top:8px;">
@@ -1110,6 +1167,7 @@ function gestaoCadastroView(school){
         <option value="instituicao" ${role === "instituicao" ? "selected" : ""}>Equipe administrativa</option>
       </select>
       ${campoTurma}
+      ${campoEscolasProfessor}
       ${campoDisciplina}
       ${campoVinculo}
       ${campoContato}
@@ -1139,47 +1197,57 @@ function gestaoContratosPlanoView(){
     </div>`;
 }
 
-/* Seção "Professores e responsáveis" dentro da aba Gestão: lista quem já
-   está cadastrado na unidade e permite abrir um modal por pessoa —
-   turmas (professor) ou alunos vinculados (responsável). */
-function professoresResponsaveisSection(){
-  let corpo;
+/* Seção "Professores": lista quem já está cadastrado na unidade e permite
+   abrir um modal por pessoa com as turmas dele. */
+function professoresSection(){
   if(state.gestaoEquipeCarregando){
-    corpo = `<div style="padding:20px;font-size:14px;color:var(--slate);">Carregando professores e responsáveis…</div>`;
-  } else if(state.gestaoEquipeErro){
-    corpo = `<div style="padding:20px;font-size:14px;color:var(--red,#C4544A);">${escapeHtml(state.gestaoEquipeErro)}</div>`;
-  } else {
-    const professores = state.gestaoProfessores || [];
-    const responsaveis = state.gestaoResponsaveis || [];
-
-    const linhasProfessores = professores.map(p => `
-      <button type="button" class="row aluno-row" data-action="abrir-professor-turmas" data-id="${escapeHtml(p.id)}" data-nome="${escapeHtml(p.nome)}">
-        <span style="font-size:14.5px;color:var(--ink);font-weight:500;">${escapeHtml(p.nome)}</span>
-        <span style="font-size:12.5px;color:var(--slate);display:flex;align-items:center;gap:8px;">
-          ${escapeHtml(p.disciplinas.join(", ") || "Sem disciplina definida")} ${ICONS.chevronRight}
-        </span>
-      </button>`).join("") || `<div style="padding:20px;font-size:14px;color:var(--slate);">Nenhum professor cadastrado nesta unidade ainda.</div>`;
-
-    const linhasResponsaveis = responsaveis.map(r => `
-      <button type="button" class="row aluno-row" data-action="abrir-responsavel-vinculos" data-id="${escapeHtml(r.id)}" data-nome="${escapeHtml(r.nome)}">
-        <span style="font-size:14.5px;color:var(--ink);font-weight:500;">${escapeHtml(r.nome)}</span>
-        <span style="font-size:12.5px;color:var(--slate);display:flex;align-items:center;gap:8px;">
-          ${r.alunosIds.length} ${r.alunosIds.length === 1 ? "aluno vinculado" : "alunos vinculados"} ${ICONS.chevronRight}
-        </span>
-      </button>`).join("") || `<div style="padding:20px;font-size:14px;color:var(--slate);">Nenhum responsável cadastrado nesta unidade ainda.</div>`;
-
-    corpo = `
-      <div class="management-card management-card-wide">
-        <h3>Professores</h3><p>Toque num professor pra ver as turmas dele ou criar uma nova.</p>
-        <div class="card flush">${linhasProfessores}</div>
-      </div>
-      <div class="management-card management-card-wide">
-        <h3>Responsáveis</h3><p>Toque num responsável pra ajustar os alunos vinculados.</p>
-        <div class="card flush">${linhasResponsaveis}</div>
-      </div>`;
+    return `<div style="padding:20px;font-size:14px;color:var(--slate);">Carregando professores…</div>`;
   }
+  if(state.gestaoEquipeErro){
+    return `<div style="padding:20px;font-size:14px;color:var(--red,#C4544A);">${escapeHtml(state.gestaoEquipeErro)}</div>`;
+  }
+  const professores = state.gestaoProfessores || [];
+  const linhasProfessores = professores.map(p => `
+    <button type="button" class="row aluno-row" data-action="abrir-professor-turmas" data-id="${escapeHtml(p.id)}" data-nome="${escapeHtml(p.nome)}">
+      <span style="font-size:14.5px;color:var(--ink);font-weight:500;">${escapeHtml(p.nome)}</span>
+      <span style="font-size:12.5px;color:var(--slate);display:flex;align-items:center;gap:8px;">
+        ${escapeHtml(p.disciplinas.join(", ") || "Sem disciplina definida")} ${ICONS.chevronRight}
+      </span>
+    </button>`).join("") || `<div style="padding:20px;font-size:14px;color:var(--slate);">Nenhum professor cadastrado nesta unidade ainda.</div>`;
 
-  return corpo;
+  return `
+    <div class="management-card management-card-wide">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
+        <div><h3>Professores</h3><p>Toque num professor pra ver as turmas dele ou criar uma nova.</p></div>
+        <button type="button" class="teacher-primary-btn" style="white-space:nowrap;" data-action="abrir-criar-turma">Criar turma</button>
+      </div>
+      <div class="card flush">${linhasProfessores}</div>
+    </div>`;
+}
+
+/* Seção "Responsáveis": lista quem já está cadastrado na unidade e permite
+   abrir um modal por pessoa com os alunos vinculados. */
+function responsaveisSection(){
+  if(state.gestaoEquipeCarregando){
+    return `<div style="padding:20px;font-size:14px;color:var(--slate);">Carregando responsáveis…</div>`;
+  }
+  if(state.gestaoEquipeErro){
+    return `<div style="padding:20px;font-size:14px;color:var(--red,#C4544A);">${escapeHtml(state.gestaoEquipeErro)}</div>`;
+  }
+  const responsaveis = state.gestaoResponsaveis || [];
+  const linhasResponsaveis = responsaveis.map(r => `
+    <button type="button" class="row aluno-row" data-action="abrir-responsavel-vinculos" data-id="${escapeHtml(r.id)}" data-nome="${escapeHtml(r.nome)}">
+      <span style="font-size:14.5px;color:var(--ink);font-weight:500;">${escapeHtml(r.nome)}</span>
+      <span style="font-size:12.5px;color:var(--slate);display:flex;align-items:center;gap:8px;">
+        ${r.alunosIds.length} ${r.alunosIds.length === 1 ? "aluno vinculado" : "alunos vinculados"} ${ICONS.chevronRight}
+      </span>
+    </button>`).join("") || `<div style="padding:20px;font-size:14px;color:var(--slate);">Nenhum responsável cadastrado nesta unidade ainda.</div>`;
+
+  return `
+    <div class="management-card management-card-wide">
+      <h3>Responsáveis</h3><p>Toque num responsável pra ajustar os alunos vinculados.</p>
+      <div class="card flush">${linhasResponsaveis}</div>
+    </div>`;
 }
 
 /* Modal "Turmas de {professor}" — lista as turmas já criadas para o
@@ -1187,9 +1255,39 @@ function professoresResponsaveisSection(){
    escolhendo disciplina (dentre as do próprio professor) e os alunos
    da unidade que vão fazer parte dela. */
 function professorTurmasModal(){
-  if(!state.profTurmasModalId) return "";
+  if(!state.profTurmasModalAberto) return "";
   const professor = (state.gestaoProfessores || []).find(p => p.id === state.profTurmasModalId);
   const disciplinasProfessor = professor ? professor.disciplinas : [];
+
+  // Seletor de professor: aparece sempre, pra dar pra criar/ver turmas de
+  // qualquer professor a partir daqui (não só clicando num professor
+  // específico na lista da aba "Professores").
+  const professoresDisponiveis = state.gestaoProfessores || [];
+  const seletorProfessorHtml = `
+    <div class="aluno-modal-section">
+      <h3 class="teacher-label">Professor</h3>
+      ${state.gestaoEquipeCarregando
+        ? `<p class="section-eyebrow" style="margin:6px 0;">Carregando professores…</p>`
+        : professoresDisponiveis.length === 0
+          ? `<p class="section-eyebrow" style="margin:6px 0;">Nenhum professor cadastrado nesta unidade ainda.</p>`
+          : `<select id="turma-modal-professor" class="teacher-text-input">
+              <option value="" ${!state.profTurmasModalId ? "selected" : ""} disabled>Selecione o professor</option>
+              ${professoresDisponiveis.map(p => `<option value="${escapeHtml(p.id)}" ${state.profTurmasModalId === p.id ? "selected" : ""}>${escapeHtml(p.nome)}</option>`).join("")}
+            </select>`}
+    </div>`;
+
+  if(!professor){
+    return `
+    <div class="aluno-modal-backdrop" data-action="fechar-professor-turmas-modal">
+      <div class="aluno-modal" role="dialog" aria-modal="true" aria-label="Nova turma" data-action="noop">
+        <div class="aluno-modal-head">
+          <div><h2>Nova turma</h2><p class="section-eyebrow" style="margin:2px 0 0;">Escolha o professor pra ver as turmas dele ou criar uma nova.</p></div>
+          <button type="button" class="secretaria-modal-close" style="color:var(--slate);" data-action="fechar-professor-turmas-modal" aria-label="Fechar">${ICONS.close}</button>
+        </div>
+        ${seletorProfessorHtml}
+      </div>
+    </div>`;
+  }
 
   let listaTurmasHtml;
   if(state.profTurmasModalCarregando){
@@ -1233,6 +1331,8 @@ function professorTurmasModal(){
         <button type="button" class="secretaria-modal-close" style="color:var(--slate);" data-action="fechar-professor-turmas-modal" aria-label="Fechar">${ICONS.close}</button>
       </div>
 
+      ${seletorProfessorHtml}
+
       <div class="aluno-modal-section">
         <h3 class="teacher-label">Turmas já criadas</h3>
         ${listaTurmasHtml}
@@ -1240,7 +1340,7 @@ function professorTurmasModal(){
 
       <div class="aluno-modal-section">
         <h3 class="teacher-label">Nova turma</h3>
-        <input id="nova-turma-nome" class="teacher-text-input" placeholder="Nome da turma (ex.: Robótica — Turma A)" value="${escapeHtml(state.novaTurmaNome)}" />
+        <input id="nova-turma-nome" class="teacher-text-input" placeholder="Nome da turma (ex.: Inglês — Turma A)" value="${escapeHtml(state.novaTurmaNome)}" />
         <select id="nova-turma-disciplina" class="teacher-text-input" style="margin-top:8px;" ${disciplinasProfessor.length === 0 ? "disabled" : ""}>
           <option value="" ${!state.novaTurmaDisciplina ? "selected" : ""} disabled>Selecione a disciplina</option>
           ${opcoesDisciplina}
@@ -1368,7 +1468,7 @@ async function carregarAlunosParaVinculo(escolaId){
 }
 
 /* Carrega professores e responsáveis da unidade selecionada, pra aba
-   Gestão > "Professores e responsáveis". Também garante que a lista de
+   aba "Professores" (e também "Responsáveis", que usa os mesmos dados). Também garante que a lista de
    alunos da unidade (gestaoAlunosEscola) esteja disponível, já que os
    dois modais (turmas do professor / vínculos do responsável) precisam
    dela para montar os checklists. */
@@ -1377,12 +1477,20 @@ async function carregarEquipeDaEscola(escolaId){
   state.gestaoEquipeErro = "";
   render();
   try {
-    const qProf = query(collection(db, "usuarios"), where("role", "==", "professor"), where("escolaId", "==", escolaId));
+    // Busca por "escolasIds" (array, cadastro novo — professor pode estar
+    // em mais de uma unidade) e também por "escolaId" (campo antigo, de
+    // cadastros feitos antes dessa mudança), e junta os dois resultados
+    // sem duplicar, pra não "perder" professor nenhum na lista.
+    const qProfNovo = query(collection(db, "usuarios"), where("role", "==", "professor"), where("escolasIds", "array-contains", escolaId));
+    const qProfLegado = query(collection(db, "usuarios"), where("role", "==", "professor"), where("escolaId", "==", escolaId));
     const qResp = query(collection(db, "responsaveis"), where("escolaId", "==", escolaId));
-    const tarefas = [getDocs(qProf), getDocs(qResp)];
+    const tarefas = [getDocs(qProfNovo), getDocs(qProfLegado), getDocs(qResp)];
     if(!state.gestaoAlunosEscola) tarefas.push(carregarAlunosParaVinculo(escolaId));
-    const [profSnaps, respSnaps] = await Promise.all(tarefas);
-    state.gestaoProfessores = profSnaps.docs.map(d => ({
+    const [profNovoSnaps, profLegadoSnaps, respSnaps] = await Promise.all(tarefas);
+    const profDocsPorId = new Map();
+    profNovoSnaps.docs.forEach(d => profDocsPorId.set(d.id, d));
+    profLegadoSnaps.docs.forEach(d => profDocsPorId.set(d.id, d));
+    state.gestaoProfessores = Array.from(profDocsPorId.values()).map(d => ({
       id: d.id,
       nome: d.data().nome || "Professor(a)",
       disciplinas: Array.isArray(d.data().disciplinas) ? d.data().disciplinas : [],
@@ -1398,7 +1506,15 @@ async function carregarEquipeDaEscola(escolaId){
   } catch(err){
     state.gestaoProfessores = [];
     state.gestaoResponsaveis = [];
-    state.gestaoEquipeErro = "Não foi possível carregar professores e responsáveis agora. Tente de novo.";
+    // Loga o erro completo pro console do navegador (F12) — se for
+    // "failed-precondition", o Firestore normalmente imprime ali um link
+    // pra criar o índice composto que falta (comum quando se mistura
+    // "where" com "array-contains", como na busca por escolasIds).
+    console.error("Erro ao carregar professores/responsáveis:", err);
+    const dicaIndice = err.code === "failed-precondition"
+      ? " O Firestore precisa de um índice composto pra essa busca — abra o console do navegador (F12), procure o link que ele imprimiu (\"...create it here...\") e clique em \"Criar índice\"; depois de alguns minutos, tente de novo."
+      : "";
+    state.gestaoEquipeErro = `Não foi possível carregar professores e responsáveis agora${err.code ? ` (${err.code})` : ""}.${dicaIndice}`;
   } finally {
     state.gestaoEquipeCarregando = false;
     render();
@@ -1600,7 +1716,7 @@ async function excluirAlunoDaInstituicao(aluno, escolaId){
    - aluno / professor / instituicao: além do(s) documento(s), cria o
      login (Firebase Auth) usando o app secundário, pra não deslogar
      quem está usando a Gestão. */
-async function criarUsuarioNaInstituicao({ role, nome, email, senha, escolaId, turma, disciplinas, contato, alunosIds }){
+async function criarUsuarioNaInstituicao({ role, nome, email, senha, escolaId, escolasIds, turma, disciplinas, contato, alunosIds }){
   if(role === "responsavel"){
     const novoResponsavelRef = doc(collection(db, "responsaveis"));
     await setDoc(novoResponsavelRef, {
@@ -1675,9 +1791,14 @@ async function criarUsuarioNaInstituicao({ role, nome, email, senha, escolaId, t
     const usuarioDoc = { role, nome };
     if(role === "professor"){
       usuarioDoc.disciplinas = disciplinas || [];
-      // Guarda a escola do professor pra podermos listá-lo na tela de
-      // Gestão > Professores e responsáveis e vincular turmas a ele.
-      usuarioDoc.escolaId = escolaId;
+      // Guarda a(s) escola(s) do professor pra podermos listá-lo na tela de
+      // aba "Professores" e vincular turmas a ele — um
+      // professor pode dar aula em mais de uma unidade. "escolaId" (a
+      // primeira da lista) fica guardado também só por compatibilidade com
+      // cadastros antigos que ainda dependem dele.
+      const listaEscolas = (escolasIds && escolasIds.length) ? escolasIds : [escolaId];
+      usuarioDoc.escolasIds = listaEscolas;
+      usuarioDoc.escolaId = listaEscolas[0];
     }
     if(role === "instituicao") usuarioDoc.escolasIds = [escolaId];
 
@@ -1717,6 +1838,21 @@ function turmasView(school){
       </div>
     </div>`).join("") || `<div style="padding:20px;font-size:14px;color:var(--slate);">Nenhuma turma cadastrada ainda.</div>`;
 
+  return `
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
+      <div>
+        <h2 class="section-title" style="margin-bottom:0;">Turmas</h2>
+        <p class="section-eyebrow">${escapeHtml(school.nome)} · ${escapeHtml(school.data)}</p>
+      </div>
+      <button type="button" class="teacher-primary-btn" style="white-space:nowrap;" data-action="abrir-criar-turma">Criar turma</button>
+    </div>
+    <div class="grid-cards">${cards}</div>`;
+}
+
+/* Sub-aba "Estatísticas": indicadores de frequência da unidade — antes
+   vivia junto com a lista de turmas, agora fica separada pra não misturar
+   "cadastro/gestão de turmas" com "acompanhamento de faltas". */
+function estatisticasView(school){
   const faltantes = school.faltantes.map(a => `
     <div class="row">
       <div>
@@ -1729,8 +1865,7 @@ function turmasView(school){
   return `
     <h2 class="section-title">Frequência de hoje</h2>
     <p class="section-eyebrow">${escapeHtml(school.data)}</p>
-    <div class="grid-cards">${cards}</div>
-    <h2 class="section-title">Alunos com mais faltas</h2>
+    <h2 class="section-title" style="margin-top:22px;">Alunos com mais faltas</h2>
     <p class="section-eyebrow">Últimos 30 dias · acompanhamento recomendado</p>
     <div class="card flush">${faltantes}</div>`;
 }
@@ -1981,12 +2116,34 @@ function bindEvents(){
       return;
     }
     if(t.id === "nova-turma-disciplina"){ state.novaTurmaDisciplina = t.value; return; }
+    if(t.id === "turma-modal-professor"){
+      const id = t.value;
+      const professor = (state.gestaoProfessores || []).find(p => p.id === id);
+      state.profTurmasModalId = id || null;
+      state.profTurmasModalNome = professor ? professor.nome : "";
+      state.profTurmasModalTurmas = null;
+      state.profTurmasModalErro = "";
+      state.profTurmasModalMensagem = "";
+      state.novaTurmaNome = "";
+      state.novaTurmaDisciplina = "";
+      state.novaTurmaHorario = "";
+      state.novaTurmaSala = "";
+      state.novaTurmaAlunos = [];
+      render();
+      if(id) carregarTurmasDoProfessorGestao(id);
+      return;
+    }
     if(t.id === "new-user-turma"){ state.novoUsuarioTurma = t.value; return; }
     if(t.id === "new-user-role"){
       state.novoUsuarioRole = t.value;
       state.instituicaoErro = "";
       if(t.value === "responsavel" && state.escolaSelecionadaId){
         await carregarAlunosParaVinculo(state.escolaSelecionadaId);
+      }
+      if(t.value === "professor" && state.novoUsuarioEscolasIds.length === 0 && state.escolaSelecionadaId){
+        // começa marcado só na unidade atual; a secretaria desmarca/marca
+        // outras se o professor também der aula nelas.
+        state.novoUsuarioEscolasIds = [state.escolaSelecionadaId];
       }
       render();
     }
@@ -2039,7 +2196,7 @@ function bindEvents(){
           && !state.instAlunosCarregando){
           carregarAlunosDaInstituicao(state.escolaSelecionadaId);
         }
-        if(state.instTab === "gestao" && state.gestaoSubTab === "equipe" && state.escolaSelecionadaId
+        if((state.instTab === "professores" || state.instTab === "responsaveis") && state.escolaSelecionadaId
           && (state.gestaoProfessores === null || state.gestaoEquipeEscolaId !== state.escolaSelecionadaId)
           && !state.gestaoEquipeCarregando){
           carregarEquipeDaEscola(state.escolaSelecionadaId);
@@ -2048,11 +2205,6 @@ function bindEvents(){
       case "set-gestao-subtab":
         state.gestaoSubTab = el.dataset.key;
         render();
-        if(state.gestaoSubTab === "equipe" && state.escolaSelecionadaId
-          && (state.gestaoProfessores === null || state.gestaoEquipeEscolaId !== state.escolaSelecionadaId)
-          && !state.gestaoEquipeCarregando){
-          carregarEquipeDaEscola(state.escolaSelecionadaId);
-        }
         break;
       case "set-professor-tab":
         state.professorTab = el.dataset.key; render();
@@ -2206,6 +2358,14 @@ function bindEvents(){
         break;
       }
 
+      case "toggle-escola-professor": {
+        const escId = el.dataset.escola;
+        const lista = state.novoUsuarioEscolasIds;
+        state.novoUsuarioEscolasIds = lista.includes(escId) ? lista.filter(x => x !== escId) : [...lista, escId];
+        render();
+        break;
+      }
+
       case "create-user": {
         state.instituicaoErro = "";
         state.instituicaoMensagem = "";
@@ -2216,6 +2376,11 @@ function bindEvents(){
         const senha = state.novoUsuarioSenha || "";
         const turmaSelecionada = state.novoUsuarioTurma || "";
         const escolaId = state.escolaSelecionadaId;
+        // professor pode ter marcado mais de uma unidade; sem nada marcado
+        // (unidade única, ou form ainda não tocado), cai na unidade atual.
+        const escolasIdsProfessor = state.novoUsuarioEscolasIds.length
+          ? state.novoUsuarioEscolasIds
+          : (escolaId ? [escolaId] : []);
 
         if(!nome){
           state.instituicaoErro = "Preencha o nome completo.";
@@ -2247,12 +2412,18 @@ function bindEvents(){
           render();
           break;
         }
+        if(role === "professor" && escolasIdsProfessor.length === 0){
+          state.instituicaoErro = "Selecione ao menos uma unidade em que o professor dá aula.";
+          render();
+          break;
+        }
 
         state.novoUsuarioSalvando = true;
         render();
         try {
           await criarUsuarioNaInstituicao({
             role, nome, email, senha, escolaId,
+            escolasIds: escolasIdsProfessor,
             turma: turmaSelecionada,
             disciplinas: state.novoUsuarioDisciplinas,
             contato: state.novoUsuarioContato,
@@ -2267,6 +2438,7 @@ function bindEvents(){
           state.novoUsuarioSenha = "";
           state.novoUsuarioTurma = "";
           state.novoUsuarioDisciplinas = [];
+          state.novoUsuarioEscolasIds = [];
           state.novoUsuarioContato = "";
           state.novoUsuarioAlunosVinculados = [];
           if(role === "aluno" && state.data.escolas[escolaId]){
@@ -2488,6 +2660,7 @@ function bindEvents(){
 
       case "abrir-professor-turmas": {
         const id = el.dataset.id;
+        state.profTurmasModalAberto = true;
         state.profTurmasModalId = id;
         state.profTurmasModalNome = el.dataset.nome || "";
         state.profTurmasModalTurmas = null;
@@ -2504,7 +2677,33 @@ function bindEvents(){
         break;
       }
 
+      // Abre o mesmo modal de turmas, mas sem professor pré-selecionado —
+      // usado pelo botão "Criar turma" na aba "Turmas & faltas" e no topo
+      // da lista de professores, já que uma disciplina (ex.: Inglês) pode
+      // ter várias turmas, cada uma com professor e horário diferentes.
+      case "abrir-criar-turma": {
+        state.profTurmasModalAberto = true;
+        state.profTurmasModalId = null;
+        state.profTurmasModalNome = "";
+        state.profTurmasModalTurmas = null;
+        state.profTurmasModalErro = "";
+        state.profTurmasModalMensagem = "";
+        state.novaTurmaNome = "";
+        state.novaTurmaDisciplina = "";
+        state.novaTurmaHorario = "";
+        state.novaTurmaSala = "";
+        state.novaTurmaAlunos = [];
+        render();
+        if(!state.gestaoAlunosEscola && state.escolaSelecionadaId) carregarAlunosParaVinculo(state.escolaSelecionadaId);
+        if((state.gestaoProfessores === null || state.gestaoEquipeEscolaId !== state.escolaSelecionadaId)
+          && !state.gestaoEquipeCarregando && state.escolaSelecionadaId){
+          carregarEquipeDaEscola(state.escolaSelecionadaId);
+        }
+        break;
+      }
+
       case "fechar-professor-turmas-modal":
+        state.profTurmasModalAberto = false;
         state.profTurmasModalId = null;
         render();
         break;
