@@ -128,9 +128,12 @@ const ICONS = {
   menu: `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>`,
   close: `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18"/></svg>`,
   trash: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>`,
+  pencil: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>`,
   spinner: `<svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2a10 10 0 0 1 10 10"/></svg>`,
   book: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z"/></svg>`,
   chart: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><rect x="7" y="12" width="3" height="6"/><rect x="12.5" y="8" width="3" height="10"/><rect x="18" y="5" width="3" height="13"/></svg>`,
+  upload: `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M5 16v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3"/></svg>`,
+  fileText: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h6"/></svg>`,
 };
 
 /* Contatos de WhatsApp da secretaria, por unidade. Ajuste os números aqui
@@ -184,6 +187,175 @@ function cursosDasEscolas(escolaIds){
   });
   return combinados.size ? Array.from(combinados) : TODOS_OS_CURSOS;
 }
+
+/* ---------------- Importação de turmas por texto colado (PDF) ----------------
+   A secretaria recebe listas de turmas em PDF (uma por unidade), sempre no
+   formato "TURMA  DIA  HORÁRIO  PROFESSOR(A)" — uma turma por linha. Pedir
+   pra colar o texto (em vez de tentar ler o PDF binário no navegador) é bem
+   mais confiável: o texto copiado do PDF já vem limpo, sem precisar de
+   nenhuma biblioteca de leitura de PDF nem lidar com a posição de cada
+   palavra na página. */
+const DIA_SEMANA_REGEX_FONTE = "segunda-feira|segunda|ter[çc]a-feira|ter[çc]a|quarta-feira|quarta|quinta-feira|quinta|sexta-feira|sexta|s[áa]bado|domingo";
+const DIA_SEMANA_REGEX = new RegExp(`(?:${DIA_SEMANA_REGEX_FONTE})(?:\\s*(?:,|e)\\s*(?:${DIA_SEMANA_REGEX_FONTE}))*`, "i");
+const HORARIO_REGEX = /(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})/;
+
+function normalizarNome(s){
+  return (s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+}
+
+// Aponta o PDF.js (carregado via <script> no index.html) pro worker certo,
+// da mesma versão. Sem isso, ele tenta rodar sem worker e falha lento.
+if(typeof window !== "undefined" && window.pdfjsLib && window.pdfjsLib.GlobalWorkerOptions){
+  window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+}
+
+/* Lê um arquivo PDF (a lista de turmas) direto no navegador e devolve o
+   texto reconstruído linha por linha, pronto pra passar pra
+   interpretarTextoTurmas() — igual ficaria se a pessoa tivesse copiado e
+   colado o texto à mão. Cada item de texto do PDF vem com a posição (x,y)
+   na página; agrupamos os que têm o mesmo "y" (mesma altura) numa linha e
+   ordenamos por "x" (esquerda pra direita) pra reconstruir a ordem das
+   colunas da tabela. Só funciona com PDF de texto de verdade — um PDF
+   escaneado (foto/imagem da tabela) não tem essa camada de texto. */
+async function extrairTextoDoPdf(file){
+  if(!window.pdfjsLib) throw new Error("pdfjs-nao-carregado");
+  const buffer = await file.arrayBuffer();
+  const pdf = await window.pdfjsLib.getDocument({ data: buffer }).promise;
+  const linhas = [];
+  for(let p = 1; p <= pdf.numPages; p++){
+    const page = await pdf.getPage(p);
+    const content = await page.getTextContent();
+    const grupos = [];
+    content.items.forEach(item => {
+      if(!item.str || !item.str.trim()) return;
+      const y = Math.round(item.transform[5]);
+      let grupo = grupos.find(g => Math.abs(g.y - y) <= 3);
+      if(!grupo){ grupo = { y, itens: [] }; grupos.push(grupo); }
+      grupo.itens.push({ x: item.transform[4], texto: item.str });
+    });
+    grupos.sort((a, b) => b.y - a.y); // maior y = mais acima na página → lê de cima pra baixo
+    grupos.forEach(g => {
+      const linha = g.itens.sort((a, b) => a.x - b.x).map(i => i.texto).join(" ").replace(/\s+/g, " ").trim();
+      if(linha) linhas.push(linha);
+    });
+  }
+  return linhas.join("\n");
+}
+
+/* Tenta casar o nome de professor(a) que veio no PDF (geralmente só o
+   primeiro nome, ex.: "Márcia") com alguém já cadastrado na unidade. Não é
+   uma correspondência perfeita — por isso o preview sempre deixa a
+   secretaria trocar manualmente antes de confirmar. */
+function casarProfessorPorNome(nomePdf, professores){
+  const alvo = normalizarNome(nomePdf);
+  if(!alvo) return null;
+  let match = professores.find(p => normalizarNome(p.nome) === alvo);
+  if(match) return match;
+  match = professores.find(p => {
+    const pn = normalizarNome(p.nome);
+    return pn.includes(alvo) || alvo.includes(pn);
+  });
+  if(match) return match;
+  const alvoPalavras = alvo.split(/\s+/).filter(Boolean);
+  match = professores.find(p => normalizarNome(p.nome).split(/\s+/).some(w => alvoPalavras.includes(w)));
+  return match || null;
+}
+
+function adivinharDisciplina(turmaRaw, cursosDisponiveis){
+  const alvo = normalizarNome(turmaRaw);
+  if(alvo.includes("recrea") && cursosDisponiveis.includes("Recreação")) return "Recreação";
+  if(alvo.includes("robotica") && cursosDisponiveis.includes("Robótica")) return "Robótica";
+  if(alvo.includes("informatica") && cursosDisponiveis.includes("Informática")) return "Informática";
+  return cursosDisponiveis.includes("Inglês") ? "Inglês" : (cursosDisponiveis[0] || "Inglês");
+}
+
+/* Recebe o texto colado (várias linhas) e devolve uma lista de linhas
+   interpretadas, já tentando casar professor e disciplina — pronta pra
+   virar a tabela de prévia. Linhas que não têm um horário reconhecível
+   (ex.: o cabeçalho "TURMA DIA HORÁRIO PROFESSOR(A)") são ignoradas. */
+function interpretarTextoTurmas(texto, escolaNome, professores){
+  const cursosDisponiveis = cursosDaEscola(escolaNome);
+  const linhas = (texto || "").split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const resultado = [];
+  linhas.forEach(linha => {
+    const horarioMatch = linha.match(HORARIO_REGEX);
+    if(!horarioMatch) return; // provavelmente o cabeçalho, ou linha vazia/quebrada
+    const diaMatch = linha.slice(0, horarioMatch.index).match(DIA_SEMANA_REGEX);
+    if(!diaMatch) return; // linha fora do formato esperado
+
+    const turmaRaw = linha.slice(0, diaMatch.index).trim().replace(/[-–—]+$/, "").trim();
+    const diaRaw = diaMatch[0].trim();
+    const horarioRaw = `${horarioMatch[1]} - ${horarioMatch[2]}`;
+    const professorRaw = linha.slice(horarioMatch.index + horarioMatch[0].length).trim();
+    if(!turmaRaw || !professorRaw) return;
+
+    const professorEncontrado = casarProfessorPorNome(professorRaw, professores);
+    resultado.push({
+      turmaRaw, diaRaw, horarioRaw, professorRaw,
+      professorId: professorEncontrado ? professorEncontrado.id : "",
+      disciplina: adivinharDisciplina(turmaRaw, cursosDisponiveis),
+      selecionada: true,
+    });
+  });
+  return resultado;
+}
+
+/* Roda interpretarTextoTurmas() em cima do texto (colado ou extraído do
+   PDF) e atualiza o estado do modal de importação com o resultado —
+   chamada tanto pelo botão "Analisar" quanto, automaticamente, depois de
+   ler um PDF enviado direto. */
+function analisarTextoImportado(texto){
+  state.importTurmasTexto = texto;
+  state.importTurmasResultado = null;
+  const escola = state.data.escolas?.[state.escolaSelecionadaId];
+  const professores = state.gestaoProfessores || [];
+  const linhas = interpretarTextoTurmas(texto, escola?.nome || "", professores);
+  if(linhas.length === 0){
+    state.importTurmasErro = "Não encontrei nenhuma linha no formato esperado (turma, dia, horário e professor) dentro desse PDF. Verifique se o arquivo tem o formato certo, ou crie as turmas manualmente pelo botão \"Criar turma\".";
+    state.importTurmasPreview = null;
+  } else {
+    state.importTurmasErro = "";
+    state.importTurmasPreview = linhas;
+  }
+  render();
+}
+
+/* Grava as linhas marcadas como turmas de verdade (coleção "turmas"),
+   pulando qualquer linha sem professor escolhido e qualquer turma que já
+   exista na unidade com o mesmo nome + horário (evita duplicar se a
+   secretaria importar a mesma lista duas vezes). */
+async function importarTurmasEmLote(linhas, escolaId, escolaNome, professores){
+  const existentesSnap = await getDocs(query(collection(db, "turmas"), where("escolaId", "==", escolaId)));
+  const chavesExistentes = new Set(existentesSnap.docs.map(d => {
+    const dados = d.data();
+    return `${normalizarNome(dados.nome)}|${normalizarNome(dados.horario)}`;
+  }));
+
+  let criadas = 0, puladasSemProfessor = 0, puladasDuplicadas = 0;
+  for(const linha of linhas){
+    if(!linha.selecionada) continue;
+    if(!linha.professorId){ puladasSemProfessor++; continue; }
+    const horario = `${linha.diaRaw}, ${linha.horarioRaw}`;
+    const chave = `${normalizarNome(linha.turmaRaw)}|${normalizarNome(horario)}`;
+    if(chavesExistentes.has(chave)){ puladasDuplicadas++; continue; }
+
+    const professor = professores.find(p => p.id === linha.professorId);
+    await setDoc(doc(collection(db, "turmas")), {
+      nome: linha.turmaRaw,
+      horario,
+      sala: "",
+      escola: escolaNome,
+      escolaId,
+      disciplina: linha.disciplina,
+      professorId: linha.professorId,
+      alunos: [],
+    });
+    chavesExistentes.add(chave);
+    criadas++;
+  }
+  return { criadas, puladasSemProfessor, puladasDuplicadas, total: linhas.filter(l => l.selecionada).length };
+}
+
 
 function markSvg(size){
   return `<svg width="${size}" height="${size}" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -292,6 +464,25 @@ const state = {
   novaTurmaAlunos: [],             // nomes de alunos escolhidos p/ a nova turma
   novaTurmaSalvando: false,
 
+  // modal "Editar professor" (nome + disciplinas) e exclusão
+  editProfessorModalAberto: false,
+  editProfessorId: null,
+  editProfessorNome: "",
+  editProfessorDisciplinas: [],
+  editProfessorSalvando: false,
+  editProfessorErro: "",
+  editProfessorExcluindoId: null,  // uid em processo de exclusão (mostra "…" no botão da linha)
+
+  // modal "Importar turmas" (colar texto do PDF de horários)
+  importTurmasModalAberto: false,
+  importTurmasTexto: "",
+  importTurmasPreview: null,       // [{turmaRaw,diaRaw,horarioRaw,professorRaw,professorId,disciplina,selecionada}]
+  importTurmasErro: "",
+  importTurmasSalvando: false,
+  importTurmasLendoPdf: false,     // true enquanto extrai o texto de dentro do PDF enviado
+  importTurmasArquivoNome: "",     // nome do PDF escolhido, exibido na área de upload
+  importTurmasResultado: null,     // {criadas,puladasSemProfessor,puladasDuplicadas,total}
+
   // modal "Alunos vinculados ao responsável"
   respModalId: null,               // id do documento em "responsaveis"
   respModalNome: "",
@@ -313,6 +504,22 @@ const state = {
   instAlunosEscolaId: null,        // escola a que a lista carregada pertence
   instAlunosCarregando: false,
   instAlunosErro: "",
+
+  // aba "Turmas" — turmas de verdade (coleção "turmas"), não o array
+  // estático que vinha dentro do documento da escola.
+  instTurmas: null,                // [{id,nome,horario,sala,disciplina,professorId,alunos:[nomes]}] ou null
+  instTurmasEscolaId: null,        // escola a que a lista carregada pertence
+  instTurmasCarregando: false,
+  instTurmasErro: "",
+  turmaDetalheId: null,            // id da turma aberta no modal de detalhe (lista de alunos)
+
+  // aba "Estatísticas" — presença/frequência de cada turma, calculada em
+  // cima da chamada de verdade (coleção "registrosAula"), uma vez que a
+  // escola tenha usado a chamada pelo menos algumas vezes.
+  instFrequencia: null,            // { [turmaId]: {presentesHoje,totalHoje,temRegistroHoje,frequencia} } ou null
+  instFrequenciaEscolaId: null,
+  instFrequenciaCarregando: false,
+  instFrequenciaErro: "",
 
   // ficha do aluno (modal aberto ao clicar num aluno da lista)
   alunoDetalheId: null,
@@ -393,6 +600,7 @@ async function carregarDadosDoPerfil(){
       state.escolaSelecionadaId = Object.keys(escolas)[0];
       state.instTab = "turmas";
       state.screen = "instituicao";
+      carregarTurmasDaInstituicao(state.escolaSelecionadaId);
     } else {
       state.screen = "escola-picker";
     }
@@ -1035,7 +1243,7 @@ function renderInstituicao(){
     navAction: "set-inst-tab",
     schoolBadge: `${ICONS.pinSmall} ${escapeHtml(school.nome)} — ${escapeHtml(school.uf)}`,
     schoolBadgeClickable: temMaisDeUmaEscola,
-  }) + alunoDetalheModal() + professorTurmasModal() + responsavelVinculoModal();
+  }) + alunoDetalheModal() + turmaDetalheModal() + professorTurmasModal() + editarProfessorModal() + importarTurmasModal() + responsavelVinculoModal();
 }
 
 function gestaoInstituicaoView(school){
@@ -1208,18 +1416,21 @@ function professoresSection(){
   }
   const professores = state.gestaoProfessores || [];
   const linhasProfessores = professores.map(p => `
-    <button type="button" class="row aluno-row" data-action="abrir-professor-turmas" data-id="${escapeHtml(p.id)}" data-nome="${escapeHtml(p.nome)}">
-      <span style="font-size:14.5px;color:var(--ink);font-weight:500;">${escapeHtml(p.nome)}</span>
-      <span style="font-size:12.5px;color:var(--slate);display:flex;align-items:center;gap:8px;">
-        ${escapeHtml(p.disciplinas.join(", ") || "Sem disciplina definida")} ${ICONS.chevronRight}
+    <div class="row aluno-row" style="cursor:default;">
+      <button type="button" data-action="abrir-professor-turmas" data-id="${escapeHtml(p.id)}" data-nome="${escapeHtml(p.nome)}" style="flex:1;display:flex;flex-direction:column;align-items:flex-start;gap:2px;background:none;border:none;text-align:left;cursor:pointer;padding:0;">
+        <span style="font-size:14.5px;color:var(--ink);font-weight:500;">${escapeHtml(p.nome)}</span>
+        <span style="font-size:12.5px;color:var(--slate);">${escapeHtml(p.disciplinas.join(", ") || "Sem disciplina definida")}</span>
+      </button>
+      <span style="display:flex;align-items:center;gap:6px;">
+        <button type="button" class="attendance-btn" data-action="abrir-editar-professor" data-id="${escapeHtml(p.id)}" data-nome="${escapeHtml(p.nome)}" aria-label="Editar professor">${ICONS.pencil}</button>
+        <button type="button" class="attendance-btn" data-action="confirmar-excluir-professor" data-id="${escapeHtml(p.id)}" data-nome="${escapeHtml(p.nome)}" aria-label="Excluir professor" ${state.editProfessorExcluindoId === p.id ? "disabled" : ""}>${state.editProfessorExcluindoId === p.id ? "…" : ICONS.trash}</button>
       </span>
-    </button>`).join("") || `<div style="padding:20px;font-size:14px;color:var(--slate);">Nenhum professor cadastrado nesta unidade ainda.</div>`;
+    </div>`).join("") || `<div style="padding:20px;font-size:14px;color:var(--slate);">Nenhum professor cadastrado nesta unidade ainda.</div>`;
 
   return `
     <div class="management-card management-card-wide">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
-        <div><h3>Professores</h3><p>Toque num professor pra ver as turmas dele ou criar uma nova.</p></div>
-        <button type="button" class="teacher-primary-btn" style="white-space:nowrap;" data-action="abrir-criar-turma">Criar turma</button>
+        <div><h3>Professores</h3><p>Toque num professor pra ver as turmas dele.</p></div>
       </div>
       <div class="card flush">${linhasProfessores}</div>
     </div>`;
@@ -1359,6 +1570,120 @@ function professorTurmasModal(){
   </div>`;
 }
 
+/* Modal "Editar professor" — troca o nome e as disciplinas do professor.
+   Atualiza tanto o cadastro em "usuarios/{uid}" quanto todos os vínculos
+   dele em "escolaProfessores" (um por unidade em que dá aula), pra manter
+   os dois em sincronia — ver salvarEdicaoProfessor(). */
+function editarProfessorModal(){
+  if(!state.editProfessorModalAberto) return "";
+  const disciplinasDisponiveis = cursosDaEscola(state.data.escolas?.[state.escolaSelecionadaId]?.nome || "");
+  const opcoesDisciplinas = disciplinasDisponiveis.map(curso => `
+    <label class="responsavel-vinculo-item">
+      <input type="checkbox" data-action="toggle-disciplina-editar-professor" data-curso="${escapeHtml(curso)}" ${state.editProfessorDisciplinas.includes(curso) ? "checked" : ""} />
+      <span>${escapeHtml(curso)}</span>
+    </label>`).join("");
+
+  return `
+  <div class="aluno-modal-backdrop" data-action="fechar-editar-professor-modal">
+    <div class="aluno-modal" role="dialog" aria-modal="true" aria-label="Editar professor" data-action="noop">
+      <div class="aluno-modal-head">
+        <div><h2>Editar professor</h2></div>
+        <button type="button" class="secretaria-modal-close" style="color:var(--slate);" data-action="fechar-editar-professor-modal" aria-label="Fechar">${ICONS.close}</button>
+      </div>
+
+      <div class="aluno-modal-section">
+        <h3 class="teacher-label">Nome</h3>
+        <input id="edit-professor-nome" class="teacher-text-input" placeholder="Nome completo" value="${escapeHtml(state.editProfessorNome)}" />
+      </div>
+
+      <div class="aluno-modal-section">
+        <h3 class="teacher-label">Disciplinas</h3>
+        <div class="responsavel-vinculo-list">${opcoesDisciplinas}</div>
+      </div>
+
+      <div class="aluno-modal-section">
+        <button type="button" class="teacher-primary-btn" data-action="salvar-edicao-professor" ${state.editProfessorSalvando ? "disabled" : ""}>${state.editProfessorSalvando ? "Salvando…" : "Salvar alterações"}</button>
+        ${state.editProfessorErro ? `<p class="teacher-error" style="color:var(--red,#C4544A);font-size:12.5px;margin-top:8px;">${escapeHtml(state.editProfessorErro)}</p>` : ""}
+      </div>
+    </div>
+  </div>`;
+}
+
+/* Modal "Importar turmas" — a secretaria cola o texto copiado do PDF de
+   horários (formato "TURMA DIA HORÁRIO PROFESSOR(A)", uma turma por
+   linha), revisa a prévia (pode corrigir o professor casado errado, a
+   disciplina, ou desmarcar linhas) e só então confirma a gravação. */
+function importarTurmasModal(){
+  if(!state.importTurmasModalAberto) return "";
+  const escola = state.data.escolas?.[state.escolaSelecionadaId];
+  const cursosDisponiveis = cursosDaEscola(escola?.nome || "");
+  const professores = state.gestaoProfessores || [];
+
+  const areaUploadHtml = `
+    <div class="aluno-modal-section">
+      <h3 class="teacher-label">Enviar o PDF da lista de turmas</h3>
+      <p class="section-eyebrow" style="margin:0 0 10px;">O texto é lido aqui mesmo no navegador — o arquivo não é enviado pra nenhum servidor.</p>
+      <label class="upload-dropzone${state.importTurmasLendoPdf ? " is-loading" : ""}" for="import-turmas-pdf-file">
+        <span class="upload-dropzone-icon">${state.importTurmasLendoPdf ? ICONS.spinner : ICONS.upload}</span>
+        <span class="upload-dropzone-text">
+          <strong>${state.importTurmasLendoPdf ? "Lendo o PDF…" : (state.importTurmasArquivoNome ? state.importTurmasArquivoNome : "Toque pra escolher o PDF")}</strong>
+          <span>${state.importTurmasArquivoNome && !state.importTurmasLendoPdf ? "Toque pra escolher outro arquivo" : "PDF com a lista de turmas da unidade"}</span>
+        </span>
+        <input type="file" id="import-turmas-pdf-file" accept="application/pdf" style="display:none;" ${state.importTurmasLendoPdf ? "disabled" : ""} />
+      </label>
+      ${state.importTurmasErro ? `<p class="teacher-error" style="color:var(--red,#C4544A);font-size:12.5px;margin-top:10px;">${escapeHtml(state.importTurmasErro)}</p>` : ""}
+    </div>`;
+
+  let previewHtml = "";
+  if(state.importTurmasPreview && state.importTurmasPreview.length){
+    const linhasHtml = state.importTurmasPreview.map((linha, i) => {
+      const opcoesProfessor = `<option value="" ${!linha.professorId ? "selected" : ""}>— não encontrado —</option>` +
+        professores.map(p => `<option value="${escapeHtml(p.id)}" ${linha.professorId === p.id ? "selected" : ""}>${escapeHtml(p.nome)}</option>`).join("");
+      const opcoesDisciplina = cursosDisponiveis.map(c => `<option value="${escapeHtml(c)}" ${linha.disciplina === c ? "selected" : ""}>${escapeHtml(c)}</option>`).join("");
+      return `
+      <div class="aluno-modal-resp-item" style="align-items:flex-start;flex-wrap:wrap;gap:8px;${linha.selecionada ? "" : "opacity:.5;"}">
+        <label style="display:flex;gap:8px;align-items:flex-start;flex:1;min-width:220px;">
+          <input type="checkbox" data-action="toggle-importar-linha" data-row="${i}" ${linha.selecionada ? "checked" : ""} style="margin-top:3px;" />
+          <span>
+            <span style="font-weight:600;color:var(--ink);font-size:13.5px;display:block;">${escapeHtml(linha.turmaRaw)}</span>
+            <span style="color:var(--slate);font-size:12px;">${escapeHtml(linha.diaRaw)} · ${escapeHtml(linha.horarioRaw)}${!linha.professorId ? " · professor não encontrado, escolha ao lado" : ""}</span>
+          </span>
+        </label>
+        <select class="teacher-text-input" style="width:auto;min-width:150px;" data-import-field="professorId" data-row="${i}">${opcoesProfessor}</select>
+        <select class="teacher-text-input" style="width:auto;min-width:120px;" data-import-field="disciplina" data-row="${i}">${opcoesDisciplina}</select>
+      </div>`;
+    }).join("");
+    const semProfessor = state.importTurmasPreview.filter(l => !l.professorId).length;
+    previewHtml = `
+      <div class="aluno-modal-section">
+        <h3 class="teacher-label">Prévia — ${state.importTurmasPreview.length} turma(s) encontradas${semProfessor ? `, ${semProfessor} sem professor casado` : ""}</h3>
+        <div class="aluno-modal-resp-list">${linhasHtml}</div>
+        <button type="button" class="teacher-primary-btn" style="margin-top:10px;" data-action="confirmar-importar-turmas" ${state.importTurmasSalvando ? "disabled" : ""}>${state.importTurmasSalvando ? "Importando…" : "Confirmar e criar turmas"}</button>
+      </div>`;
+  }
+
+  const resultadoHtml = state.importTurmasResultado ? `
+    <div class="aluno-modal-section">
+      <p class="teacher-success">${state.importTurmasResultado.criadas} turma(s) criada(s).
+        ${state.importTurmasResultado.puladasDuplicadas ? ` ${state.importTurmasResultado.puladasDuplicadas} já existia(m) e foram puladas.` : ""}
+        ${state.importTurmasResultado.puladasSemProfessor ? ` ${state.importTurmasResultado.puladasSemProfessor} sem professor selecionado, não foram criadas.` : ""}
+      </p>
+    </div>` : "";
+
+  return `
+  <div class="aluno-modal-backdrop" data-action="fechar-importar-turmas-modal">
+    <div class="aluno-modal" role="dialog" aria-modal="true" aria-label="Importar turmas" data-action="noop">
+      <div class="aluno-modal-head">
+        <div><h2>Importar turmas</h2><p class="section-eyebrow" style="margin:2px 0 0;">${escapeHtml(escola?.nome || "")}</p></div>
+        <button type="button" class="secretaria-modal-close" style="color:var(--slate);" data-action="fechar-importar-turmas-modal" aria-label="Fechar">${ICONS.close}</button>
+      </div>
+      ${areaUploadHtml}
+      ${previewHtml}
+      ${resultadoHtml}
+    </div>
+  </div>`;
+}
+
 /* Modal "Alunos vinculados a {responsável}" — checklist com todos os
    alunos da unidade, marca os já vinculados e salva a lista nova de uma
    vez (em "responsaveis" e, se o responsável já tiver login, também em
@@ -1477,44 +1802,105 @@ async function carregarEquipeDaEscola(escolaId){
   state.gestaoEquipeErro = "";
   render();
   try {
-    // Busca por "escolasIds" (array, cadastro novo — professor pode estar
-    // em mais de uma unidade) e também por "escolaId" (campo antigo, de
-    // cadastros feitos antes dessa mudança), e junta os dois resultados
-    // sem duplicar, pra não "perder" professor nenhum na lista.
-    const qProfNovo = query(collection(db, "usuarios"), where("role", "==", "professor"), where("escolasIds", "array-contains", escolaId));
+    // Professores em mais de uma escola são resolvidos via a coleção
+    // "escolaProfessores" (um doc por par escola+professor, ver
+    // criarUsuarioNaInstituicao) — consulta de igualdade simples, que a
+    // regra de segurança consegue confirmar sem recusar a consulta
+    // inteira (o antigo "array-contains" em cima de "escolasIds" era
+    // negado pelo Firestore quando combinado com o get() da regra;
+    // permission-denied mesmo com professor/dados corretos).
+    // A consulta legada em "usuarios.escolaId" continua aqui só como
+    // fallback pra professores cadastrados ANTES dessa migração e que
+    // ainda não têm doc em "escolaProfessores" — depois de rodar a
+    // migração (ver MIGRACAO.md), dá pra remover esse fallback.
+    const qVinculos = query(collection(db, "escolaProfessores"), where("escolaId", "==", escolaId));
     const qProfLegado = query(collection(db, "usuarios"), where("role", "==", "professor"), where("escolaId", "==", escolaId));
     const qResp = query(collection(db, "responsaveis"), where("escolaId", "==", escolaId));
-    const tarefas = [getDocs(qProfNovo), getDocs(qProfLegado), getDocs(qResp)];
-    if(!state.gestaoAlunosEscola) tarefas.push(carregarAlunosParaVinculo(escolaId));
-    const [profNovoSnaps, profLegadoSnaps, respSnaps] = await Promise.all(tarefas);
-    const profDocsPorId = new Map();
-    profNovoSnaps.docs.forEach(d => profDocsPorId.set(d.id, d));
-    profLegadoSnaps.docs.forEach(d => profDocsPorId.set(d.id, d));
-    state.gestaoProfessores = Array.from(profDocsPorId.values()).map(d => ({
-      id: d.id,
-      nome: d.data().nome || "Professor(a)",
-      disciplinas: Array.isArray(d.data().disciplinas) ? d.data().disciplinas : [],
-    }));
-    state.gestaoResponsaveis = respSnaps.docs.map(d => ({
-      id: d.id,
-      nome: d.data().nome || "Responsável",
-      contato: d.data().contato || "",
-      alunosIds: Array.isArray(d.data().alunosIds) ? d.data().alunosIds : [],
-      uid: d.data().uid || null,
-    }));
+
+    // Usa allSettled (em vez de Promise.all) de propósito: assim, se UMA
+    // das consultas for negada pelas regras do Firestore, as outras ainda
+    // carregam normalmente — antes, uma negada derrubava as três juntas e
+    // a mensagem de erro não dizia qual delas era a culpada. Cada consulta
+    // também loga separadamente no console (F12), com o nome dela e o
+    // err.code, pra dar pra apontar o dedo pra regra certa direto.
+    const tarefasExtras = [];
+    if(!state.gestaoAlunosEscola) tarefasExtras.push(carregarAlunosParaVinculo(escolaId));
+
+    const [vinculosR, profLegadoR, respR] = await Promise.allSettled([
+      getDocs(qVinculos), getDocs(qProfLegado), getDocs(qResp),
+    ]);
+    await Promise.allSettled(tarefasExtras);
+
+    [
+      ["escolaProfessores", vinculosR],
+      ["usuarios (escolaId legado)", profLegadoR],
+      ["responsaveis", respR],
+    ].forEach(([nome, resultado]) => {
+      if(resultado.status === "rejected"){
+        console.error(`Consulta "${nome}" negada:`, resultado.reason?.code, resultado.reason);
+      }
+    });
+
+    // Junta os dois jeitos de achar professor (vínculo novo + fallback
+    // legado) sem duplicar, indexando pelo uid do PROFESSOR (não pelo id
+    // do documento de vínculo, que é "escolaId_uid").
+    const profPorUid = new Map();
+    if(vinculosR.status === "fulfilled"){
+      vinculosR.value.docs.forEach(d => {
+        const dados = d.data();
+        if(dados.professorId) profPorUid.set(dados.professorId, {
+          id: dados.professorId,
+          nome: dados.nome || "Professor(a)",
+          disciplinas: Array.isArray(dados.disciplinas) ? dados.disciplinas : [],
+        });
+      });
+    }
+    if(profLegadoR.status === "fulfilled"){
+      profLegadoR.value.docs.forEach(d => {
+        if(!profPorUid.has(d.id)) profPorUid.set(d.id, {
+          id: d.id,
+          nome: d.data().nome || "Professor(a)",
+          disciplinas: Array.isArray(d.data().disciplinas) ? d.data().disciplinas : [],
+        });
+      });
+    }
+    state.gestaoProfessores = Array.from(profPorUid.values());
+
+    state.gestaoResponsaveis = respR.status === "fulfilled"
+      ? respR.value.docs.map(d => ({
+          id: d.id,
+          nome: d.data().nome || "Responsável",
+          contato: d.data().contato || "",
+          alunosIds: Array.isArray(d.data().alunosIds) ? d.data().alunosIds : [],
+          uid: d.data().uid || null,
+        }))
+      : [];
+
+    // Monta a mensagem de erro só com o que de fato falhou, citando a
+    // consulta pelo nome — em vez do "não foi possível carregar" genérico
+    // de antes, que escondia qual das três estava sendo negada.
+    const falhas = [
+      vinculosR.status === "rejected" ? { nome: "professores (vínculos)", err: vinculosR.reason } : null,
+      profLegadoR.status === "rejected" ? { nome: "professores (escolaId legado)", err: profLegadoR.reason } : null,
+      respR.status === "rejected" ? { nome: "responsáveis", err: respR.reason } : null,
+    ].filter(Boolean);
+
+    if(falhas.length > 0){
+      const temIndiceFaltando = falhas.some(f => f.err?.code === "failed-precondition");
+      const dicaIndice = temIndiceFaltando
+        ? " O Firestore precisa de um índice composto pra essa busca — abra o console do navegador (F12), procure o link que ele imprimiu (\"...create it here...\") e clique em \"Criar índice\"; depois de alguns minutos, tente de novo."
+        : "";
+      const listaFalhas = falhas.map(f => `${f.nome}${f.err?.code ? ` (${f.err.code})` : ""}`).join(", ");
+      state.gestaoEquipeErro = `Não foi possível carregar: ${listaFalhas}.${dicaIndice}`;
+    } else {
+      state.gestaoEquipeErro = "";
+    }
     state.gestaoEquipeEscolaId = escolaId;
   } catch(err){
     state.gestaoProfessores = [];
     state.gestaoResponsaveis = [];
-    // Loga o erro completo pro console do navegador (F12) — se for
-    // "failed-precondition", o Firestore normalmente imprime ali um link
-    // pra criar o índice composto que falta (comum quando se mistura
-    // "where" com "array-contains", como na busca por escolasIds).
-    console.error("Erro ao carregar professores/responsáveis:", err);
-    const dicaIndice = err.code === "failed-precondition"
-      ? " O Firestore precisa de um índice composto pra essa busca — abra o console do navegador (F12), procure o link que ele imprimiu (\"...create it here...\") e clique em \"Criar índice\"; depois de alguns minutos, tente de novo."
-      : "";
-    state.gestaoEquipeErro = `Não foi possível carregar professores e responsáveis agora${err.code ? ` (${err.code})` : ""}.${dicaIndice}`;
+    console.error("Erro inesperado ao carregar professores/responsáveis:", err);
+    state.gestaoEquipeErro = `Não foi possível carregar professores e responsáveis agora${err.code ? ` (${err.code})` : ""}.`;
   } finally {
     state.gestaoEquipeCarregando = false;
     render();
@@ -1528,12 +1914,35 @@ async function carregarTurmasDoProfessorGestao(professorId){
   state.profTurmasModalErro = "";
   render();
   try {
-    const q = query(collection(db, "turmas"), where("professorId", "==", professorId));
+    // As regras de segurança do Firestore (ver DATABASE.md / firestore.rules)
+    // só conseguem confirmar a permissão da instituição em "turmas" se a
+    // consulta filtrar por "escolaId ==" também — sem isso, o Firestore não
+    // consegue provar estaticamente que TODOS os resultados pertencem à
+    // escola da instituição logada, e recusa a consulta inteira com
+    // "permission-denied" (mesmo que os documentos, um a um, passassem na
+    // regra). Filtrar pelas duas igualdades (professorId E escolaId) não
+    // precisa de índice composto — o Firestore combina os dois índices
+    // automáticos normalmente.
+    const q = query(
+      collection(db, "turmas"),
+      where("professorId", "==", professorId),
+      where("escolaId", "==", state.escolaSelecionadaId),
+    );
     const snaps = await getDocs(q);
     state.profTurmasModalTurmas = snaps.docs.map(d => ({ id: d.id, ...d.data(), alunos: d.data().alunos || [] }));
   } catch(err){
     state.profTurmasModalTurmas = [];
-    state.profTurmasModalErro = "Não foi possível carregar as turmas deste professor agora. Tente de novo.";
+    // Loga o código de verdade (F12 no navegador) — "permission-denied" aqui
+    // costuma ser a regra de segurança do Firestore pra "turmas" negando a
+    // consulta; "failed-precondition" é índice composto faltando (o console
+    // do navegador imprime um link "...create it here..." pra criar).
+    console.error("Erro ao carregar turmas do professor:", err?.code, err);
+    const dica = err?.code === "failed-precondition"
+      ? " O Firestore está pedindo um índice pra essa busca — abra o console do navegador (F12) e clique no link que ele imprimiu (\"...create it here...\")."
+      : err?.code === "permission-denied"
+        ? " As regras de segurança do Firestore estão bloqueando essa consulta na coleção \"turmas\" — vale revisar se elas permitem `list` filtrando por professorId pra quem é da equipe da escola."
+        : "";
+    state.profTurmasModalErro = `Não foi possível carregar as turmas deste professor agora${err?.code ? ` (${err.code})` : ""}.${dica}`;
   } finally {
     state.profTurmasModalCarregando = false;
     render();
@@ -1563,6 +1972,84 @@ async function carregarAlunosDaInstituicao(escolaId){
   }
 }
 
+/* Turmas de verdade da escola (coleção "turmas"), usadas na aba "Turmas".
+   Antes essa aba lia de school.turmas, um array estático que vinha dentro
+   do próprio documento da escola e nunca era atualizado — turmas criadas
+   ou importadas pela aba "Professores" (que gravam na coleção "turmas")
+   não apareciam aqui. Uma única igualdade (escolaId ==) não precisa de
+   índice composto no Firestore. */
+async function carregarTurmasDaInstituicao(escolaId){
+  state.instTurmasCarregando = true;
+  state.instTurmasErro = "";
+  render();
+  try {
+    const q = query(collection(db, "turmas"), where("escolaId", "==", escolaId));
+    const snaps = await getDocs(q);
+    state.instTurmas = snaps.docs.map(d => ({ id: d.id, ...d.data(), alunos: d.data().alunos || [] }));
+    state.instTurmasEscolaId = escolaId;
+  } catch(err){
+    state.instTurmas = [];
+    console.error("Erro ao carregar turmas da instituição:", err?.code, err);
+    state.instTurmasErro = "Não foi possível carregar as turmas agora. Tente de novo.";
+  } finally {
+    state.instTurmasCarregando = false;
+    render();
+  }
+}
+
+/* Frequência real de cada turma, calculada em cima da chamada que os
+   professores já fizeram (coleção "registrosAula" — um documento por
+   turma por dia, com `presencas: { [nomeAluno]: "presente"|"falta"|
+   "justificada" }`). Antes a aba "Estatísticas" só mostrava um número
+   de frequência estático (digitado direto no documento da escola);
+   agora ele é a média de presença de verdade, dia a dia.
+   Observação: isso traz TODOS os registros de chamada da escola numa
+   query só (só dá pra filtrar por escolaId, que é o que as regras do
+   Firestore exigem — ver o comentário em carregarTurmasDoProfessorGestao
+   sobre isso). Pra uma escola pequena isso é tranquilo; se a lista de
+   chamadas crescer muito ao longo dos anos, vale limitar por um período
+   (ex.: só o mês atual) usando um índice composto (escolaId + data). */
+async function carregarFrequenciaDaInstituicao(escolaId){
+  state.instFrequenciaCarregando = true;
+  state.instFrequenciaErro = "";
+  render();
+  try {
+    const q = query(collection(db, "registrosAula"), where("escolaId", "==", escolaId));
+    const snaps = await getDocs(q);
+    const hoje = dataDeHojeISO();
+    const porTurma = {};
+    snaps.forEach(doc => {
+      const dados = doc.data();
+      const turmaId = dados.turmaId;
+      if(!turmaId) return;
+      if(!porTurma[turmaId]){
+        porTurma[turmaId] = { presentesTotal: 0, totalRegistros: 0, presentesHoje: 0, totalHoje: 0, temRegistroHoje: false };
+      }
+      const valores = Object.values(dados.presencas || {});
+      const presentesDoDia = valores.filter(v => v === "presente").length;
+      porTurma[turmaId].presentesTotal += presentesDoDia;
+      porTurma[turmaId].totalRegistros += valores.length;
+      if(dados.data === hoje){
+        porTurma[turmaId].presentesHoje = presentesDoDia;
+        porTurma[turmaId].totalHoje = valores.length;
+        porTurma[turmaId].temRegistroHoje = true;
+      }
+    });
+    Object.values(porTurma).forEach(t => {
+      t.frequencia = t.totalRegistros ? Math.round((t.presentesTotal / t.totalRegistros) * 100) : null;
+    });
+    state.instFrequencia = porTurma;
+    state.instFrequenciaEscolaId = escolaId;
+  } catch(err){
+    console.error("Erro ao carregar frequência das turmas:", err?.code, err);
+    state.instFrequencia = {};
+    state.instFrequenciaErro = "Não foi possível carregar a frequência das turmas agora.";
+  } finally {
+    state.instFrequenciaCarregando = false;
+    render();
+  }
+}
+
 /* Data de hoje no formato "AAAA-MM-DD", usada como parte do id do
    documento em `registrosAula` (um por turma por dia). */
 function dataDeHojeISO(){
@@ -1571,6 +2058,18 @@ function dataDeHojeISO(){
   const mes = String(hoje.getMonth() + 1).padStart(2, "0");
   const dia = String(hoje.getDate()).padStart(2, "0");
   return `${ano}-${mes}-${dia}`;
+}
+
+/* Data de hoje por extenso, em português, pra exibir na tela (ex.:
+   "segunda-feira, 15 de setembro de 2026"). Antes esses cabeçalhos
+   mostravam um texto fixo digitado no documento da escola (campo
+   "data"), que nunca mudava — agora é sempre o dia real do aparelho
+   de quem está usando o site. */
+function dataDeHojeExtenso(){
+  const texto = new Date().toLocaleDateString("pt-BR", {
+    weekday: "long", day: "numeric", month: "long", year: "numeric",
+  });
+  return texto.charAt(0).toUpperCase() + texto.slice(1);
 }
 
 /* Carrega, na coleção `conteudos`, todos os conteúdos já cadastrados pelo
@@ -1789,6 +2288,7 @@ async function criarUsuarioNaInstituicao({ role, nome, email, senha, escolaId, e
 
   try {
     const usuarioDoc = { role, nome };
+    let listaEscolas = [];
     if(role === "professor"){
       usuarioDoc.disciplinas = disciplinas || [];
       // Guarda a(s) escola(s) do professor pra podermos listá-lo na tela de
@@ -1796,13 +2296,28 @@ async function criarUsuarioNaInstituicao({ role, nome, email, senha, escolaId, e
       // professor pode dar aula em mais de uma unidade. "escolaId" (a
       // primeira da lista) fica guardado também só por compatibilidade com
       // cadastros antigos que ainda dependem dele.
-      const listaEscolas = (escolasIds && escolasIds.length) ? escolasIds : [escolaId];
+      listaEscolas = (escolasIds && escolasIds.length) ? escolasIds : [escolaId];
       usuarioDoc.escolasIds = listaEscolas;
       usuarioDoc.escolaId = listaEscolas[0];
     }
     if(role === "instituicao") usuarioDoc.escolasIds = [escolaId];
 
     await setDoc(doc(db, "usuarios", uid), usuarioDoc);
+
+    if(role === "professor"){
+      // Um documento de vínculo por escola, em vez de depender de uma
+      // consulta "array-contains" em cima de "escolasIds" (que o Firestore
+      // nega quando a regra de segurança também precisa de um get()
+      // cruzado — ver DATABASE.md). Consultar "escolaProfessores" com
+      // "escolaId ==" é uma igualdade simples, então a regra de segurança
+      // consegue confirmar o acesso sem recusar a consulta inteira.
+      // Um professor em 2 escolas gera 2 documentos aqui, um pra cada.
+      await Promise.all(listaEscolas.map(id => setDoc(
+        doc(db, "escolaProfessores", `${id}_${uid}`),
+        { escolaId: id, professorId: uid, nome, disciplinas: disciplinas || [] },
+      )));
+    }
+
     return { uid };
   } catch(err){
     // A gravação no Firestore falhou depois do login já ter sido criado.
@@ -1816,37 +2331,116 @@ async function criarUsuarioNaInstituicao({ role, nome, email, senha, escolaId, e
   }
 }
 
+/* Atualiza nome/disciplinas de um professor em TODOS os lugares onde eles
+   ficam guardados: o cadastro "usuarios/{uid}" (fonte usada pelo próprio
+   login do professor) e cada doc de vínculo em "escolaProfessores" — um
+   por unidade em que ele dá aula, já que a lista da Gestão lê daí (ver
+   carregarEquipeDaEscola). Sem atualizar os dois, o nome ficaria
+   desatualizado ora no dashboard do professor, ora na lista da Gestão. */
+async function salvarEdicaoProfessor(uid, nome, disciplinas){
+  await updateDoc(doc(db, "usuarios", uid), { nome, disciplinas });
+  const qVinculos = query(collection(db, "escolaProfessores"), where("professorId", "==", uid));
+  const snaps = await getDocs(qVinculos);
+  await Promise.all(snaps.docs.map(d => updateDoc(d.ref, { nome, disciplinas })));
+}
+
+/* Remove um professor de UMA unidade: apaga o vínculo dele em
+   "escolaProfessores" pra essa escola e as turmas dele nessa mesma
+   escola (senão ficariam turmas "órfãs", sem professor visível pra
+   ninguém editar). Se essa era a única unidade em que ele dava aula,
+   também apaga o cadastro em "usuarios/{uid}".
+   Observação: isso NÃO apaga o login dele no Firebase Authentication —
+   o SDK do cliente só pode apagar a conta que está logada no momento,
+   nunca a de outra pessoa. Pra remover o acesso por completo (o e-mail
+   deixar de funcionar), é preciso uma Cloud Function com o Admin SDK, ou
+   apagar manualmente pelo Console do Firebase (Authentication > Users). */
+async function excluirProfessorDaEscola(uid, escolaId){
+  await deleteDoc(doc(db, "escolaProfessores", `${escolaId}_${uid}`));
+
+  const qTurmas = query(collection(db, "turmas"), where("professorId", "==", uid), where("escolaId", "==", escolaId));
+  const turmasSnap = await getDocs(qTurmas);
+  await Promise.all(turmasSnap.docs.map(d => deleteDoc(d.ref)));
+
+  const qOutrosVinculos = query(collection(db, "escolaProfessores"), where("professorId", "==", uid));
+  const outrosSnap = await getDocs(qOutrosVinculos);
+  if(outrosSnap.empty){
+    await deleteDoc(doc(db, "usuarios", uid));
+  }
+}
+
 function turmasView(school){
-  const cards = school.turmas.map(t => `
-    <div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;">
-        <div>
-          <div style="font-size:15.5px;font-weight:600;color:var(--ink);">${escapeHtml(t.nome)}</div>
-          <div style="font-size:12.5px;color:var(--slate);margin-top:2px;">${t.alunos} alunos</div>
+  let cards;
+  if(state.instTurmasCarregando){
+    cards = `<div style="padding:20px;font-size:14px;color:var(--slate);">Carregando turmas…</div>`;
+  } else if(state.instTurmasErro){
+    cards = `<div style="padding:20px;font-size:14px;color:var(--red);">${escapeHtml(state.instTurmasErro)}</div>`;
+  } else {
+    const turmas = state.instTurmas || [];
+    cards = turmas.map(t => {
+      const qtdAlunos = (t.alunos || []).length;
+      return `
+      <button type="button" class="turma-card" data-action="abrir-turma-detalhe" data-id="${escapeHtml(t.id)}">
+        <div class="turma-card-head">
+          <div>
+            <div class="turma-card-nome">${escapeHtml(t.nome)}</div>
+            ${t.disciplina ? `<div class="turma-card-disciplina">${escapeHtml(t.disciplina)}</div>` : ""}
+          </div>
+          <span class="turma-card-chevron">${ICONS.chevronRight}</span>
         </div>
-        <span class="pill ${t.faltasHoje>4?'pill-red':t.faltasHoje>1?'pill-gold':'pill-green'}">
-          ${t.faltasHoje} ${t.faltasHoje===1?'falta':'faltas'} hoje
-        </span>
-      </div>
-      <div style="margin-top:14px;">
-        <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--slate);margin-bottom:4px;">
-          <span>Frequência do mês</span><span style="font-weight:600;color:var(--ink);">${t.frequencia}%</span>
+        <div class="turma-card-meta">
+          ${t.horario ? `<span class="turma-card-tag">${ICONS.clock} ${escapeHtml(t.horario)}</span>` : ""}
+          ${t.sala ? `<span class="turma-card-tag">Sala ${escapeHtml(t.sala)}</span>` : ""}
+          <span class="turma-card-tag">${ICONS.users} ${qtdAlunos} aluno${qtdAlunos===1?"":"s"}</span>
         </div>
-        <div class="progress-track">
-          <div class="progress-fill" style="width:${t.frequencia}%; background:${t.frequencia<90?'#C4544A':'linear-gradient(90deg, var(--gold), var(--gold-light))'};"></div>
-        </div>
-      </div>
-    </div>`).join("") || `<div style="padding:20px;font-size:14px;color:var(--slate);">Nenhuma turma cadastrada ainda.</div>`;
+      </button>`;
+    }).join("") || `<div class="turmas-empty-state"><strong>Nenhuma turma cadastrada ainda.</strong><span>Use um dos botões acima para criar a primeira turma desta unidade.</span></div>`;
+  }
 
   return `
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
       <div>
         <h2 class="section-title" style="margin-bottom:0;">Turmas</h2>
-        <p class="section-eyebrow">${escapeHtml(school.nome)} · ${escapeHtml(school.data)}</p>
+        <p class="section-eyebrow">${escapeHtml(school.nome)} · ${escapeHtml(dataDeHojeExtenso())}</p>
       </div>
-      <button type="button" class="teacher-primary-btn" style="white-space:nowrap;" data-action="abrir-criar-turma">Criar turma</button>
+      <span style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button type="button" class="teacher-primary-btn" style="white-space:nowrap;background:#fff;color:var(--ink);border:1px solid rgba(18,32,50,.16);margin-top:0;" data-action="abrir-importar-turmas">${ICONS.upload} Importar turmas (PDF)</button>
+        <button type="button" class="teacher-primary-btn" style="white-space:nowrap;margin-top:0;" data-action="abrir-criar-turma">Criar turma</button>
+      </span>
     </div>
-    <div class="grid-cards">${cards}</div>`;
+    <div class="grid-cards turma-cards-grid">${cards}</div>`;
+}
+
+/* Modal de detalhe de uma turma (aberto ao tocar no card na aba
+   "Turmas") — mostra os dados da turma e a lista de alunos vinculados. */
+function turmaDetalheModal(){
+  if(!state.turmaDetalheId) return "";
+  const turma = (state.instTurmas || []).find(t => t.id === state.turmaDetalheId);
+  if(!turma) return "";
+
+  const alunos = turma.alunos || [];
+  const listaAlunosHtml = alunos.length
+    ? `<div class="card flush">${alunos.map(nome => `
+        <div class="row">
+          <span style="font-size:14.5px;color:var(--ink);font-weight:500;">${escapeHtml(nome)}</span>
+        </div>`).join("")}</div>`
+    : `<div class="teacher-empty-state"><strong>Nenhum aluno vinculado ainda.</strong><span>Edite a turma pra adicionar alunos.</span></div>`;
+
+  return `
+  <div class="aluno-modal-backdrop" data-action="fechar-turma-detalhe-modal">
+    <div class="aluno-modal" role="dialog" aria-modal="true" aria-label="Detalhes da turma" data-action="noop">
+      <div class="aluno-modal-head">
+        <div>
+          <h2>${escapeHtml(turma.nome)}</h2>
+          <p class="section-eyebrow" style="margin:2px 0 0;">${escapeHtml(turma.disciplina || "")}${turma.disciplina && turma.horario ? " · " : ""}${escapeHtml(turma.horario || "")}${turma.sala ? ` · Sala ${escapeHtml(turma.sala)}` : ""}</p>
+        </div>
+        <button type="button" class="secretaria-modal-close" style="color:var(--slate);" data-action="fechar-turma-detalhe-modal" aria-label="Fechar">${ICONS.close}</button>
+      </div>
+      <div class="aluno-modal-section">
+        <h3 class="teacher-label">${alunos.length} aluno${alunos.length===1?"":"s"}</h3>
+        ${listaAlunosHtml}
+      </div>
+    </div>
+  </div>`;
 }
 
 /* Sub-aba "Estatísticas": indicadores de frequência da unidade — antes
@@ -1862,9 +2456,59 @@ function estatisticasView(school){
       <span class="pill pill-red">${a.faltasMes} faltas</span>
     </div>`).join("") || `<div style="padding:20px;font-size:14px;color:var(--slate);">Sem destaques de falta.</div>`;
 
+  let turmasHtml;
+  if(state.instTurmasCarregando || state.instFrequenciaCarregando){
+    turmasHtml = `<div style="padding:20px;font-size:14px;color:var(--slate);">Carregando frequência das turmas…</div>`;
+  } else if(state.instTurmasErro || state.instFrequenciaErro){
+    turmasHtml = `<div style="padding:20px;font-size:14px;color:var(--red);">${escapeHtml(state.instTurmasErro || state.instFrequenciaErro)}</div>`;
+  } else {
+    const turmas = state.instTurmas || [];
+    const frequencias = state.instFrequencia || {};
+    // Turma com frequência calculada vem primeiro, da maior pra menor;
+    // quem ainda não tem nenhuma chamada registrada fica por último.
+    const turmasOrdenadas = [...turmas].sort((a, b) => {
+      const fa = frequencias[a.id]?.frequencia;
+      const fb = frequencias[b.id]?.frequencia;
+      if(fa == null && fb == null) return 0;
+      if(fa == null) return 1;
+      if(fb == null) return -1;
+      return fb - fa;
+    });
+    turmasHtml = turmasOrdenadas.map((t, i) => {
+      const f = frequencias[t.id];
+      const destaque = i === 0 && f && f.frequencia != null;
+      const frequenciaHtml = (f && f.frequencia != null)
+        ? `<div style="margin-top:12px;">
+            <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--slate);margin-bottom:4px;">
+              <span>Frequência geral</span><span style="font-weight:600;color:var(--ink);">${f.frequencia}%</span>
+            </div>
+            <div class="progress-track">
+              <div class="progress-fill" style="width:${f.frequencia}%; background:${f.frequencia<75?'#C4544A':'linear-gradient(90deg, var(--gold), var(--gold-light))'};"></div>
+            </div>
+          </div>`
+        : `<p style="font-size:12.5px;color:var(--slate);margin-top:12px;">Ainda sem chamada registrada.</p>`;
+      const presencaHojeHtml = (f && f.temRegistroHoje)
+        ? `<span class="pill ${f.presentesHoje === f.totalHoje ? 'pill-green' : (f.totalHoje - f.presentesHoje > 3 ? 'pill-red' : 'pill-gold')}">${f.presentesHoje}/${f.totalHoje} presentes hoje</span>`
+        : `<span class="pill" style="background:rgba(18,32,50,.06);color:var(--slate);">Sem chamada hoje</span>`;
+      return `
+      <div class="card${destaque ? " turma-destaque-card" : ""}" style="${destaque ? "" : ""}">
+        ${destaque ? `<div class="turma-destaque-badge">${ICONS.trendUp} Maior frequência</div>` : ""}
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+          <div>
+            <div style="font-size:15.5px;font-weight:600;color:var(--ink);">${escapeHtml(t.nome)}</div>
+            ${t.disciplina ? `<div style="font-size:12.5px;color:var(--slate);margin-top:2px;">${escapeHtml(t.disciplina)}</div>` : ""}
+          </div>
+          ${presencaHojeHtml}
+        </div>
+        ${frequenciaHtml}
+      </div>`;
+    }).join("") || `<div class="turmas-empty-state"><strong>Nenhuma turma cadastrada ainda.</strong><span>Crie turmas na aba "Turmas" pra acompanhar a frequência delas aqui.</span></div>`;
+  }
+
   return `
     <h2 class="section-title">Frequência de hoje</h2>
-    <p class="section-eyebrow">${escapeHtml(school.data)}</p>
+    <p class="section-eyebrow">${escapeHtml(dataDeHojeExtenso())}</p>
+    <div class="grid-cards turma-cards-grid">${turmasHtml}</div>
     <h2 class="section-title" style="margin-top:22px;">Alunos com mais faltas</h2>
     <p class="section-eyebrow">Últimos 30 dias · acompanhamento recomendado</p>
     <div class="card flush">${faltantes}</div>`;
@@ -2115,6 +2759,36 @@ function bindEvents(){
       render();
       return;
     }
+    if(t.id === "import-turmas-pdf-file"){
+      const file = t.files && t.files[0];
+      if(!file) return;
+      state.importTurmasArquivoNome = file.name;
+      state.importTurmasLendoPdf = true;
+      state.importTurmasErro = "";
+      state.importTurmasPreview = null;
+      state.importTurmasResultado = null;
+      render();
+      try {
+        const texto = await extrairTextoDoPdf(file);
+        analisarTextoImportado(texto);
+      } catch(err){
+        console.error("Erro ao ler PDF:", err);
+        state.importTurmasErro = err?.message === "pdfjs-nao-carregado"
+          ? "A biblioteca de leitura de PDF não carregou (conexão com cdnjs.cloudflare.com bloqueada?). Tente de novo em alguns instantes."
+          : "Não consegui ler esse PDF automaticamente (pode ser uma imagem escaneada, sem texto de verdade). Tente exportar a lista novamente em um PDF com texto selecionável, ou crie as turmas manualmente pelo botão \"Criar turma\".";
+      } finally {
+        state.importTurmasLendoPdf = false;
+        render();
+      }
+      return;
+    }
+    if(t.dataset && t.dataset.importField){
+      const i = Number(t.dataset.row);
+      if(state.importTurmasPreview && state.importTurmasPreview[i]){
+        state.importTurmasPreview[i][t.dataset.importField] = t.value;
+      }
+      return;
+    }
     if(t.id === "nova-turma-disciplina"){ state.novaTurmaDisciplina = t.value; return; }
     if(t.id === "turma-modal-professor"){
       const id = t.value;
@@ -2165,8 +2839,13 @@ function bindEvents(){
         state.instTab = "turmas";
         state.instAlunos = null;
         state.instAlunosEscolaId = null;
+        state.instTurmas = null;
+        state.instTurmasEscolaId = null;
+        state.instFrequencia = null;
+        state.instFrequenciaEscolaId = null;
         state.screen = "instituicao";
         render();
+        carregarTurmasDaInstituicao(state.escolaSelecionadaId);
         break;
 
       case "open-escola-picker":
@@ -2191,6 +2870,19 @@ function bindEvents(){
       case "set-inst-tab":
         state.instTab = el.dataset.key;
         render();
+        if(state.instTab === "turmas" && state.escolaSelecionadaId
+          && (state.instTurmas === null || state.instTurmasEscolaId !== state.escolaSelecionadaId)
+          && !state.instTurmasCarregando){
+          carregarTurmasDaInstituicao(state.escolaSelecionadaId);
+        }
+        if(state.instTab === "estatisticas" && state.escolaSelecionadaId){
+          if((state.instTurmas === null || state.instTurmasEscolaId !== state.escolaSelecionadaId) && !state.instTurmasCarregando){
+            carregarTurmasDaInstituicao(state.escolaSelecionadaId);
+          }
+          if((state.instFrequencia === null || state.instFrequenciaEscolaId !== state.escolaSelecionadaId) && !state.instFrequenciaCarregando){
+            carregarFrequenciaDaInstituicao(state.escolaSelecionadaId);
+          }
+        }
         if(state.instTab === "alunos" && state.escolaSelecionadaId
           && (state.instAlunos === null || state.instAlunosEscolaId !== state.escolaSelecionadaId)
           && !state.instAlunosCarregando){
@@ -2678,9 +3370,9 @@ function bindEvents(){
       }
 
       // Abre o mesmo modal de turmas, mas sem professor pré-selecionado —
-      // usado pelo botão "Criar turma" na aba "Turmas & faltas" e no topo
-      // da lista de professores, já que uma disciplina (ex.: Inglês) pode
-      // ter várias turmas, cada uma com professor e horário diferentes.
+      // usado pelo botão "Criar turma" da aba "Turmas", já que uma
+      // disciplina (ex.: Inglês) pode ter várias turmas, cada uma com
+      // professor e horário diferentes.
       case "abrir-criar-turma": {
         state.profTurmasModalAberto = true;
         state.profTurmasModalId = null;
@@ -2701,6 +3393,17 @@ function bindEvents(){
         }
         break;
       }
+
+      case "abrir-turma-detalhe": {
+        state.turmaDetalheId = el.dataset.id;
+        render();
+        break;
+      }
+
+      case "fechar-turma-detalhe-modal":
+        state.turmaDetalheId = null;
+        render();
+        break;
 
       case "fechar-professor-turmas-modal":
         state.profTurmasModalAberto = false;
@@ -2754,6 +3457,9 @@ function bindEvents(){
           state.novaTurmaSala = "";
           state.novaTurmaAlunos = [];
           await carregarTurmasDoProfessorGestao(professorId);
+          if(state.instTurmasEscolaId === state.escolaSelecionadaId){
+            carregarTurmasDaInstituicao(state.escolaSelecionadaId);
+          }
         } catch(err){
           state.profTurmasModalErro = `Não foi possível criar a turma agora${err.code ? ` (${err.code})` : ""}.`;
         } finally {
@@ -2777,6 +3483,138 @@ function bindEvents(){
           state.profTurmasModalErro = `Não foi possível excluir a turma agora${err.code ? ` (${err.code})` : ""}.`;
         } finally {
           state.profTurmaExcluindoId = null;
+          render();
+        }
+        break;
+      }
+
+      case "abrir-editar-professor": {
+        const id = el.dataset.id;
+        const professor = (state.gestaoProfessores || []).find(p => p.id === id);
+        state.editProfessorModalAberto = true;
+        state.editProfessorId = id;
+        state.editProfessorNome = professor?.nome || el.dataset.nome || "";
+        state.editProfessorDisciplinas = professor ? [...professor.disciplinas] : [];
+        state.editProfessorErro = "";
+        render();
+        break;
+      }
+
+      case "fechar-editar-professor-modal":
+        state.editProfessorModalAberto = false;
+        state.editProfessorId = null;
+        render();
+        break;
+
+      case "toggle-disciplina-editar-professor": {
+        const curso = el.dataset.curso;
+        const lista = state.editProfessorDisciplinas;
+        state.editProfessorDisciplinas = lista.includes(curso) ? lista.filter(x => x !== curso) : [...lista, curso];
+        render();
+        break;
+      }
+
+      case "salvar-edicao-professor": {
+        const uid = state.editProfessorId;
+        if(!uid) break;
+        const nome = (document.getElementById("edit-professor-nome")?.value || "").trim();
+        state.editProfessorErro = "";
+        if(!nome){
+          state.editProfessorErro = "Digite o nome do professor.";
+          render();
+          break;
+        }
+        if(state.editProfessorDisciplinas.length === 0){
+          state.editProfessorErro = "Selecione ao menos uma disciplina.";
+          render();
+          break;
+        }
+        state.editProfessorSalvando = true;
+        render();
+        try {
+          await salvarEdicaoProfessor(uid, nome, state.editProfessorDisciplinas);
+          state.editProfessorModalAberto = false;
+          state.editProfessorId = null;
+          await carregarEquipeDaEscola(state.escolaSelecionadaId);
+        } catch(err){
+          state.editProfessorErro = `Não foi possível salvar as alterações agora${err.code ? ` (${err.code})` : ""}.`;
+        } finally {
+          state.editProfessorSalvando = false;
+          render();
+        }
+        break;
+      }
+
+      case "confirmar-excluir-professor": {
+        const id = el.dataset.id;
+        const nome = el.dataset.nome || "este professor";
+        if(!id) break;
+        // Confirmação nativa mesmo — é uma ação destrutiva (some da unidade
+        // atual e apaga as turmas dele aqui) e não tem "desfazer".
+        const ok = window.confirm(`Remover ${nome} desta unidade? As turmas dele nesta unidade também serão excluídas. O login dele continua existindo (peça pra equipe técnica remover o acesso, se for o caso).`);
+        if(!ok) break;
+        state.editProfessorExcluindoId = id;
+        render();
+        try {
+          await excluirProfessorDaEscola(id, state.escolaSelecionadaId);
+          await carregarEquipeDaEscola(state.escolaSelecionadaId);
+        } catch(err){
+          state.gestaoEquipeErro = `Não foi possível excluir o professor agora${err.code ? ` (${err.code})` : ""}.`;
+        } finally {
+          state.editProfessorExcluindoId = null;
+          render();
+        }
+        break;
+      }
+
+      case "abrir-importar-turmas": {
+        state.importTurmasModalAberto = true;
+        state.importTurmasTexto = "";
+        state.importTurmasArquivoNome = "";
+        state.importTurmasPreview = null;
+        state.importTurmasErro = "";
+        state.importTurmasResultado = null;
+        render();
+        if((state.gestaoProfessores === null || state.gestaoEquipeEscolaId !== state.escolaSelecionadaId)
+          && !state.gestaoEquipeCarregando && state.escolaSelecionadaId){
+          carregarEquipeDaEscola(state.escolaSelecionadaId);
+        }
+        break;
+      }
+
+      case "fechar-importar-turmas-modal":
+        state.importTurmasModalAberto = false;
+        render();
+        break;
+
+      case "toggle-importar-linha": {
+        const i = Number(el.dataset.row);
+        if(!state.importTurmasPreview || !state.importTurmasPreview[i]) break;
+        state.importTurmasPreview[i].selecionada = !state.importTurmasPreview[i].selecionada;
+        render();
+        break;
+      }
+
+      case "confirmar-importar-turmas": {
+        const escola = state.data.escolas?.[state.escolaSelecionadaId];
+        if(!escola || !state.importTurmasPreview) break;
+        state.importTurmasSalvando = true;
+        state.importTurmasErro = "";
+        render();
+        try {
+          const resultado = await importarTurmasEmLote(
+            state.importTurmasPreview, state.escolaSelecionadaId, escola.nome, state.gestaoProfessores || [],
+          );
+          state.importTurmasResultado = resultado;
+          state.importTurmasPreview = null;
+          state.importTurmasTexto = "";
+          if(state.instTurmasEscolaId === state.escolaSelecionadaId){
+            carregarTurmasDaInstituicao(state.escolaSelecionadaId);
+          }
+        } catch(err){
+          state.importTurmasErro = `Não foi possível importar as turmas agora${err.code ? ` (${err.code})` : ""}.`;
+        } finally {
+          state.importTurmasSalvando = false;
           render();
         }
         break;
