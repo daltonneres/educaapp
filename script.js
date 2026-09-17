@@ -61,8 +61,10 @@ import {
   onAuthStateChanged,
   signInWithEmailAndPassword,
   signOut,
-  sendPasswordResetEmail,
   createUserWithEmailAndPassword,
+  EmailAuthProvider,
+  reauthenticateWithCredential,
+  updatePassword,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   initializeFirestore,
@@ -78,7 +80,24 @@ import {
   arrayUnion,
   arrayRemove,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
 import { firebaseConfig } from "./firebase-config.js";
+import {
+  contratoEstadoInicial,
+  contratoModal,
+  contratoRecalcular,
+  contratoAplicarEmpresa,
+  contratoValidar,
+  contratoSugerirAcessos,
+  contratoPrecisaLoginAluno,
+  abrirContratoParaImpressao,
+  variantesDeEmail,
+  senhaProvisoria,
+  DOMINIO_ALUNO,
+  DOMINIO_RESPONSAVEL,
+  interpretarContratoTexto,
+  importarContratosModal,
+} from "./contratos.js";
 
 const firebaseApp = initializeApp(firebaseConfig);
 const auth = getAuth(firebaseApp);
@@ -101,6 +120,63 @@ const db = initializeFirestore(firebaseApp, {
    ------------------------------------------------------------------ */
 const secondaryApp = initializeApp(firebaseConfig, "secondary-user-creation");
 const secondaryAuth = getAuth(secondaryApp);
+
+/* ------------------------------------------------------------------
+   Funções administrativas (Cloud Functions com o Admin SDK).
+   O SDK do navegador NÃO consegue trocar a senha nem apagar o login de
+   OUTRA pessoa — só da conta que está logada no momento. Para a Gestão
+   poder definir a senha de um aluno/professor/responsável na hora (e
+   apagar o login de vez), existe um par de Cloud Functions no projeto
+   (veja BACKEND-ADMIN.md, com o código pronto pra publicar).
+
+   Sem essas funções publicadas, "Senhas & acessos" mostra o aviso pra
+   publicar (BACKEND-ADMIN.md) em vez de travar — mas trocar a senha de
+   outra pessoa depende delas de verdade, não tem plano B por e-mail
+   aqui (a equipe até troca a própria senha sem backend, em "Meu
+   perfil", porque aí é a própria conta logada).
+
+   Se você publicar as funções em outra região, troque só a linha abaixo.
+   ------------------------------------------------------------------ */
+const REGIAO_FUNCOES = "us-central1";
+let _funcoes = null;
+function funcoesAdmin(){
+  if(!_funcoes) _funcoes = getFunctions(firebaseApp, REGIAO_FUNCOES);
+  return _funcoes;
+}
+
+/* Chama uma Cloud Function do Admin SDK. Devolve sempre um erro com
+   `code` do Firebase pra quem chamou decidir a mensagem. */
+async function chamarFuncaoAdmin(nome, dados){
+  const fn = httpsCallable(funcoesAdmin(), nome);
+  const resposta = await fn(dados);
+  return resposta.data;
+}
+
+/* Traduz o erro de uma Cloud Function pra uma frase que a secretaria
+   entenda — em especial o caso "ainda não publiquei o backend". */
+function mensagemErroAdmin(err){
+  const code = err?.code || "";
+  if(code === "functions/not-found" || code === "functions/unavailable" || code === "functions/internal"){
+    return "A função de administração ainda não está publicada no Firebase — sem ela, não dá pra trocar a senha de outra pessoa por aqui. Publique as Cloud Functions (passo a passo em BACKEND-ADMIN.md) e tente de novo.";
+  }
+  if(code === "functions/permission-denied") return "Seu usuário não tem permissão para essa ação administrativa.";
+  if(code === "functions/unauthenticated") return "Sua sessão expirou. Saia e entre de novo.";
+  if(code === "functions/invalid-argument") return err?.message || "Dados inválidos para essa ação.";
+  return `Não foi possível concluir agora${code ? ` (${code})` : ""}. Tente de novo.`;
+}
+
+/* Define a senha de OUTRO usuário (precisa da Cloud Function publicada). */
+async function definirSenhaDeOutroUsuario(uid, senha){
+  return chamarFuncaoAdmin("definirSenhaUsuario", { uid, senha });
+}
+
+/* Apaga o login (Firebase Authentication) de outro usuário. Também
+   depende da Cloud Function; quando ela não existe, o cadastro no
+   Firestore é apagado mesmo assim e o login fica órfão (sem dados, a
+   pessoa entra e não vê nada) até ser removido pelo Console. */
+async function excluirLoginDeOutroUsuario(uid){
+  return chamarFuncaoAdmin("excluirUsuarioAuth", { uid });
+}
 
 /* ================================================================== */
 /* Icons (tiny inline SVGs)                                             */
@@ -133,15 +209,55 @@ const ICONS = {
   book: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z"/></svg>`,
   chart: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><rect x="7" y="12" width="3" height="6"/><rect x="12.5" y="8" width="3" height="10"/><rect x="18" y="5" width="3" height="13"/></svg>`,
   upload: `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M5 16v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3"/></svg>`,
+  key: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 8.8-8.8"/><path d="m17 6 2.5 2.5"/><path d="m14.5 8.5 2.5 2.5"/></svg>`,
+  shield: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-4"/></svg>`,
+  lifebuoy: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5"/><path d="m5.6 5.6 3.9 3.9M14.5 14.5l3.9 3.9M18.4 5.6l-3.9 3.9M9.5 14.5l-3.9 3.9"/></svg>`,
+  cake: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21h16v-6a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v6Z"/><path d="M4 16c1.5 1.2 3 1.2 4.5 0S11.5 14.8 13 16s3 1.2 4.5 0"/><path d="M12 8V5"/><path d="M12 3.5c.7.6.7 1.4 0 1.5-.7-.1-.7-.9 0-1.5Z"/><path d="M8 9V6.5M16 9V6.5"/></svg>`,
   fileText: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h6"/></svg>`,
 };
 
 /* Contatos de WhatsApp da secretaria, por unidade. Ajuste os números aqui
    se eles mudarem — não precisa mexer em mais nenhum lugar do código. */
 const SECRETARIA_WHATSAPP = [
-  { id: "salto", nome: "Escola Salto do Lontra", numero: "469938578" },
+  { id: "salto", nome: "Escola Salto do Lontra", numero: "46999318578" },
   { id: "prata", nome: "Escola Nova Prata do Iguaçu", numero: "4699274677" },
 ];
+
+/* Contato do suporte técnico (quem cuida do sistema), mostrado na aba
+   "Meu perfil" da EQUIPE — que é a própria secretaria e portanto não
+   precisa de um botão "falar com a secretaria". Ajuste aqui. */
+const SUPORTE_TECNICO = {
+  nome: "Suporte do Educa+",
+  whatsapp: "46999711937",
+  email: "dev.neresdalton@gmail.com",
+};
+
+/* Mensagem de parabéns enviada pela aba "Aniversários". Ajuste os textos
+   aqui se a escola quiser mudar o jeito de falar — o resto continua
+   funcionando igual. */
+const MENSAGEM_ANIVERSARIO = {
+  paraAluno: (primeiroNome) =>
+    `Feliz aniversário, ${primeiroNome}! 🎉\n\nToda a equipe do Educa+ Centro Educacional deseja um dia muito especial pra você. Conte sempre com a gente!`,
+  paraResponsavel: (primeiroNomeResponsavel, nomeAluno) =>
+    `Olá, ${primeiroNomeResponsavel}! 🎉\n\nHoje é aniversário do(a) ${nomeAluno}! A equipe do Educa+ Centro Educacional deseja muitas felicidades e pede que dê os parabéns por nós.`,
+};
+
+/* Link do WhatsApp já com a mensagem escrita, pronta pra secretaria só
+   conferir e apertar enviar. */
+function whatsappLinkComTexto(numero, texto){
+  return `${whatsappLink(numero)}?text=${encodeURIComponent(texto)}`;
+}
+
+/* Um contato só vale como WhatsApp se tiver cara de telefone (DDD +
+   número). E-mail ou campo vazio caem fora. */
+function telefoneValido(contato){
+  const digits = String(contato || "").replace(/\D/g, "");
+  return digits.length >= 10 && digits.length <= 13 ? digits : "";
+}
+
+function primeiroNome(nome){
+  return String(nome || "").trim().split(/\s+/)[0] || "";
+}
 
 function whatsappLink(numero){
   const digits = String(numero).replace(/\D/g, "");
@@ -167,6 +283,14 @@ const CURSOS_POR_ESCOLA = {
   prata: ["Inglês", "Informática"],
 };
 const TODOS_OS_CURSOS = ["Inglês", "Recreação", "Robótica", "Informática"];
+
+/* Ordem da semana, usada pra manter os dias escolhidos no contrato
+   sempre na sequência certa ("terça-feira e quinta-feira"). */
+const DIAS_SEMANA_ORDEM = ["segunda-feira","terça-feira","quarta-feira","quinta-feira","sexta-feira","sábado"];
+
+/* Nomes dos meses usados na aba "Aniversários". */
+const MESES_CURTOS = ["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"];
+const MESES_LONGOS = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
 
 function cursosDaEscola(nomeEscola){
   const nome = (nomeEscola || "").toLowerCase();
@@ -494,9 +618,31 @@ const state = {
   perfilNomeInput: "",
   perfilNomeSalvando: false,
   perfilNomeErro: "",
-  perfilSenhaResetEnviando: false,
-  perfilSenhaResetMensagem: "",
-  perfilSenhaResetErro: "",
+
+  // "Meu perfil" > trocar a própria senha aqui mesmo (sem depender de
+  // e-mail nem de desenvolvedor): pede a senha atual, confirma com o
+  // Firebase e grava a nova.
+  perfilSenhaTrocando: false,
+  perfilSenhaErro: "",
+  perfilSenhaMensagem: "",
+
+  // Gestão > sub-aba "Senhas & acessos"
+  gestaoAcessosBusca: "",
+  gestaoAcessosGrupo: "todos",    // todos | alunos | professores | responsaveis
+
+  // modal "Gerenciar acesso de {pessoa}" — troca de senha e exclusão
+  acessoModalAberto: false,
+  acessoTipo: "",                 // aluno | professor | responsavel
+  acessoDocId: null,              // id do documento (alunos/{id} ou responsaveis/{id}); p/ professor é o próprio uid
+  acessoUid: null,                // uid no Firebase Authentication (pode ser null se a pessoa não tem login)
+  acessoNome: "",
+  acessoEmail: "",                // e-mail de acesso conhecido (pode estar vazio em cadastros antigos)
+  acessoDefinindoSenha: false,
+  acessoCriandoLogin: false,
+  acessoExcluindo: false,
+  acessoConfirmandoExclusao: false,
+  acessoErro: "",
+  acessoMensagem: "",
 
   // aba "Alunos" da instituição — lista carregada direto da coleção `alunos`
   // (com id de verdade, ao contrário do array resumido salvo em escolas/{id}.alunos)
@@ -538,6 +684,26 @@ const state = {
   alunoRespSalvando: false,
   alunoRespErro: "",
   alunoRespMensagem: "",
+
+  // aba "Aniversários"
+  aniversarioMes: String(new Date().getMonth() + 1),  // "1".."12" ou "todos"
+
+  alunoDetalheNascimentoInput: "",
+
+  // Gestão > Contratos — formulário do contrato que vai ser gerado.
+  // Todo o conteúdo (modelos por CNPJ, cláusulas, cálculo das parcelas)
+  // mora em contratos.js; aqui fica só o que o formulário digitou.
+  contrato: contratoEstadoInicial(),
+
+  // Gestão > Contratos > "Importar contratos já assinados": lê vários
+  // PDFs de uma vez, tenta reconhecer os dados de cada um e mostra uma
+  // prévia editável antes de gravar qualquer coisa no banco.
+  importContratosModalAberto: false,
+  importContratosLendo: false,          // true enquanto extrai texto de algum PDF
+  importContratosItens: [],             // [{ id, arquivoNome, contrato, avisos, selecionado, criarAcesso, status, erro }]
+  importContratosSalvando: false,
+  importContratosProgresso: { feito: 0, total: 0 },
+  importContratosResumo: null,          // { criados, atualizados, comLogin, erros }
 };
 
 const app = document.getElementById("app");
@@ -616,6 +782,9 @@ function normalizeAluno(id, dados){
     nome: dados.nome || "",
     turma: dados.turma || "",
     contato: dados.contato || "",
+    nascimento: dados.nascimento || "",   // "AAAA-MM-DD" — alimenta a aba "Aniversários"
+    email: dados.email || "",      // e-mail de acesso (login), quando o aluno tem
+    uid: dados.uid || null,        // uid no Firebase Auth, quando o aluno tem login
     escolaId: dados.escolaId || "",
     foto: dados.foto || (dados.nome || "?").split(" ").map(p=>p[0]).slice(0,2).join("").toUpperCase(),
     notas: Array.isArray(dados.notas) ? dados.notas : [],
@@ -672,12 +841,32 @@ onAuthStateChanged(auth, async (user) => {
     state.loginErro = "";
   } catch(err){
     console.error(err);
-    state.loginErro = err.message || "Não foi possível carregar seus dados. Tente novamente.";
+    state.loginErro = mensagemErroCarregamento(err);
     await signOut(auth);
     return; // onAuthStateChanged será chamado de novo com user=null
   }
   render();
 });
+
+/* Traduz o erro de carregar o perfil (logo após o login) pra uma frase
+   em português. Diferencia dois tipos de erro:
+   - os que a GENTE lança de propósito (ex.: "Fale com a secretaria") —
+     esses não têm `.code`, já vêm prontos, então é só usar a mensagem;
+   - os que o Firestore lança sozinho (têm `.code`, tipo "unavailable")
+     — esses vinham em inglês, direto da biblioteca, e apareciam crus na
+     tela. Agora ganham uma tradução.
+   Sem essa distinção, um erro de conexão aparecia como "Failed to get
+   document because the client is offline." direto pro usuário. */
+function mensagemErroCarregamento(err){
+  if(!err?.code) return err?.message || "Não foi possível carregar seus dados. Tente novamente.";
+  if(err.code === "unavailable"){
+    return "Não conseguimos falar com o servidor agora. Verifique sua internet (tente outra rede, se puder) e entre de novo. Se continuar acontecendo, avise o suporte técnico.";
+  }
+  if(err.code === "permission-denied"){
+    return "O servidor recusou o acesso (permission-denied). Fale com o suporte técnico.";
+  }
+  return `Não foi possível carregar seus dados agora (${err.code}). Tente novamente.`;
+}
 
 function mensagemErroFirebase(code){
   const mapa = {
@@ -1214,6 +1403,7 @@ function renderInstituicao(){
     { key:"estatisticas", label:"Estatísticas", icon:"chart" },
     { key:"financeiro", label:"Financeiro", icon:"wallet" },
     { key:"alunos", label:"Alunos", icon:"users" },
+    { key:"aniversarios", label:"Aniversários", icon:"cake" },
     { key:"professores", label:"Professores", icon:"users2" },
     { key:"responsaveis", label:"Responsáveis", icon:"users2" },
     { key:"gestao", label:"Gestão", icon:"building" },
@@ -1225,6 +1415,7 @@ function renderInstituicao(){
   else if(state.instTab === "estatisticas") body = estatisticasView(school);
   else if(state.instTab === "financeiro") body = financeiroInstituicaoView(school);
   else if(state.instTab === "alunos") body = alunosView(school);
+  else if(state.instTab === "aniversarios") body = aniversariosView(school);
   else if(state.instTab === "professores") body = professoresView(school);
   else if(state.instTab === "responsaveis") body = responsaveisView(school);
   else if(state.instTab === "gestao") body = gestaoInstituicaoView(school);
@@ -1243,12 +1434,16 @@ function renderInstituicao(){
     navAction: "set-inst-tab",
     schoolBadge: `${ICONS.pinSmall} ${escapeHtml(school.nome)} — ${escapeHtml(school.uf)}`,
     schoolBadgeClickable: temMaisDeUmaEscola,
-  }) + alunoDetalheModal() + turmaDetalheModal() + professorTurmasModal() + editarProfessorModal() + importarTurmasModal() + responsavelVinculoModal();
+  }) + alunoDetalheModal() + turmaDetalheModal() + professorTurmasModal() + editarProfessorModal() + importarTurmasModal() + responsavelVinculoModal() + acessoUsuarioModal() + contratoModal(state.contrato, {
+    cursos: cursosDaEscola(school?.nome || ""),
+    alunos: state.instAlunos || [],
+  }) + importarContratosModal(state, { cursos: cursosDaEscola(school?.nome || "") });
 }
 
 function gestaoInstituicaoView(school){
   const subTabs = [
     { key: "cadastro", label: "Criar cadastro", icon: ICONS.user },
+    { key: "acessos", label: "Senhas & acessos", icon: ICONS.key },
     { key: "contratos", label: "Contratos & plano", icon: ICONS.wallet },
   ];
   const subNav = `<div class="subtab-bar">${subTabs.map(t => `
@@ -1258,11 +1453,12 @@ function gestaoInstituicaoView(school){
 
   let corpo;
   if(state.gestaoSubTab === "contratos") corpo = gestaoContratosPlanoView();
+  else if(state.gestaoSubTab === "acessos") corpo = gestaoAcessosView();
   else corpo = gestaoCadastroView(school);
 
   return `
     <h2 class="section-title">Gestão da unidade</h2>
-    <p class="section-eyebrow">Cadastros, contratos e plano de ${escapeHtml(school.nome)}. Para editar turmas de professores e vínculos de responsáveis, veja as abas "Professores" e "Responsáveis" no menu.</p>
+    <p class="section-eyebrow">Cadastros, senhas, contratos e plano de ${escapeHtml(school.nome)}. Para editar turmas de professores e vínculos de responsáveis, veja as abas "Professores" e "Responsáveis" no menu.</p>
     ${subNav}
     ${corpo}
     ${state.instituicaoMensagem ? `<p class="teacher-success institution-success">${escapeHtml(state.instituicaoMensagem)}</p>` : ""}`;
@@ -1361,7 +1557,7 @@ function gestaoCadastroView(school){
     : (role === "aluno" ? "Cadastrar aluno" : role === "responsavel" ? "Cadastrar responsável" : "Criar usuário");
 
   const textoRodape = precisaLogin
-    ? `Combine a senha provisória com a pessoa por fora — ela pode trocar depois com "Esqueci minha senha" na tela de login.`
+    ? `Combine a senha provisória com a pessoa por fora — se precisar trocar depois, é em Gestão > Senhas & acessos.`
     : `Esse cadastro fica só nas coleções do banco, sem login.`;
 
   return `
@@ -1386,15 +1582,169 @@ function gestaoCadastroView(school){
     </div>`;
 }
 
+/* ------------------------------------------------------------------
+   Sub-aba "Senhas & acessos": um lugar só pra secretaria achar qualquer
+   pessoa da unidade (aluno, professor ou responsável), trocar a senha
+   dela e, se precisar, excluir o cadastro. Antes isso estava espalhado
+   (senha não existia; excluir aluno só dentro da ficha; excluir
+   responsável não existia) e qualquer troca de senha virava chamado pro
+   desenvolvedor.
+   ------------------------------------------------------------------ */
+function gestaoAcessosView(){
+  const busca = (state.gestaoAcessosBusca || "").trim().toLowerCase();
+  const grupo = state.gestaoAcessosGrupo || "todos";
+
+  const filtros = [
+    { key: "todos", label: "Todos" },
+    { key: "alunos", label: "Alunos" },
+    { key: "professores", label: "Professores" },
+    { key: "responsaveis", label: "Responsáveis" },
+  ];
+  const filtroHtml = `<div class="acesso-filtros">${filtros.map(f => `
+    <button type="button" class="acesso-filtro ${grupo === f.key ? "active" : ""}" data-action="set-acessos-grupo" data-key="${f.key}">${f.label}</button>`).join("")}</div>`;
+
+  const carregando = state.instAlunosCarregando || state.gestaoEquipeCarregando;
+
+  // Monta uma lista única, com o tipo de cada pessoa junto, pra poder
+  // buscar por nome sem se importar com a aba em que ela "mora".
+  const pessoas = [];
+  if(grupo === "todos" || grupo === "alunos"){
+    (state.instAlunos || []).forEach(a => pessoas.push({
+      tipo: "aluno", docId: a.id, uid: a.uid || null,
+      nome: a.nome, detalhe: a.turma || "Sem curso", email: a.email || "",
+    }));
+  }
+  if(grupo === "todos" || grupo === "professores"){
+    (state.gestaoProfessores || []).forEach(p => pessoas.push({
+      tipo: "professor", docId: p.id, uid: p.id,
+      nome: p.nome, detalhe: (p.disciplinas || []).join(", ") || "Sem disciplina", email: p.email || "",
+    }));
+  }
+  if(grupo === "todos" || grupo === "responsaveis"){
+    (state.gestaoResponsaveis || []).forEach(r => pessoas.push({
+      tipo: "responsavel", docId: r.id, uid: r.uid || null,
+      nome: r.nome,
+      detalhe: `${(r.alunosIds || []).length} ${(r.alunosIds || []).length === 1 ? "aluno vinculado" : "alunos vinculados"}`,
+      email: r.email || "",
+    }));
+  }
+
+  const rotuloTipo = { aluno: "Aluno", professor: "Professor", responsavel: "Responsável" };
+  const filtradas = pessoas
+    .filter(p => !busca || p.nome.toLowerCase().includes(busca) || (p.email || "").toLowerCase().includes(busca))
+    .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+
+  let linhas;
+  if(carregando){
+    linhas = `<div style="padding:20px;font-size:14px;color:var(--slate);">Carregando pessoas da unidade…</div>`;
+  } else if(filtradas.length === 0){
+    linhas = `<div style="padding:20px;font-size:14px;color:var(--slate);">Ninguém encontrado com esse nome nesta unidade.</div>`;
+  } else {
+    linhas = filtradas.map(p => `
+      <button type="button" class="row aluno-row" data-action="abrir-acesso-usuario"
+        data-tipo="${escapeHtml(p.tipo)}" data-id="${escapeHtml(p.docId)}" data-uid="${escapeHtml(p.uid || "")}"
+        data-nome="${escapeHtml(p.nome)}" data-email="${escapeHtml(p.email)}">
+        <span style="display:flex;flex-direction:column;align-items:flex-start;gap:2px;">
+          <span style="font-size:14.5px;color:var(--ink);font-weight:500;">${escapeHtml(p.nome)}</span>
+          <span style="font-size:12.5px;color:var(--slate);">${escapeHtml(rotuloTipo[p.tipo])} · ${escapeHtml(p.detalhe)}</span>
+        </span>
+        <span style="font-size:12.5px;color:var(--slate);display:flex;align-items:center;gap:8px;">
+          ${p.uid ? "Tem login" : "Sem login"} ${ICONS.chevronRight}
+        </span>
+      </button>`).join("");
+  }
+
+  return `
+    <div class="management-card management-card-wide">
+      <h3>Senhas & acessos</h3>
+      <p>Toque numa pessoa para trocar a senha, reenviar o link de acesso ou excluir o cadastro dela.</p>
+      ${filtroHtml}
+      <div class="search-wrap" style="margin:10px 0 12px;">
+        ${ICONS.search}
+        <input class="search-input" id="gestao-acessos-busca" placeholder="Buscar por nome ou e-mail" value="${escapeHtml(state.gestaoAcessosBusca)}" />
+      </div>
+      <div class="card flush">${linhas}</div>
+      ${state.gestaoEquipeErro ? `<p class="teacher-error" style="color:var(--red,#C4544A);font-size:12.5px;margin-top:10px;">${escapeHtml(state.gestaoEquipeErro)}</p>` : ""}
+      <p class="section-eyebrow" style="margin-top:10px;">A equipe administrativa troca a própria senha em "Meu perfil".</p>
+    </div>`;
+}
+
+/* Modal "Gerenciar acesso": as três coisas que a secretaria precisa
+   resolver sozinha — mandar o link de redefinição, definir uma senha na
+   hora (quando a pessoa não tem e-mail de verdade, o caso mais comum
+   com aluno) e excluir o cadastro. */
+function acessoUsuarioModal(){
+  if(!state.acessoModalAberto) return "";
+
+  const rotuloTipo = { aluno: "Aluno", professor: "Professor", responsavel: "Responsável" };
+  const temLogin = !!state.acessoUid;
+  const podeExcluir = state.acessoTipo !== "aluno" || !!(state.instAlunos || []).find(a => a.id === state.acessoDocId);
+
+  const blocoSemLogin = `
+      <div class="aluno-modal-section">
+        <h3 class="teacher-label">Criar acesso</h3>
+        <p class="section-eyebrow" style="margin:0 0 8px;">Esta pessoa ainda não tem login. Defina um e-mail e uma senha para ela entrar no app.</p>
+        <input id="acesso-email" type="email" class="teacher-text-input" placeholder="E-mail de acesso" value="${escapeHtml(state.acessoEmail)}" />
+        <input id="acesso-nova-senha" type="text" class="teacher-text-input" style="margin-top:8px;" placeholder="Senha (mín. 6 caracteres)" />
+        <button type="button" class="teacher-primary-btn" data-action="criar-login-acesso" ${state.acessoCriandoLogin ? "disabled" : ""}>${state.acessoCriandoLogin ? "Criando…" : "Criar acesso"}</button>
+      </div>`;
+
+  const blocoComLogin = `
+      <div class="aluno-modal-section">
+        <h3 class="teacher-label">Trocar senha</h3>
+        ${state.acessoEmail ? `<p class="section-eyebrow" style="margin:0 0 8px;">Login: <strong style="color:var(--ink);">${escapeHtml(state.acessoEmail)}</strong></p>` : ""}
+        <input id="acesso-nova-senha" type="text" class="teacher-text-input" placeholder="Nova senha (mín. 6 caracteres)" />
+        <button type="button" class="teacher-primary-btn" data-action="definir-senha-acesso" ${state.acessoDefinindoSenha ? "disabled" : ""}>${state.acessoDefinindoSenha ? "Salvando…" : "Salvar nova senha"}</button>
+        <p class="section-eyebrow" style="margin-top:8px;">Combine a nova senha com a pessoa por fora — ela já entra com ela no próximo login.</p>
+      </div>`;
+
+  const blocoExcluir = state.acessoConfirmandoExclusao ? `
+      <div class="aluno-modal-confirm">
+        <p>Tem certeza? Isso apaga o cadastro${temLogin ? " e o acesso" : ""} de ${escapeHtml(state.acessoNome)} nesta unidade e não pode ser desfeito.</p>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <button type="button" class="btn-danger" data-action="confirmar-exclusao-acesso" ${state.acessoExcluindo ? "disabled" : ""}>${state.acessoExcluindo ? "Excluindo…" : `${ICONS.trash} Sim, excluir`}</button>
+          <button type="button" class="btn-secondary" data-action="cancelar-exclusao-acesso" ${state.acessoExcluindo ? "disabled" : ""}>Cancelar</button>
+        </div>
+      </div>` : `
+      <button type="button" class="btn-danger" data-action="iniciar-exclusao-acesso">${ICONS.trash} Excluir ${escapeHtml((rotuloTipo[state.acessoTipo] || "usuário").toLowerCase())}</button>`;
+
+  return `
+  <div class="aluno-modal-backdrop" data-action="fechar-acesso-modal">
+    <div class="aluno-modal" role="dialog" aria-modal="true" aria-label="Gerenciar acesso" data-action="noop">
+      <div class="aluno-modal-head">
+        <div>
+          <h2>${escapeHtml(state.acessoNome)}</h2>
+          <p class="section-eyebrow" style="margin:2px 0 0;">${escapeHtml(rotuloTipo[state.acessoTipo] || "")} · ${temLogin ? "com login" : "sem login"}</p>
+        </div>
+        <button type="button" class="secretaria-modal-close" style="color:var(--slate);" data-action="fechar-acesso-modal" aria-label="Fechar">${ICONS.close}</button>
+      </div>
+
+      ${temLogin ? blocoComLogin : blocoSemLogin}
+
+      ${state.acessoErro ? `<p class="teacher-error" style="color:var(--red,#C4544A);font-size:12.5px;margin:4px 0;">${escapeHtml(state.acessoErro)}</p>` : ""}
+      ${state.acessoMensagem ? `<p class="teacher-success" style="margin:4px 0;">${escapeHtml(state.acessoMensagem)}</p>` : ""}
+
+      ${podeExcluir ? `<div class="aluno-modal-section aluno-modal-danger">${blocoExcluir}</div>` : ""}
+    </div>
+  </div>`;
+}
+
 /* Sub-aba "Contratos & plano": ações administrativas ainda simuladas,
    isoladas do formulário de cadastro pra não poluir a tela principal. */
 function gestaoContratosPlanoView(){
   return `
     <div class="management-grid">
       <div class="management-card">
-        <h3>Contratos</h3><p>Gere um contrato de matrícula em PDF para assinatura.</p>
-        <button class="teacher-primary-btn" data-action="generate-contract">Gerar contrato</button>
-        <p class="section-eyebrow" style="margin-top:8px;">Esta ação ainda é simulada.</p>
+        <h3>Contratos</h3>
+        <p>Monte o contrato de prestação de serviços já preenchido, pronto para imprimir ou salvar em PDF e colher as assinaturas.</p>
+        <button class="teacher-primary-btn" data-action="abrir-contrato-modal">${ICONS.fileText} Gerar contrato</button>
+        <p class="section-eyebrow" style="margin-top:8px;">O modelo (Salto do Lontra ou Nova Prata do Iguaçu) é definido pelo CNPJ escolhido.</p>
+      </div>
+      <div class="management-card">
+        <h3>Importar contratos já assinados</h3>
+        <p>Envie os PDFs dos contratos que a unidade já tem e o sistema cadastra os alunos (e responsáveis) de uma vez, com uma prévia pra conferir antes de salvar.</p>
+        <button class="teacher-primary-btn" data-action="abrir-importar-contratos-modal">${ICONS.upload} Importar contratos</button>
+        <p class="section-eyebrow" style="margin-top:8px;">Funciona melhor com os PDFs do próprio modelo da escola — outros formatos podem vir com campos em branco pra preencher na mão.</p>
       </div>
       <div class="management-card">
         <h3>Planos</h3><p>Plano atual: <strong>Profissional</strong></p>
@@ -1422,6 +1772,7 @@ function professoresSection(){
         <span style="font-size:12.5px;color:var(--slate);">${escapeHtml(p.disciplinas.join(", ") || "Sem disciplina definida")}</span>
       </button>
       <span style="display:flex;align-items:center;gap:6px;">
+        <button type="button" class="attendance-btn" data-action="abrir-acesso-usuario" data-tipo="professor" data-id="${escapeHtml(p.id)}" data-uid="${escapeHtml(p.id)}" data-nome="${escapeHtml(p.nome)}" data-email="${escapeHtml(p.email || "")}" aria-label="Senha e acesso">${ICONS.key}</button>
         <button type="button" class="attendance-btn" data-action="abrir-editar-professor" data-id="${escapeHtml(p.id)}" data-nome="${escapeHtml(p.nome)}" aria-label="Editar professor">${ICONS.pencil}</button>
         <button type="button" class="attendance-btn" data-action="confirmar-excluir-professor" data-id="${escapeHtml(p.id)}" data-nome="${escapeHtml(p.nome)}" aria-label="Excluir professor" ${state.editProfessorExcluindoId === p.id ? "disabled" : ""}>${state.editProfessorExcluindoId === p.id ? "…" : ICONS.trash}</button>
       </span>
@@ -1447,12 +1798,16 @@ function responsaveisSection(){
   }
   const responsaveis = state.gestaoResponsaveis || [];
   const linhasResponsaveis = responsaveis.map(r => `
-    <button type="button" class="row aluno-row" data-action="abrir-responsavel-vinculos" data-id="${escapeHtml(r.id)}" data-nome="${escapeHtml(r.nome)}">
-      <span style="font-size:14.5px;color:var(--ink);font-weight:500;">${escapeHtml(r.nome)}</span>
-      <span style="font-size:12.5px;color:var(--slate);display:flex;align-items:center;gap:8px;">
-        ${r.alunosIds.length} ${r.alunosIds.length === 1 ? "aluno vinculado" : "alunos vinculados"} ${ICONS.chevronRight}
+    <div class="row aluno-row" style="cursor:default;">
+      <button type="button" data-action="abrir-responsavel-vinculos" data-id="${escapeHtml(r.id)}" data-nome="${escapeHtml(r.nome)}" style="flex:1;display:flex;flex-direction:column;align-items:flex-start;gap:2px;background:none;border:none;text-align:left;cursor:pointer;padding:0;">
+        <span style="font-size:14.5px;color:var(--ink);font-weight:500;">${escapeHtml(r.nome)}</span>
+        <span style="font-size:12.5px;color:var(--slate);">${r.alunosIds.length} ${r.alunosIds.length === 1 ? "aluno vinculado" : "alunos vinculados"}${r.uid ? "" : " · sem login"}</span>
+      </button>
+      <span style="display:flex;align-items:center;gap:6px;">
+        <button type="button" class="attendance-btn" data-action="abrir-acesso-usuario" data-tipo="responsavel" data-id="${escapeHtml(r.id)}" data-uid="${escapeHtml(r.uid || "")}" data-nome="${escapeHtml(r.nome)}" data-email="${escapeHtml(r.email || "")}" aria-label="Senha e acesso">${ICONS.key}</button>
+        <button type="button" class="attendance-btn" data-action="abrir-acesso-usuario" data-tipo="responsavel" data-id="${escapeHtml(r.id)}" data-uid="${escapeHtml(r.uid || "")}" data-nome="${escapeHtml(r.nome)}" data-email="${escapeHtml(r.email || "")}" data-excluir="1" aria-label="Excluir responsável">${ICONS.trash}</button>
       </span>
-    </button>`).join("") || `<div style="padding:20px;font-size:14px;color:var(--slate);">Nenhum responsável cadastrado nesta unidade ainda.</div>`;
+    </div>`).join("") || `<div style="padding:20px;font-size:14px;color:var(--slate);">Nenhum responsável cadastrado nesta unidade ainda.</div>`;
 
   return `
     <div class="management-card management-card-wide">
@@ -1757,17 +2112,30 @@ function perfilInstituicaoView(school){
       </div>
 
       <div class="management-card">
-        <h3>Segurança</h3>
-        <p>Enviamos um e-mail com um link para você trocar sua senha.</p>
-        <button class="teacher-primary-btn" data-action="reset-senha-perfil" ${state.perfilSenhaResetEnviando ? "disabled" : ""}>${state.perfilSenhaResetEnviando ? "Enviando…" : "Trocar minha senha"}</button>
-        ${state.perfilSenhaResetErro ? `<p class="teacher-error" style="color:var(--red);font-size:12.5px;margin-top:8px;">${escapeHtml(state.perfilSenhaResetErro)}</p>` : ""}
-        ${state.perfilSenhaResetMensagem ? `<p class="teacher-success" style="margin-top:8px;">${escapeHtml(state.perfilSenhaResetMensagem)}</p>` : ""}
+        <h3>${ICONS.shield} Trocar minha senha</h3>
+        <p>Você mesmo troca sua senha aqui, na hora. Confirme a senha atual e escolha a nova.</p>
+        <input id="perfil-senha-atual" type="password" class="teacher-text-input" placeholder="Senha atual" autocomplete="current-password" />
+        <input id="perfil-senha-nova" type="password" class="teacher-text-input" style="margin-top:8px;" placeholder="Nova senha (mín. 6 caracteres)" autocomplete="new-password" />
+        <input id="perfil-senha-confirma" type="password" class="teacher-text-input" style="margin-top:8px;" placeholder="Repita a nova senha" autocomplete="new-password" />
+        <button class="teacher-primary-btn" data-action="trocar-minha-senha" ${state.perfilSenhaTrocando ? "disabled" : ""}>${state.perfilSenhaTrocando ? "Salvando…" : "Salvar nova senha"}</button>
+        ${state.perfilSenhaErro ? `<p class="teacher-error" style="color:var(--red);font-size:12.5px;margin-top:8px;">${escapeHtml(state.perfilSenhaErro)}</p>` : ""}
+        ${state.perfilSenhaMensagem ? `<p class="teacher-success" style="margin-top:8px;">${escapeHtml(state.perfilSenhaMensagem)}</p>` : ""}
+
+        <p class="section-eyebrow" style="margin-top:14px;">Esqueceu a senha atual? Não mandamos link por e-mail — fale com o suporte técnico logo abaixo.</p>
       </div>
 
       <div class="management-card">
-        <h3>Precisa de ajuda?</h3>
-        <p>Fale direto com a secretaria da unidade por WhatsApp.</p>
-        <button class="teacher-primary-btn" data-action="contact-secretaria">Falar com a secretaria</button>
+        <h3>${ICONS.key} Senhas da escola</h3>
+        <p>Trocar a senha de um aluno, professor ou responsável, ou excluir um cadastro, é na Gestão.</p>
+        <button class="teacher-primary-btn" data-action="ir-para-acessos">Abrir Senhas & acessos</button>
+        <p class="section-eyebrow" style="margin-top:8px;">Atalho para Gestão &gt; Senhas &amp; acessos.</p>
+      </div>
+
+      <div class="management-card">
+        <h3>${ICONS.lifebuoy} Suporte técnico</h3>
+        <p>Problema no sistema (erro na tela, acesso travado, dado que não salva)? Fale com quem cuida do app.</p>
+        <button class="teacher-primary-btn" data-action="whatsapp-suporte">Chamar o suporte no WhatsApp</button>
+        <p class="section-eyebrow" style="margin-top:8px;">Ou por e-mail: <strong style="color:var(--ink);">${escapeHtml(SUPORTE_TECNICO.email)}</strong></p>
       </div>
     </div>
 
@@ -1851,6 +2219,7 @@ async function carregarEquipeDaEscola(escolaId){
         if(dados.professorId) profPorUid.set(dados.professorId, {
           id: dados.professorId,
           nome: dados.nome || "Professor(a)",
+          email: dados.email || "",
           disciplinas: Array.isArray(dados.disciplinas) ? dados.disciplinas : [],
         });
       });
@@ -1860,6 +2229,7 @@ async function carregarEquipeDaEscola(escolaId){
         if(!profPorUid.has(d.id)) profPorUid.set(d.id, {
           id: d.id,
           nome: d.data().nome || "Professor(a)",
+          email: d.data().email || "",
           disciplinas: Array.isArray(d.data().disciplinas) ? d.data().disciplinas : [],
         });
       });
@@ -1871,6 +2241,7 @@ async function carregarEquipeDaEscola(escolaId){
           id: d.id,
           nome: d.data().nome || "Responsável",
           contato: d.data().contato || "",
+          email: d.data().email || "",
           alunosIds: Array.isArray(d.data().alunosIds) ? d.data().alunosIds : [],
           uid: d.data().uid || null,
         }))
@@ -2191,6 +2562,33 @@ async function excluirAlunoDaInstituicao(aluno, escolaId){
     } catch(_syncErr) {
       // Não bloqueia a exclusão principal se só esse resumo falhar em atualizar.
     }
+
+    // Tira o aluno da lista de quem era responsável por ele — senão o
+    // responsável continua vendo um "filho" que não existe mais.
+    try {
+      const qResp = query(
+        collection(db, "responsaveis"),
+        where("escolaId", "==", escolaId),
+        where("alunosIds", "array-contains", aluno.id),
+      );
+      const respSnap = await getDocs(qResp);
+      await Promise.all(respSnap.docs.map(async d => {
+        const restantes = (d.data().alunosIds || []).filter(x => x !== aluno.id);
+        await updateDoc(d.ref, { alunosIds: restantes });
+        if(d.data().uid){
+          try { await updateDoc(doc(db, "usuarios", d.data().uid), { alunosIds: restantes }); } catch(_e){ /* ignora */ }
+        }
+      }));
+    } catch(_vinculoErr) { /* não bloqueia a exclusão principal */ }
+
+    // Apaga o cadastro de login do aluno (usuarios/{uid}) e, se a Cloud
+    // Function de admin estiver publicada, o login em si.
+    const uid = aluno.uid || await descobrirUidDoAluno(aluno.id);
+    if(uid){
+      try { await deleteDoc(doc(db, "usuarios", uid)); } catch(_e){ /* ignora */ }
+      try { await excluirLoginDeOutroUsuario(uid); } catch(_e){ /* sem backend: login fica órfão */ }
+    }
+
     state.instAlunos = (state.instAlunos || []).filter(a => a.id !== aluno.id);
     state.alunoDetalheId = null;
     state.alunoExcluirConfirmando = false;
@@ -2200,6 +2598,83 @@ async function excluirAlunoDaInstituicao(aluno, escolaId){
   } finally {
     state.alunoExcluindo = false;
     render();
+  }
+}
+
+/* A sub-aba "Senhas & acessos" mistura alunos, professores e
+   responsáveis numa lista só, então precisa das duas cargas (a lista de
+   alunos e a de equipe) — que até aqui só eram feitas quando as abas
+   correspondentes eram abertas. */
+/* Todos os logins que já existem na unidade (alunos, responsáveis e
+   professores). É o que permite gerar "joao.silva" pro primeiro João
+   Silva e "joao.p.silva" pro segundo, em vez de esbarrar num e-mail
+   repetido só na hora de salvar. Cobre a unidade aberta; homônimo de
+   outra unidade ainda pode existir, e aí a criação do login tenta a
+   próxima variação sozinha. */
+function emailsUsadosDaUnidade(){
+  const emails = [];
+  (state.instAlunos || []).forEach(a => a.email && emails.push(a.email));
+  (state.gestaoResponsaveis || []).forEach(r => r.email && emails.push(r.email));
+  (state.gestaoProfessores || []).forEach(p => p.email && emails.push(p.email));
+  return emails;
+}
+
+function garantirPessoasDaUnidade(){
+  const escolaId = state.escolaSelecionadaId;
+  if(!escolaId) return;
+  if((state.instAlunos === null || state.instAlunosEscolaId !== escolaId) && !state.instAlunosCarregando){
+    carregarAlunosDaInstituicao(escolaId);
+  }
+  if((state.gestaoProfessores === null || state.gestaoEquipeEscolaId !== escolaId) && !state.gestaoEquipeCarregando){
+    carregarEquipeDaEscola(escolaId);
+  }
+}
+
+/* Cadastros de aluno feitos ANTES de o uid passar a ser guardado no
+   próprio documento do aluno não sabem qual é o login deles. Nesse caso,
+   procuramos em "usuarios" quem aponta para esse alunoId. Se as regras do
+   Firestore não deixarem a instituição listar "usuarios", devolve null —
+   e a tela cai no plano B (pedir o e-mail pra secretaria digitar). */
+async function descobrirUidDoAluno(alunoId){
+  try {
+    const snaps = await getDocs(query(collection(db, "usuarios"), where("alunoId", "==", alunoId)));
+    const primeiro = snaps.docs[0];
+    return primeiro ? primeiro.id : null;
+  } catch(_err){
+    return null;
+  }
+}
+
+/* Exclui um responsável da unidade: apaga o cadastro em "responsaveis",
+   o documento de login em "usuarios" (se ele tinha acesso) e, quando a
+   Cloud Function de admin está publicada, o login em si. */
+async function excluirResponsavelDaEscola(responsavel){
+  await deleteDoc(doc(db, "responsaveis", responsavel.id));
+  if(responsavel.uid){
+    try { await deleteDoc(doc(db, "usuarios", responsavel.uid)); } catch(_e){ /* ignora */ }
+    try { await excluirLoginDeOutroUsuario(responsavel.uid); } catch(_e){ /* sem backend: login fica órfão */ }
+  }
+}
+
+/* Dá acesso (e-mail/senha) a um responsável que foi cadastrado sem login
+   — o caso do cadastro rápido feito pela ficha do aluno. Usa o app
+   secundário pra não deslogar quem está na Gestão. */
+async function criarLoginParaResponsavel(responsavel, email, senha){
+  const cred = await createUserWithEmailAndPassword(secondaryAuth, email, senha);
+  const uid = cred.user.uid;
+  try {
+    await setDoc(doc(db, "usuarios", uid), {
+      role: "responsavel", nome: responsavel.nome, email,
+      alunosIds: responsavel.alunosIds || [],
+      escolaId: state.escolaSelecionadaId,
+    });
+    await updateDoc(doc(db, "responsaveis", responsavel.id), { uid, email });
+    return uid;
+  } catch(err){
+    try { await cred.user.delete(); } catch(_e){ /* ignora */ }
+    throw err;
+  } finally {
+    try { await signOut(secondaryAuth); } catch(_e){ /* ignora */ }
   }
 }
 
@@ -2215,11 +2690,32 @@ async function excluirAlunoDaInstituicao(aluno, escolaId){
    - aluno / professor / instituicao: além do(s) documento(s), cria o
      login (Firebase Auth) usando o app secundário, pra não deslogar
      quem está usando a Gestão. */
-async function criarUsuarioNaInstituicao({ role, nome, email, senha, escolaId, escolasIds, turma, disciplinas, contato, alunosIds }){
+/* Cria o login tentando, em ordem, cada e-mail da lista. Se o primeiro
+   já estiver em uso (homônimo de outra unidade, por exemplo), passa pro
+   próximo sozinho em vez de estourar o erro na cara da secretaria.
+   Devolve também qual e-mail acabou valendo. */
+async function criarLoginComAlternativas(emails, senha){
+  const candidatos = emails.filter(Boolean);
+  let ultimoErro = null;
+  for(const candidato of candidatos){
+    try {
+      const cred = await createUserWithEmailAndPassword(secondaryAuth, candidato, senha);
+      return { cred, email: candidato };
+    } catch(err){
+      ultimoErro = err;
+      // qualquer erro que não seja "e-mail ocupado" é problema de verdade
+      if(err?.code !== "auth/email-already-in-use") throw err;
+    }
+  }
+  throw ultimoErro || new Error("Nenhum e-mail disponível para criar o login.");
+}
+
+async function criarUsuarioNaInstituicao({ role, nome, email, senha, escolaId, escolasIds, turma, disciplinas, contato, alunosIds, nascimento, emailsAlternativos }){
   if(role === "responsavel"){
     const novoResponsavelRef = doc(collection(db, "responsaveis"));
     await setDoc(novoResponsavelRef, {
       nome, escolaId, contato: contato || "",
+      email: email || "",   // guardado pra Gestão poder reenviar senha depois
       alunosIds: alunosIds || [],
     });
 
@@ -2229,15 +2725,17 @@ async function criarUsuarioNaInstituicao({ role, nome, email, senha, escolaId, e
     // responsável fica só como registro, sem acesso, como antes.
     if(!email || !senha) return { responsavelId: novoResponsavelRef.id };
 
-    const cred = await createUserWithEmailAndPassword(secondaryAuth, email, senha);
+    const { cred, email: emailFinal } = await criarLoginComAlternativas(
+      [email, ...(emailsAlternativos || [])], senha,
+    );
     const uid = cred.user.uid;
     try {
-      await setDoc(doc(db, "usuarios", uid), { role: "responsavel", nome, alunosIds: alunosIds || [], escolaId });
+      await setDoc(doc(db, "usuarios", uid), { role: "responsavel", nome, email: emailFinal, alunosIds: alunosIds || [], escolaId });
       // Guarda o uid também no cadastro em "responsaveis" pra podermos, mais
       // tarde (na Gestão), editar os alunos vinculados em UM lugar só e
       // refletir no login do responsável ao mesmo tempo.
-      await updateDoc(novoResponsavelRef, { uid });
-      return { responsavelId: novoResponsavelRef.id, uid };
+      await updateDoc(novoResponsavelRef, { uid, email: emailFinal });
+      return { responsavelId: novoResponsavelRef.id, uid, email: emailFinal };
     } catch(err){
       // A gravação em "usuarios" falhou depois do login já ter sido criado.
       // Desfaz o login pra não deixar uma conta "fantasma" presa no e-mail.
@@ -2253,6 +2751,8 @@ async function criarUsuarioNaInstituicao({ role, nome, email, senha, escolaId, e
     const novoAlunoRef = doc(collection(db, "alunos"));
     await setDoc(novoAlunoRef, {
       nome, turma: turma || "", escolaId, contato: contato || "",
+      nascimento: nascimento || "",   // usado pela aba "Aniversários"
+      email: email || "",   // e-mail de acesso, pra Gestão poder redefinir a senha depois
       foto: "",
       notas: [],
       presenca: { percentual: 0, faltasMes: 0, registros: [] },
@@ -2263,13 +2763,23 @@ async function criarUsuarioNaInstituicao({ role, nome, email, senha, escolaId, e
       alunos: arrayUnion({ nome, turma: turma || "" }),
     });
 
+    // Aluno sem e-mail/senha fica só como cadastro, sem login — é o caso
+    // da Recreação, em que quem acompanha pelo app é o responsável.
+    if(!email || !senha) return { alunoId: novoAlunoRef.id };
+
     // 2. cria o login do aluno (Firebase Auth) no app secundário, pra não
     //    deslogar a instituição que está fazendo o cadastro.
-    const cred = await createUserWithEmailAndPassword(secondaryAuth, email, senha);
+    const { cred, email: emailFinal } = await criarLoginComAlternativas(
+      [email, ...(emailsAlternativos || [])], senha,
+    );
     const uid = cred.user.uid;
     try {
-      await setDoc(doc(db, "usuarios", uid), { role: "aluno", nome, alunoId: novoAlunoRef.id });
-      return { alunoId: novoAlunoRef.id, uid };
+      await setDoc(doc(db, "usuarios", uid), { role: "aluno", nome, email: emailFinal, alunoId: novoAlunoRef.id });
+      // Guarda o uid no próprio cadastro do aluno: é o que permite à
+      // Gestão trocar a senha / excluir o login dele depois sem precisar
+      // varrer a coleção "usuarios" atrás de quem tem esse alunoId.
+      await updateDoc(novoAlunoRef, { uid, email: emailFinal });
+      return { alunoId: novoAlunoRef.id, uid, email: emailFinal };
     } catch(err){
       // A gravação em "usuarios" falhou depois do login já ter sido criado.
       // Desfaz o login pra não deixar uma conta "fantasma" presa no e-mail
@@ -2287,7 +2797,7 @@ async function criarUsuarioNaInstituicao({ role, nome, email, senha, escolaId, e
   const uid = cred.user.uid;
 
   try {
-    const usuarioDoc = { role, nome };
+    const usuarioDoc = { role, nome, email };
     let listaEscolas = [];
     if(role === "professor"){
       usuarioDoc.disciplinas = disciplinas || [];
@@ -2314,7 +2824,7 @@ async function criarUsuarioNaInstituicao({ role, nome, email, senha, escolaId, e
       // Um professor em 2 escolas gera 2 documentos aqui, um pra cada.
       await Promise.all(listaEscolas.map(id => setDoc(
         doc(db, "escolaProfessores", `${id}_${uid}`),
-        { escolaId: id, professorId: uid, nome, disciplinas: disciplinas || [] },
+        { escolaId: id, professorId: uid, nome, email, disciplinas: disciplinas || [] },
       )));
     }
 
@@ -2329,6 +2839,159 @@ async function criarUsuarioNaInstituicao({ role, nome, email, senha, escolaId, e
     // Encerra a sessão do app secundário em qualquer cenário (sucesso ou erro).
     try { await signOut(secondaryAuth); } catch(_signOutErr) { /* ignora */ }
   }
+}
+
+/* ------------------------------------------------------------------
+   Cadastros criados junto com o contrato.
+   Depois de gerar o documento, a secretaria não precisa digitar tudo de
+   novo na aba "Criar cadastro": o aluno entra na coleção `alunos` (com
+   data de nascimento e WhatsApp, que é o que alimenta os aniversários),
+   o responsável entra em `responsaveis` já vinculado a ele, e os dois
+   ganham login — menos o aluno de Recreação, que por ser pequeno não
+   recebe acesso próprio.
+   Se o aluno já existir na unidade (mesmo nome), o cadastro é apenas
+   atualizado, sem duplicar nem mexer no login que ele já tem. */
+async function criarCadastrosDoContrato(c){
+  const escolaId = state.escolaSelecionadaId;
+  const avisos = [];
+  const resultado = { aluno: null, responsavel: null, avisos };
+  const precisaLoginAluno = contratoPrecisaLoginAluno(c);
+
+  // --- aluno ---
+  const jaCadastrado = (state.instAlunos || [])
+    .find(a => normalizarNome(a.nome) === normalizarNome(c.alunoNome));
+
+  let alunoId = jaCadastrado?.id || null;
+
+  if(jaCadastrado){
+    await updateDoc(doc(db, "alunos", jaCadastrado.id), {
+      nascimento: c.alunoNascimento || jaCadastrado.nascimento || "",
+      contato: c.contatoAluno || jaCadastrado.contato || "",
+      turma: c.curso || jaCadastrado.turma || "",
+    });
+    avisos.push(`${c.alunoNome} já tinha cadastro nesta unidade — atualizei os dados e mantive o acesso que já existia.`);
+  } else {
+    const criado = await criarUsuarioNaInstituicao({
+      role: "aluno",
+      nome: c.alunoNome.trim(),
+      turma: c.curso,
+      escolaId,
+      contato: c.contatoAluno || "",
+      nascimento: c.alunoNascimento || "",
+      // sem e-mail/senha o aluno fica só com cadastro, sem login
+      email: precisaLoginAluno ? c.emailAluno.trim() : "",
+      senha: precisaLoginAluno ? c.senhaAluno : "",
+      // se o login escolhido já estiver ocupado, cai pra próxima variação
+      emailsAlternativos: precisaLoginAluno ? variantesDeEmail(c.alunoNome, DOMINIO_ALUNO) : [],
+    });
+    alunoId = criado.alunoId;
+    // Decide pelo que REALMENTE aconteceu (criado.email só vem preenchido
+    // se um login foi criado de verdade), não só pela regra do curso —
+    // isso cobre também a importação em lote, onde a secretaria pode
+    // desmarcar "criar acesso" mesmo num curso que normalmente ganharia.
+    if(criado.email){
+      resultado.aluno = { email: criado.email, senha: c.senhaAluno };
+      if(criado.uid) await marcarSenhaProvisoria(criado.uid);
+      if(criado.email !== c.emailAluno.trim()){
+        avisos.push(`Já existia um login "${c.emailAluno.trim()}", então o aluno ficou com "${criado.email}".`);
+        c.emailAluno = criado.email;
+      }
+    } else if(precisaLoginAluno){
+      avisos.push(`${c.alunoNome} ficou sem login (nenhum e-mail foi gerado).`);
+    } else {
+      avisos.push(`Aluno de ${c.curso} não recebe login próprio — só o responsável acompanha pelo app.`);
+    }
+    // Registra na lista local (sem esperar um novo carregamento do
+    // Firestore) — essencial numa importação em lote: se dois contratos
+    // do mesmo lote forem de irmãos, o segundo precisa achar o primeiro
+    // já criado pra não duplicar o aluno nem o login do responsável.
+    if(state.instAlunos){
+      state.instAlunos.push(normalizeAluno(alunoId, {
+        nome: c.alunoNome.trim(), turma: c.curso, escolaId,
+        contato: c.contatoAluno || "", nascimento: c.alunoNascimento || "",
+        email: criado.email || "", uid: criado.uid || null,
+      }));
+    }
+  }
+
+  // --- responsável ---
+  if(!c.semResponsavel && c.respNome.trim()){
+    const respExistente = (state.gestaoResponsaveis || [])
+      .find(r => normalizarNome(r.nome) === normalizarNome(c.respNome));
+
+    if(respExistente){
+      const vinculos = respExistente.alunosIds.includes(alunoId)
+        ? respExistente.alunosIds
+        : [...respExistente.alunosIds, alunoId];
+      await updateDoc(doc(db, "responsaveis", respExistente.id), {
+        alunosIds: vinculos,
+        contato: c.contatoResp || respExistente.contato || "",
+      });
+      if(respExistente.uid){
+        await updateDoc(doc(db, "usuarios", respExistente.uid), { alunosIds: vinculos });
+      }
+      respExistente.alunosIds = vinculos;
+      avisos.push(`${c.respNome} já era cadastrado(a) — vinculei ${c.alunoNome} ao acesso que ele(a) já tem.`);
+    } else {
+      const criadoResp = await criarUsuarioNaInstituicao({
+        role: "responsavel",
+        nome: c.respNome.trim(),
+        escolaId,
+        contato: c.contatoResp || "",
+        alunosIds: alunoId ? [alunoId] : [],
+        email: c.emailResp.trim(),
+        senha: c.senhaResp,
+        emailsAlternativos: variantesDeEmail(c.respNome, DOMINIO_RESPONSAVEL),
+      });
+      if(criadoResp.email){
+        resultado.responsavel = { email: criadoResp.email, senha: c.senhaResp };
+        if(criadoResp.uid) await marcarSenhaProvisoria(criadoResp.uid);
+        if(criadoResp.email !== c.emailResp.trim()){
+          avisos.push(`Já existia um login "${c.emailResp.trim()}", então o responsável ficou com "${criadoResp.email}".`);
+          c.emailResp = criadoResp.email;
+        }
+      }
+      // Mesma lógica do aluno: registra localmente pra um segundo irmão,
+      // já no mesmo lote, encontrar esse responsável e só vincular, em
+      // vez de criar um cadastro (e um login) duplicado pra ele(a).
+      if(state.gestaoResponsaveis){
+        state.gestaoResponsaveis.push({
+          id: criadoResp.responsavelId, nome: c.respNome.trim(),
+          contato: c.contatoResp || "", email: criadoResp.email || "",
+          alunosIds: alunoId ? [alunoId] : [], uid: criadoResp.uid || null,
+        });
+      }
+    }
+  }
+
+  return resultado;
+}
+
+/* Deixa marcado no cadastro que a senha atual é a provisória de 6
+   dígitos, sorteada na geração do contrato. Serve de registro pra
+   secretaria (e abre caminho pra, no futuro, o app pedir a troca já no
+   primeiro acesso). Se a gravação falhar, não atrapalha o resto. */
+async function marcarSenhaProvisoria(uid){
+  try {
+    await updateDoc(doc(db, "usuarios", uid), { senhaProvisoria: true });
+  } catch(err){
+    console.warn("Não consegui marcar a senha como provisória:", err?.code || err);
+  }
+}
+
+/* Traduz o tropeço mais comum na criação dos acessos (e-mail repetido)
+   numa frase que diga o que fazer, em vez do código cru do Firebase. */
+function mensagemErroAcessosContrato(err){
+  if(err?.code === "auth/email-already-in-use"){
+    return "Todas as variações de login para esse nome já estão em uso. Use o botão \"Gerar outro\" e tente novamente — o contrato em si já está pronto na outra aba.";
+  }
+  if(err?.code === "auth/weak-password"){
+    return "A senha provisória precisa ter pelo menos 6 caracteres.";
+  }
+  if(err?.code === "permission-denied"){
+    return "O Firestore recusou a gravação dos cadastros (permission-denied). O contrato já está pronto na outra aba; o cadastro precisa ser feito pela aba \"Criar cadastro\".";
+  }
+  return `Não consegui criar os cadastros agora${err?.code ? ` (${err.code})` : ""}. O contrato já está pronto na outra aba — dá pra cadastrar o aluno depois pela aba "Criar cadastro".`;
 }
 
 /* Atualiza nome/disciplinas de um professor em TODOS os lugares onde eles
@@ -2365,6 +3028,10 @@ async function excluirProfessorDaEscola(uid, escolaId){
   const outrosSnap = await getDocs(qOutrosVinculos);
   if(outrosSnap.empty){
     await deleteDoc(doc(db, "usuarios", uid));
+    // Se a Cloud Function de admin estiver publicada, apaga o login de
+    // vez; sem ela, o e-mail continua existindo no Authentication (mas
+    // sem cadastro nenhum, então a pessoa entra e não vê dado algum).
+    try { await excluirLoginDeOutroUsuario(uid); } catch(_e){ /* segue */ }
   }
 }
 
@@ -2586,6 +3253,115 @@ function alunosView(school){
     ${state.instituicaoMensagem ? `<p class="teacher-success institution-success">${escapeHtml(state.instituicaoMensagem)}</p>` : ""}`;
 }
 
+/* ------------------------------------------------------------------
+   Aba "Aniversários".
+   Lista quem faz aniversário no mês (e destaca quem faz hoje) a partir
+   da data de nascimento guardada no cadastro do aluno — a mesma que o
+   contrato preenche. Cada linha já vem com o botão do WhatsApp e a
+   mensagem escrita: se o aluno tem número próprio, a mensagem vai pra
+   ele; se não tem, vai pro responsável vinculado que tiver telefone. */
+function destinoDoParabens(aluno){
+  const doAluno = telefoneValido(aluno.contato);
+  if(doAluno){
+    return {
+      tipo: "aluno",
+      nome: aluno.nome,
+      numero: doAluno,
+      texto: MENSAGEM_ANIVERSARIO.paraAluno(primeiroNome(aluno.nome)),
+    };
+  }
+  const responsavel = (state.gestaoResponsaveis || [])
+    .find(r => r.alunosIds.includes(aluno.id) && telefoneValido(r.contato));
+  if(responsavel){
+    return {
+      tipo: "responsavel",
+      nome: responsavel.nome,
+      numero: telefoneValido(responsavel.contato),
+      texto: MENSAGEM_ANIVERSARIO.paraResponsavel(primeiroNome(responsavel.nome), aluno.nome),
+    };
+  }
+  return null;
+}
+
+function aniversariosView(school){
+  const hoje = new Date();
+  const diaHoje = hoje.getDate();
+  const mesHoje = hoje.getMonth() + 1;
+
+  if(state.instAlunosCarregando || state.gestaoEquipeCarregando){
+    return `
+      <h2 class="section-title">Aniversários</h2>
+      <div style="padding:20px;font-size:14px;color:var(--slate);">Carregando aniversariantes…</div>`;
+  }
+
+  const todos = state.instAlunos || [];
+  const comData = todos
+    .filter(a => /^\d{4}-\d{2}-\d{2}$/.test(a.nascimento || ""))
+    .map(a => {
+      const [ano, mes, dia] = a.nascimento.split("-").map(Number);
+      // idade que ele completa neste ano
+      const idade = hoje.getFullYear() - ano;
+      return { ...a, dia, mes, ano, idade, ehHoje: dia === diaHoje && mes === mesHoje };
+    });
+  const semData = todos.length - comData.length;
+
+  const filtrados = (state.aniversarioMes === "todos"
+    ? comData
+    : comData.filter(a => a.mes === Number(state.aniversarioMes))
+  ).sort((a, b) => (a.mes - b.mes) || (a.dia - b.dia) || a.nome.localeCompare(b.nome));
+
+  const aniversariantesHoje = comData.filter(a => a.ehHoje);
+
+  const linha = (a) => {
+    const destino = destinoDoParabens(a);
+    const rotuloDestino = destino
+      ? (destino.tipo === "aluno"
+          ? "WhatsApp do aluno"
+          : `Responsável: ${escapeHtml(destino.nome)}`)
+      : "Sem WhatsApp cadastrado";
+    const botao = destino
+      ? `<a class="aniversario-btn" href="${whatsappLinkComTexto(destino.numero, destino.texto)}" target="_blank" rel="noopener">${ICONS.megaphone} Enviar parabéns</a>`
+      : `<button type="button" class="btn-secondary" data-action="abrir-aluno" data-id="${escapeHtml(a.id)}">Cadastrar contato</button>`;
+    return `
+      <div class="aniversario-row${a.ehHoje ? " is-hoje" : ""}">
+        <div class="aniversario-data">
+          <strong>${String(a.dia).padStart(2, "0")}</strong>
+          <span>${MESES_CURTOS[a.mes - 1]}</span>
+        </div>
+        <div class="aniversario-info">
+          <span class="aniversario-nome">${escapeHtml(a.nome)}${a.ehHoje ? ` <span class="aniversario-hoje-tag">hoje</span>` : ""}</span>
+          <span class="aniversario-sub">${escapeHtml(a.turma || "—")} · faz ${a.idade} anos · ${rotuloDestino}</span>
+        </div>
+        ${botao}
+      </div>`;
+  };
+
+  const opcoesMes = MESES_LONGOS.map((nome, i) => `
+    <option value="${i + 1}" ${state.aniversarioMes === String(i + 1) ? "selected" : ""}>${nome}</option>`).join("")
+    + `<option value="todos" ${state.aniversarioMes === "todos" ? "selected" : ""}>Todos os meses</option>`;
+
+  const blocoHoje = aniversariantesHoje.length ? `
+    <div class="aniversario-hoje-card">
+      <h3>${ICONS.cake} ${aniversariantesHoje.length === 1 ? "Aniversariante de hoje" : "Aniversariantes de hoje"}</h3>
+      ${aniversariantesHoje.map(linha).join("")}
+    </div>` : "";
+
+  const lista = filtrados.length
+    ? filtrados.map(linha).join("")
+    : `<div style="padding:20px;font-size:14px;color:var(--slate);">Nenhum aniversariante ${state.aniversarioMes === "todos" ? "com data cadastrada" : `em ${MESES_LONGOS[Number(state.aniversarioMes) - 1].toLowerCase()}`}.</div>`;
+
+  return `
+    <h2 class="section-title">Aniversários</h2>
+    <p class="section-eyebrow">Alunos de ${escapeHtml(school.nome)} por data de nascimento. A mensagem já vai escrita: se o aluno tem WhatsApp, vai pra ele; se não tem, vai pro responsável vinculado.</p>
+    ${blocoHoje}
+    <div class="aniversario-filtro">
+      <label class="teacher-label" for="aniversario-mes">Mês</label>
+      <select id="aniversario-mes" class="teacher-text-input" data-action="noop">${opcoesMes}</select>
+    </div>
+    <div class="card flush">${lista}</div>
+    ${semData ? `<p class="section-eyebrow" style="margin-top:10px;">${semData} aluno(s) ainda sem data de nascimento no cadastro. Dá pra preencher na ficha do aluno, na aba "Alunos" — os contratos novos já gravam a data sozinhos.</p>` : ""}`;
+}
+
 /* Ficha do aluno — modal aberto ao clicar num aluno na aba "Alunos". Mostra
    contato editável, resumo de frequência/financeiro, responsáveis já
    vinculados, um formulário pra cadastrar um novo responsável e o botão
@@ -2631,8 +3407,17 @@ function alunoDetalheModal(){
 
       <div class="aluno-modal-section">
         <h3 class="teacher-label">Contato do aluno</h3>
-        <input id="aluno-detalhe-contato" class="teacher-text-input" placeholder="Telefone ou e-mail de contato" value="${escapeHtml(state.alunoDetalheContatoInput)}" />
-        <button type="button" class="teacher-primary-btn" data-action="salvar-aluno-contato" ${state.alunoDetalheSalvandoContato ? "disabled" : ""}>${state.alunoDetalheSalvandoContato ? "Salvando…" : "Salvar contato"}</button>
+        <input id="aluno-detalhe-contato" class="teacher-text-input" placeholder="WhatsApp (com DDD) ou e-mail" value="${escapeHtml(state.alunoDetalheContatoInput)}" />
+        <label class="teacher-label" for="aluno-detalhe-nascimento" style="display:block;margin-top:10px;">Data de nascimento</label>
+        <input id="aluno-detalhe-nascimento" type="date" class="teacher-text-input" value="${escapeHtml(state.alunoDetalheNascimentoInput)}" />
+        <p class="section-eyebrow" style="margin:6px 0 0;">Com a data preenchida o aluno passa a aparecer na aba "Aniversários".</p>
+        <button type="button" class="teacher-primary-btn" data-action="salvar-aluno-contato" ${state.alunoDetalheSalvandoContato ? "disabled" : ""}>${state.alunoDetalheSalvandoContato ? "Salvando…" : "Salvar contato e data"}</button>
+      </div>
+
+      <div class="aluno-modal-section">
+        <h3 class="teacher-label">Acesso ao app</h3>
+        <p class="section-eyebrow" style="margin:0 0 8px;">${aluno.email ? `Entra com <strong style="color:var(--ink);">${escapeHtml(aluno.email)}</strong>` : "E-mail de acesso não registrado neste cadastro."}</p>
+        <button type="button" class="btn-secondary" data-action="abrir-acesso-usuario" data-tipo="aluno" data-id="${escapeHtml(aluno.id)}" data-uid="${escapeHtml(aluno.uid || "")}" data-nome="${escapeHtml(aluno.nome)}" data-email="${escapeHtml(aluno.email || "")}">${ICONS.key} Trocar senha / gerenciar acesso</button>
       </div>
 
       <div class="aluno-modal-section">
@@ -2704,6 +3489,15 @@ function bindEvents(){
       if(novo){ novo.focus(); novo.setSelectionRange(cursor, cursor); }
       return;
     }
+    if(t.id === "gestao-acessos-busca"){
+      const cursor = t.selectionStart;
+      state.gestaoAcessosBusca = t.value;
+      render();
+      const novo = document.getElementById("gestao-acessos-busca");
+      if(novo){ novo.focus(); novo.setSelectionRange(cursor, cursor); }
+      return;
+    }
+    if(t.id === "acesso-email"){ state.acessoEmail = t.value; return; }
     if(t.dataset && t.dataset.observation){
       state.professorObservacoes[t.dataset.observation] = t.value;
       return;
@@ -2733,6 +3527,19 @@ function bindEvents(){
     if(t.id === "aluno-detalhe-contato"){ state.alunoDetalheContatoInput = t.value; return; }
     if(t.id === "aluno-resp-nome"){ state.alunoRespNome = t.value; return; }
     if(t.id === "aluno-resp-contato"){ state.alunoRespContato = t.value; return; }
+    // Campos do contrato: guardam o valor sem re-renderizar, senão o
+    // cursor pula pra fora do input a cada tecla. O recálculo (parcelas,
+    // término) acontece no "change", quando a pessoa sai do campo.
+    if(t.dataset && t.dataset.contratoField){
+      state.contrato[t.dataset.contratoField] = t.value;
+      return;
+    }
+    if(t.dataset && t.dataset.importCampo){
+      const i = Number(t.dataset.row);
+      const item = state.importContratosItens[i];
+      if(item) item.contrato[t.dataset.importCampo] = t.value;
+      return;
+    }
     if(t.id === "nova-turma-nome"){ state.novaTurmaNome = t.value; return; }
     if(t.id === "nova-turma-horario"){ state.novaTurmaHorario = t.value; return; }
     if(t.id === "nova-turma-sala"){ state.novaTurmaSala = t.value; return; }
@@ -2740,6 +3547,11 @@ function bindEvents(){
 
   app.addEventListener("change", async (e) => {
     const t = e.target;
+    if(t.id === "aniversario-mes"){
+      state.aniversarioMes = t.value;
+      render();
+      return;
+    }
     if(t.id === "conteudo-disciplina-select"){
       state.professorConteudosDisciplinaSelecionada = t.value;
       render();
@@ -2756,6 +3568,71 @@ function bindEvents(){
       }
       state.professorRegistroSalvo = false;
       state.professorRegistroErro = "";
+      render();
+      return;
+    }
+    if(t.id === "import-contratos-pdf-files"){
+      const arquivos = Array.from(t.files || []);
+      if(!arquivos.length) return;
+      state.importContratosLendo = true;
+      state.importContratosResumo = null;
+      render();
+      for(const arquivo of arquivos){
+        try {
+          const texto = await extrairTextoDoPdf(arquivo);
+          const { contrato, avisos } = interpretarContratoTexto(texto);
+          const precisaLogin = contratoPrecisaLoginAluno(contrato);
+          if(precisaLogin) contratoSugerirAcessos(contrato, emailsUsadosDaUnidade());
+          state.importContratosItens.push({
+            id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            arquivoNome: arquivo.name,
+            contrato,
+            avisos,
+            selecionado: true,
+            // por padrão cria acesso se o curso reconhecido permitir —
+            // some antes de confirmar a lista inteira, se for o caso
+            criarAcesso: precisaLogin || !contrato.curso,
+            status: "",
+            erro: "",
+          });
+        } catch(err){
+          console.error("Erro ao ler PDF de contrato:", arquivo.name, err);
+          state.importContratosItens.push({
+            id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            arquivoNome: arquivo.name,
+            contrato: contratoEstadoInicial(),
+            avisos: [err?.message === "pdfjs-nao-carregado"
+              ? "A biblioteca de leitura de PDF não carregou (conexão bloqueada?). Tente de novo."
+              : "Não consegui ler este PDF (pode ser uma imagem escaneada, sem texto selecionável). Preencha manualmente ou pule este arquivo."],
+            selecionado: false,
+            criarAcesso: false,
+            status: "",
+            erro: "",
+          });
+        }
+      }
+      state.importContratosLendo = false;
+      t.value = "";  // permite escolher o mesmo arquivo de novo, se precisar
+      render();
+      return;
+    }
+    if(t.dataset && t.dataset.importCampo === "curso" && t.tagName === "SELECT"){
+      const i = Number(t.dataset.row);
+      const item = state.importContratosItens[i];
+      if(item){
+        item.contrato.curso = t.value;
+        // curso decide se o aluno ganha login (Recreação não ganha) —
+        // reajusta o padrão da caixinha, mas só se a secretaria ainda
+        // não tiver mexido nela manualmente pra este item
+        item.criarAcesso = contratoPrecisaLoginAluno(item.contrato);
+      }
+      render();
+      return;
+    }
+    if(t.dataset && t.dataset.importCampo === "cnpj" && t.tagName === "SELECT"){
+      const i = Number(t.dataset.row);
+      const item = state.importContratosItens[i];
+      if(item) contratoAplicarEmpresa(item.contrato, t.value);
       render();
       return;
     }
@@ -2786,6 +3663,43 @@ function bindEvents(){
       const i = Number(t.dataset.row);
       if(state.importTurmasPreview && state.importTurmasPreview[i]){
         state.importTurmasPreview[i][t.dataset.importField] = t.value;
+      }
+      return;
+    }
+    // --- Contrato ---
+    if(t.dataset && t.dataset.contratoSelect){
+      const campo = t.dataset.contratoSelect;
+      const c = state.contrato;
+      if(campo === "cnpj"){
+        contratoAplicarEmpresa(c, t.value);
+      } else if(campo === "alunoCadastrado"){
+        // atalho: puxa o nome de um aluno já cadastrado na unidade
+        if(t.value) c.alunoNome = t.value;
+      } else {
+        c[campo] = t.value;
+      }
+      if(campo === "duracao") contratoRecalcular(c, { forcarParcelas: true });
+      else contratoRecalcular(c);
+      // o curso decide se o aluno recebe login (Recreação não recebe)
+      if(campo === "curso" || campo === "alunoCadastrado") contratoSugerirAcessos(c, emailsUsadosDaUnidade());
+      c.erro = "";
+      render();
+      return;
+    }
+    if(t.dataset && t.dataset.contratoField){
+      // datas e valores: ao sair do campo, recalcula término/parcelas
+      state.contrato[t.dataset.contratoField] = t.value;
+      const recalcula = ["dataInicio","duracaoCustom","valorCurso","valorMaterial","numParcelas","qtdParcelasIniciais"];
+      // nome mudou: o login antigo não serve mais, refaz do zero
+      const sugereAcesso = ["alunoNome","respNome"];
+      if(t.dataset.contratoField === "alunoNome") state.contrato.emailAluno = "";
+      if(t.dataset.contratoField === "respNome") state.contrato.emailResp = "";
+      if(recalcula.includes(t.dataset.contratoField)){
+        contratoRecalcular(state.contrato);
+        render();
+      } else if(sugereAcesso.includes(t.dataset.contratoField)){
+        contratoSugerirAcessos(state.contrato, emailsUsadosDaUnidade());
+        render();
       }
       return;
     }
@@ -2888,6 +3802,14 @@ function bindEvents(){
           && !state.instAlunosCarregando){
           carregarAlunosDaInstituicao(state.escolaSelecionadaId);
         }
+        if(state.instTab === "gestao" && state.gestaoSubTab === "acessos"){
+          garantirPessoasDaUnidade();
+        }
+        // aniversários precisa dos alunos (data de nascimento) e dos
+        // responsáveis (pra quem tem WhatsApp quando o aluno não tem)
+        if(state.instTab === "aniversarios"){
+          garantirPessoasDaUnidade();
+        }
         if((state.instTab === "professores" || state.instTab === "responsaveis") && state.escolaSelecionadaId
           && (state.gestaoProfessores === null || state.gestaoEquipeEscolaId !== state.escolaSelecionadaId)
           && !state.gestaoEquipeCarregando){
@@ -2897,6 +3819,23 @@ function bindEvents(){
       case "set-gestao-subtab":
         state.gestaoSubTab = el.dataset.key;
         render();
+        if(state.gestaoSubTab === "acessos") garantirPessoasDaUnidade();
+        break;
+
+      case "set-acessos-grupo":
+        state.gestaoAcessosGrupo = el.dataset.key;
+        render();
+        break;
+
+      case "ir-para-acessos":
+        state.instTab = "gestao";
+        state.gestaoSubTab = "acessos";
+        render();
+        garantirPessoasDaUnidade();
+        break;
+
+      case "whatsapp-suporte":
+        window.open(whatsappLink(SUPORTE_TECNICO.whatsapp), "_blank", "noopener");
         break;
       case "set-professor-tab":
         state.professorTab = el.dataset.key; render();
@@ -3155,7 +4094,231 @@ function bindEvents(){
         break;
       }
 
-      case "generate-contract":
+      case "abrir-importar-contratos-modal":
+        state.importContratosModalAberto = true;
+        state.importContratosItens = [];
+        state.importContratosResumo = null;
+        render();
+        garantirPessoasDaUnidade();
+        break;
+
+      case "fechar-importar-contratos-modal":
+        state.importContratosModalAberto = false;
+        render();
+        break;
+
+      case "import-contrato-toggle": {
+        const item = state.importContratosItens[Number(el.dataset.row)];
+        if(item) item.selecionado = !item.selecionado;
+        render();
+        break;
+      }
+
+      case "import-contrato-toggle-acesso": {
+        const item = state.importContratosItens[Number(el.dataset.row)];
+        if(item) item.criarAcesso = !item.criarAcesso;
+        render();
+        break;
+      }
+
+      case "import-contrato-remover":
+        state.importContratosItens.splice(Number(el.dataset.row), 1);
+        render();
+        break;
+
+      case "import-contrato-confirmar": {
+        const itens = state.importContratosItens.filter(it => it.selecionado && it.status !== "ok");
+        if(!itens.length) break;
+
+        state.importContratosSalvando = true;
+        state.importContratosProgresso = { feito: 0, total: itens.length };
+        state.importContratosResumo = null;
+        render();
+
+        // acumula os logins já usados/escolhidos NESTA leva, pra dois
+        // homônimos do mesmo lote não saírem com o mesmo login antes
+        // mesmo de qualquer um ter sido gravado no banco
+        let emailsLote = emailsUsadosDaUnidade();
+        const resumo = { criados: 0, atualizados: 0, comLogin: 0, erros: 0 };
+
+        for(const item of itens){
+          const c = item.contrato;
+          item.status = "salvando";
+          render();
+
+          const problema = !c.alunoNome.trim() ? "Falta o nome do aluno."
+            : !c.cnpj ? "Falta escolher o CNPJ."
+            : !c.curso ? "Falta escolher o curso."
+            : "";
+          if(problema){
+            item.status = "erro";
+            item.erro = problema;
+            resumo.erros++;
+            state.importContratosProgresso.feito++;
+            render();
+            continue;
+          }
+
+          if(item.criarAcesso){
+            // limpa e sorteia de novo contra a lista mais atual do lote,
+            // garantindo que ninguém saia com login repetido
+            c.emailAluno = ""; c.senhaAluno = "";
+            c.emailResp = ""; c.senhaResp = "";
+            contratoSugerirAcessos(c, emailsLote);
+          } else {
+            c.emailAluno = ""; c.senhaAluno = "";
+            c.emailResp = ""; c.senhaResp = "";
+          }
+
+          const jaExistiaAntes = (state.instAlunos || [])
+            .some(a => normalizarNome(a.nome) === normalizarNome(c.alunoNome));
+
+          try {
+            const resultado = await criarCadastrosDoContrato(c);
+            if(jaExistiaAntes) resumo.atualizados++; else resumo.criados++;
+            if(resultado.aluno) { emailsLote.push(resultado.aluno.email); resumo.comLogin++; }
+            if(resultado.responsavel){ emailsLote.push(resultado.responsavel.email); resumo.comLogin++; }
+            item.status = "ok";
+            item.avisos = resultado.avisos || [];
+          } catch(err){
+            console.error("Erro ao importar contrato:", item.arquivoNome, err);
+            item.status = "erro";
+            item.erro = mensagemErroAcessosContrato(err);
+            resumo.erros++;
+          }
+
+          state.importContratosProgresso.feito++;
+          render();
+        }
+
+        state.importContratosSalvando = false;
+        state.importContratosResumo = resumo;
+        render();
+        garantirPessoasDaUnidade();
+        break;
+      }
+
+      case "abrir-contrato-modal": {
+        const c = state.contrato;
+        c.aberto = true;
+        c.erro = "";
+        c.resultadoAcessos = null;
+        if(!c.cnpj){
+          // Já chuta o CNPJ pela unidade aberta no sistema, pra secretaria
+          // só confirmar (ou trocar, se for outro CNPJ da mesma cidade).
+          const nomeEscola = (state.data.escolas?.[state.escolaSelecionadaId]?.nome || "").toLowerCase();
+          const preferido = nomeEscola.includes("prata") ? "46.616.889/0001-37"
+            : nomeEscola.includes("salto") ? "49.080.272/0001-38" : "";
+          if(preferido) contratoAplicarEmpresa(c, preferido);
+        }
+        if(!c.dataAssinatura) c.dataAssinatura = dataDeHojeISO();
+        contratoRecalcular(c);
+        contratoSugerirAcessos(c, emailsUsadosDaUnidade());
+        render();
+        // alunos e responsáveis já cadastrados: servem pro atalho de
+        // preencher o nome e pra não duplicar cadastro na hora de gerar
+        garantirPessoasDaUnidade();
+        break;
+      }
+
+      case "fechar-contrato-modal":
+        state.contrato.aberto = false;
+        state.contrato.erro = "";
+        render();
+        break;
+
+      case "contrato-sem-responsavel":
+        state.contrato.semResponsavel = !state.contrato.semResponsavel;
+        contratoSugerirAcessos(state.contrato, emailsUsadosDaUnidade());
+        render();
+        break;
+
+      case "contrato-gerar-outro-login": {
+        const c = state.contrato;
+        const quem = el.dataset.quem;
+        // guarda o login atual como "ocupado" e pede o próximo da fila,
+        // junto com uma senha nova
+        if(quem === "aluno"){
+          const usados = [...emailsUsadosDaUnidade(), c.emailAluno];
+          c.emailAluno = "";
+          c.senhaAluno = senhaProvisoria();
+          contratoSugerirAcessos(c, usados);
+        } else {
+          const usados = [...emailsUsadosDaUnidade(), c.emailResp];
+          c.emailResp = "";
+          c.senhaResp = senhaProvisoria();
+          contratoSugerirAcessos(c, usados);
+        }
+        render();
+        break;
+      }
+
+      case "contrato-criar-acessos":
+        state.contrato.criarAcessos = !state.contrato.criarAcessos;
+        contratoSugerirAcessos(state.contrato, emailsUsadosDaUnidade());
+        render();
+        break;
+
+      case "contrato-dia": {
+        const dia = el.dataset.dia;
+        const dias = state.contrato.dias;
+        state.contrato.dias = dias.includes(dia)
+          ? dias.filter(d => d !== dia)
+          // mantém sempre na ordem da semana, pra sair "terça-feira e quinta-feira"
+          : [...dias, dia].sort((a, b) => DIAS_SEMANA_ORDEM.indexOf(a) - DIAS_SEMANA_ORDEM.indexOf(b));
+        render();
+        break;
+      }
+
+      case "contrato-gerar": {
+        const c = state.contrato;
+        contratoRecalcular(c);
+        const problema = contratoValidar(c);
+        if(problema){
+          c.erro = problema;
+          render();
+          break;
+        }
+        // A janela precisa abrir no clique, antes de qualquer await, senão
+        // o navegador entende como pop-up e bloqueia.
+        const abriu = abrirContratoParaImpressao(c);
+        if(!abriu){
+          c.erro = "O navegador bloqueou a janela do contrato. Libere os pop-ups deste site e tente de novo.";
+          render();
+          break;
+        }
+        c.erro = "";
+        state.instituicaoMensagem = `Contrato de ${c.alunoNome} gerado. Confira na aba que abriu e mande imprimir.`;
+
+        if(!c.criarAcessos){
+          c.aberto = false;
+          render();
+          break;
+        }
+
+        c.salvandoAcessos = true;
+        c.resultadoAcessos = null;
+        render();
+        try {
+          c.resultadoAcessos = await criarCadastrosDoContrato(c);
+          // lista de alunos muda, então força recarregar na próxima abertura
+          state.instAlunos = null;
+          state.instAlunosEscolaId = null;
+          state.gestaoProfessores = null;
+          state.gestaoEquipeEscolaId = null;
+        } catch(err){
+          console.error("Erro ao criar cadastros do contrato:", err);
+          c.erro = mensagemErroAcessosContrato(err);
+        } finally {
+          c.salvandoAcessos = false;
+          render();
+          // recarrega alunos e responsáveis pra lista já refletir o novo
+          // cadastro (e pra um segundo contrato não duplicar ninguém)
+          garantirPessoasDaUnidade();
+        }
+        break;
+      }
+
       case "manage-plan":
       case "generate-boleto":
         state.instituicaoMensagem = "Ação simulada — a integração de escrita com o banco entra na próxima etapa.";
@@ -3185,24 +4348,202 @@ function bindEvents(){
         break;
       }
 
-      case "reset-senha-perfil": {
-        state.perfilSenhaResetErro = "";
-        state.perfilSenhaResetMensagem = "";
-        const email = state.authUser?.email;
-        if(!email){
-          state.perfilSenhaResetErro = "Não encontramos seu e-mail de acesso. Fale com a secretaria.";
+      /* ---------- Senhas & acessos (Gestão) ---------- */
+
+      case "abrir-acesso-usuario": {
+        const tipo = el.dataset.tipo;
+        const docId = el.dataset.id;
+        let uid = el.dataset.uid || null;
+        let email = el.dataset.email || "";
+
+        // Cadastros antigos de aluno não guardavam o uid/e-mail no próprio
+        // documento — tenta descobrir antes de abrir, pra tela já vir com
+        // as opções certas.
+        if(tipo === "aluno" && !uid){
+          const aluno = (state.instAlunos || []).find(a => a.id === docId);
+          uid = aluno?.uid || await descobrirUidDoAluno(docId) || null;
+          if(!email) email = aluno?.email || "";
+        }
+
+        state.acessoModalAberto = true;
+        state.acessoTipo = tipo;
+        state.acessoDocId = docId;
+        state.acessoUid = uid;
+        state.acessoNome = el.dataset.nome || "";
+        state.acessoEmail = email;
+        state.acessoErro = "";
+        state.acessoMensagem = "";
+        state.acessoConfirmandoExclusao = el.dataset.excluir === "1";
+        // Abrir o gerenciador de acesso a partir da ficha do aluno fecha a
+        // ficha — dois modais empilhados só atrapalham no celular.
+        if(tipo === "aluno") state.alunoDetalheId = null;
+        render();
+        break;
+      }
+
+      case "fechar-acesso-modal":
+        state.acessoModalAberto = false;
+        state.acessoConfirmandoExclusao = false;
+        state.acessoErro = "";
+        state.acessoMensagem = "";
+        render();
+        break;
+
+      case "definir-senha-acesso": {
+        const senha = document.getElementById("acesso-nova-senha")?.value || "";
+        state.acessoErro = "";
+        state.acessoMensagem = "";
+        if(senha.length < 6){
+          state.acessoErro = "A senha precisa ter pelo menos 6 caracteres.";
           render();
           break;
         }
-        state.perfilSenhaResetEnviando = true;
+        if(!state.acessoUid){
+          state.acessoErro = "Não encontramos o login desta pessoa. Use o link por e-mail ou recadastre o acesso.";
+          render();
+          break;
+        }
+        state.acessoDefinindoSenha = true;
         render();
         try {
-          await sendPasswordResetEmail(auth, email);
-          state.perfilSenhaResetMensagem = `Enviamos um e-mail para ${email} com o link para trocar sua senha.`;
+          await definirSenhaDeOutroUsuario(state.acessoUid, senha);
+          state.acessoMensagem = `Senha de ${state.acessoNome} alterada. Entregue a nova senha para a pessoa.`;
         } catch(err){
-          state.perfilSenhaResetErro = mensagemErroFirebase(err.code);
+          state.acessoErro = mensagemErroAdmin(err);
         } finally {
-          state.perfilSenhaResetEnviando = false;
+          state.acessoDefinindoSenha = false;
+          render();
+        }
+        break;
+      }
+
+      case "criar-login-acesso": {
+        const email = (document.getElementById("acesso-email")?.value || "").trim();
+        const senha = document.getElementById("acesso-nova-senha")?.value || "";
+        state.acessoErro = "";
+        state.acessoMensagem = "";
+        if(!email || senha.length < 6){
+          state.acessoErro = "Preencha o e-mail e uma senha de pelo menos 6 caracteres.";
+          render();
+          break;
+        }
+        if(state.acessoTipo !== "responsavel"){
+          state.acessoErro = "Por enquanto só dá pra criar acesso de responsável por aqui. Para aluno e professor, use Gestão > Criar cadastro.";
+          render();
+          break;
+        }
+        const responsavel = (state.gestaoResponsaveis || []).find(r => r.id === state.acessoDocId);
+        if(!responsavel){
+          state.acessoErro = "Cadastro não encontrado. Feche e abra a lista de novo.";
+          render();
+          break;
+        }
+        state.acessoCriandoLogin = true;
+        render();
+        try {
+          const uid = await criarLoginParaResponsavel(responsavel, email, senha);
+          responsavel.uid = uid;
+          responsavel.email = email;
+          state.acessoUid = uid;
+          state.acessoEmail = email;
+          state.acessoMensagem = `Acesso criado. ${responsavel.nome} entra com ${email} e a senha que você definiu.`;
+        } catch(err){
+          state.acessoErro = err?.code?.startsWith("auth/")
+            ? mensagemErroFirebase(err.code)
+            : `Não foi possível criar o acesso agora${err.code ? ` (${err.code})` : ""}.`;
+        } finally {
+          state.acessoCriandoLogin = false;
+          render();
+        }
+        break;
+      }
+
+      case "iniciar-exclusao-acesso":
+        state.acessoConfirmandoExclusao = true;
+        state.acessoErro = "";
+        state.acessoMensagem = "";
+        render();
+        break;
+
+      case "cancelar-exclusao-acesso":
+        state.acessoConfirmandoExclusao = false;
+        render();
+        break;
+
+      case "confirmar-exclusao-acesso": {
+        const escolaId = state.escolaSelecionadaId;
+        if(!escolaId) break;
+        state.acessoExcluindo = true;
+        state.acessoErro = "";
+        render();
+        try {
+          if(state.acessoTipo === "aluno"){
+            const aluno = (state.instAlunos || []).find(a => a.id === state.acessoDocId);
+            if(!aluno) throw new Error("aluno-nao-encontrado");
+            await excluirAlunoDaInstituicao(aluno, escolaId);
+          } else if(state.acessoTipo === "professor"){
+            await excluirProfessorDaEscola(state.acessoDocId, escolaId);
+            await carregarEquipeDaEscola(escolaId);
+          } else if(state.acessoTipo === "responsavel"){
+            const responsavel = (state.gestaoResponsaveis || []).find(r => r.id === state.acessoDocId);
+            if(!responsavel) throw new Error("responsavel-nao-encontrado");
+            await excluirResponsavelDaEscola(responsavel);
+            await carregarEquipeDaEscola(escolaId);
+          }
+          state.instituicaoMensagem = `${state.acessoNome} foi excluído(a) desta unidade.`;
+          state.acessoModalAberto = false;
+          state.acessoConfirmandoExclusao = false;
+        } catch(err){
+          state.acessoErro = `Não foi possível excluir agora${err.code ? ` (${err.code})` : ""}. Tente de novo.`;
+        } finally {
+          state.acessoExcluindo = false;
+          render();
+        }
+        break;
+      }
+
+      case "trocar-minha-senha": {
+        const atual = document.getElementById("perfil-senha-atual")?.value || "";
+        const nova = document.getElementById("perfil-senha-nova")?.value || "";
+        const confirma = document.getElementById("perfil-senha-confirma")?.value || "";
+        state.perfilSenhaErro = "";
+        state.perfilSenhaMensagem = "";
+        if(!atual || !nova){
+          state.perfilSenhaErro = "Preencha a senha atual e a nova.";
+          render();
+          break;
+        }
+        if(nova.length < 6){
+          state.perfilSenhaErro = "A nova senha precisa ter pelo menos 6 caracteres.";
+          render();
+          break;
+        }
+        if(nova !== confirma){
+          state.perfilSenhaErro = "A confirmação não bate com a nova senha.";
+          render();
+          break;
+        }
+        const usuario = auth.currentUser;
+        if(!usuario?.email){
+          state.perfilSenhaErro = "Sua sessão expirou. Saia e entre de novo.";
+          render();
+          break;
+        }
+        state.perfilSenhaTrocando = true;
+        render();
+        try {
+          // O Firebase exige confirmar a senha atual antes de trocar
+          // (reautenticação) — é o que impede alguém de mudar a senha
+          // numa sessão deixada aberta.
+          await reauthenticateWithCredential(usuario, EmailAuthProvider.credential(usuario.email, atual));
+          await updatePassword(usuario, nova);
+          state.perfilSenhaMensagem = "Senha alterada. Use a nova senha no próximo login.";
+        } catch(err){
+          state.perfilSenhaErro = err?.code === "auth/wrong-password" || err?.code === "auth/invalid-credential"
+            ? "A senha atual está incorreta."
+            : mensagemErroFirebase(err?.code);
+        } finally {
+          state.perfilSenhaTrocando = false;
           render();
         }
         break;
@@ -3216,20 +4557,8 @@ function bindEvents(){
         break;
 
       case "forgot-password": {
-        const email = document.getElementById("login-identifier")?.value.trim();
-        if(!email){
-          state.loginErro = "Digite seu e-mail no campo acima e clique de novo em \"Esqueci minha senha\".";
-          render();
-          break;
-        }
-        try {
-          await sendPasswordResetEmail(auth, email);
-          state.loginErro = "";
-          state.loginAviso = "Enviamos um e-mail com instruções para redefinir sua senha.";
-        } catch(err){
-          state.loginAviso = "";
-          state.loginErro = mensagemErroFirebase(err.code);
-        }
+        state.loginErro = "";
+        state.loginAviso = "Entre em contato com a secretaria para a alteração de senha.";
         render();
         break;
       }
@@ -3259,6 +4588,7 @@ function bindEvents(){
         const aluno = (state.instAlunos || []).find(a => a.id === id);
         state.alunoDetalheId = id;
         state.alunoDetalheContatoInput = aluno ? (aluno.contato || "") : "";
+        state.alunoDetalheNascimentoInput = aluno ? (aluno.nascimento || "") : "";
         state.alunoDetalheErro = "";
         state.alunoDetalheMensagem = "";
         state.alunoExcluirConfirmando = false;
@@ -3282,17 +4612,20 @@ function bindEvents(){
         const aluno = (state.instAlunos || []).find(a => a.id === state.alunoDetalheId);
         if(!aluno) break;
         const contato = (document.getElementById("aluno-detalhe-contato")?.value || "").trim();
+        const nascimento = (document.getElementById("aluno-detalhe-nascimento")?.value || "").trim();
         state.alunoDetalheSalvandoContato = true;
         state.alunoDetalheErro = "";
         state.alunoDetalheMensagem = "";
         render();
         try {
-          await updateDoc(doc(db, "alunos", aluno.id), { contato });
+          await updateDoc(doc(db, "alunos", aluno.id), { contato, nascimento });
           aluno.contato = contato;
+          aluno.nascimento = nascimento;
           state.alunoDetalheContatoInput = contato;
-          state.alunoDetalheMensagem = "Contato atualizado.";
+          state.alunoDetalheNascimentoInput = nascimento;
+          state.alunoDetalheMensagem = "Cadastro atualizado.";
         } catch(err){
-          state.alunoDetalheErro = "Não foi possível salvar o contato agora. Tente de novo.";
+          state.alunoDetalheErro = "Não foi possível salvar agora. Tente de novo.";
         } finally {
           state.alunoDetalheSalvandoContato = false;
           render();
@@ -3551,7 +4884,7 @@ function bindEvents(){
         if(!id) break;
         // Confirmação nativa mesmo — é uma ação destrutiva (some da unidade
         // atual e apaga as turmas dele aqui) e não tem "desfazer".
-        const ok = window.confirm(`Remover ${nome} desta unidade? As turmas dele nesta unidade também serão excluídas. O login dele continua existindo (peça pra equipe técnica remover o acesso, se for o caso).`);
+        const ok = window.confirm(`Remover ${nome} desta unidade? As turmas dele nesta unidade também serão excluídas. Se esta era a única unidade dele, o acesso também é encerrado.`);
         if(!ok) break;
         state.editProfessorExcluindoId = id;
         render();

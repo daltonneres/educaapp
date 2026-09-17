@@ -1,0 +1,17 @@
+{
+  "name": "educamais-functions",
+  "description": "Funções administrativas do Educa+ (trocar senha e excluir login de outros usuários)",
+  "main": "index.js",
+  "engines": {
+    "node": "20"
+  },
+  "scripts": {
+    "deploy": "firebase deploy --only functions",
+    "logs": "firebase functions:log"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.1.0",
+    "firebase-functions": "^5.0.0"
+  },
+  "private": true
+}
