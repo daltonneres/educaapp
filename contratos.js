@@ -891,6 +891,10 @@ export function interpretarContratoTexto(texto){
   } else {
     avisos.push("Não consegui ler os valores do contrato — confira antes de importar.");
   }
+  // --- rendimento esperado (cláusula 4) ---
+  const mRendimento = tPlano.match(/rendimento esperado para o curso contratado [ée] de\s*([^,]+),\s*podendo/i);
+  if(mRendimento) c.rendimento = mRendimento[1].trim();
+
   const mVencimento = tPlano.match(/primeiro pagamento em\s*(\d{2}\/\d{2}\/\d{4})/i);
   if(mVencimento) c.primeiroVencimento = dataBrParaIso(mVencimento[1]);
   const mForma = tPlano.match(/no\s*(BOLETO|PIX|CART[ÃA]O|DINHEIRO)\s*com o primeiro pagamento/i);
@@ -904,7 +908,14 @@ export function interpretarContratoTexto(texto){
     if(!c.foro) c.foro = c.cidadeAssinatura;
   }
 
+  // contratoRecalcular também recalcula a data de término a partir de
+  // início + duração — útil ao gerar um contrato novo, mas aqui já lemos a
+  // data de término de verdade, escrita no PDF, então guardamos ela antes
+  // e restauramos depois, pra não deixar o cálculo genérico sobrescrever
+  // com um valor 1 dia diferente do que está no papel.
+  const dataTerminoDoTexto = c.dataTermino;
   if(c.formatoValor) contratoRecalcular(c);
+  if(dataTerminoDoTexto) c.dataTermino = dataTerminoDoTexto;
 
   return { contrato: c, avisos };
 }
@@ -1163,6 +1174,19 @@ export function contratoModal(c, { cursos = [], alunos = [] } = {}){
 /* Modal "Importar contratos já assinados"                             */
 /* ================================================================== */
 
+/* Ícones usados só nesta tela de importação. Ficam aqui (em vez de
+   vir de "ICONS" no script.js) porque contratos.js é um módulo à
+   parte — importar de volta do script.js criaria um import circular.
+   São cópias dos mesmos SVGs que o script.js usa para as outras telas,
+   pra manter a aparência idêntica. */
+const ICONS_IMPORT = {
+  check: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m20 6-11 11-5-5"/></svg>`,
+  warn: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a1 1 0 0 0 .9 1.5h18.6a1 1 0 0 0 .9-1.5L13.7 3.9a1 1 0 0 0-1.7 0Z"/><path d="M12 9v4M12 17h.01"/></svg>`,
+  close: `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18"/></svg>`,
+  spinner: `<svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2a10 10 0 0 1 10 10"/></svg>`,
+  upload: `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M5 16v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3"/></svg>`,
+};
+
 /* Uma linha da prévia — um PDF já lido, com os campos que deram pra
    reconhecer. Fica compacto (só o essencial) porque pode vir junto
    com dezenas de outros; qualquer ajuste fino sobra pra editar depois
@@ -1175,13 +1199,13 @@ function itemImportacaoHtml(item, i, cursosDisponiveis){
   );
 
   const statusHtml = item.status === "salvando" ? `<span class="import-contrato-status is-salvando">Salvando…</span>`
-    : item.status === "ok" ? `<span class="import-contrato-status is-ok">${ICONS.check} Importado</span>`
-    : item.status === "erro" ? `<span class="import-contrato-status is-erro">${ICONS.warn} ${esc(item.erro || "Erro")}</span>`
+    : item.status === "ok" ? `<span class="import-contrato-status is-ok">${ICONS_IMPORT.check} Importado</span>`
+    : item.status === "erro" ? `<span class="import-contrato-status is-erro">${ICONS_IMPORT.warn} ${esc(item.erro || "Erro")}</span>`
     : "";
 
   const avisosHtml = item.avisos.length ? `
     <div class="import-contrato-avisos">
-      ${item.avisos.map(a => `<span>${ICONS.warn} ${esc(a)}</span>`).join("")}
+      ${item.avisos.map(a => `<span>${ICONS_IMPORT.warn} ${esc(a)}</span>`).join("")}
     </div>` : "";
 
   return `
@@ -1215,7 +1239,7 @@ function itemImportacaoHtml(item, i, cursosDisponiveis){
         </div>
         ${avisosHtml}
       </div>
-      <button type="button" class="secretaria-modal-close" style="color:var(--slate);align-self:flex-start;" data-action="import-contrato-remover" data-row="${i}" title="Remover da lista">${ICONS.close}</button>
+      <button type="button" class="secretaria-modal-close" style="color:var(--slate);align-self:flex-start;" data-action="import-contrato-remover" data-row="${i}" title="Remover da lista">${ICONS_IMPORT.close}</button>
     </div>`;
 }
 
@@ -1229,7 +1253,7 @@ export function importarContratosModal(state_, { cursos = [] } = {}){
       <h3 class="teacher-label">Selecionar PDFs</h3>
       <p class="section-eyebrow" style="margin:0 0 10px;">Pode escolher vários de uma vez. O texto é lido aqui mesmo no navegador — o arquivo não é enviado pra nenhum servidor.</p>
       <label class="upload-dropzone${state_.importContratosLendo ? " is-loading" : ""}" for="import-contratos-pdf-files">
-        <span class="upload-dropzone-icon">${state_.importContratosLendo ? ICONS.spinner : ICONS.upload}</span>
+        <span class="upload-dropzone-icon">${state_.importContratosLendo ? ICONS_IMPORT.spinner : ICONS_IMPORT.upload}</span>
         <span class="upload-dropzone-text">
           <strong>${state_.importContratosLendo ? "Lendo os PDFs…" : "Toque pra escolher os contratos"}</strong>
           <span>Pode selecionar vários arquivos PDF de uma vez</span>
@@ -1263,7 +1287,7 @@ export function importarContratosModal(state_, { cursos = [] } = {}){
           <h2>Importar contratos já assinados</h2>
           <p class="section-eyebrow" style="margin:2px 0 0;">Reconhece os dados do modelo da escola. Confira a prévia antes de confirmar.</p>
         </div>
-        <button type="button" class="secretaria-modal-close" style="color:var(--slate);" data-action="fechar-importar-contratos-modal" aria-label="Fechar">${ICONS.close}</button>
+        <button type="button" class="secretaria-modal-close" style="color:var(--slate);" data-action="fechar-importar-contratos-modal" aria-label="Fechar">${ICONS_IMPORT.close}</button>
       </div>
       ${areaUploadHtml}
       ${listaHtml}

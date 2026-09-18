@@ -348,18 +348,34 @@ async function extrairTextoDoPdf(file){
   const linhas = [];
   for(let p = 1; p <= pdf.numPages; p++){
     const page = await pdf.getPage(p);
-    const content = await page.getTextContent();
+    // "disableCombineTextItems" faz o pdf.js devolver um item por posição
+    // de verdade, sem juntar pedaços sozinho — é o que deixa o cálculo do
+    // vão abaixo (item por item) confiável.
+    const content = await page.getTextContent({ disableCombineTextItems: true });
     const grupos = [];
     content.items.forEach(item => {
       if(!item.str || !item.str.trim()) return;
       const y = Math.round(item.transform[5]);
       let grupo = grupos.find(g => Math.abs(g.y - y) <= 3);
       if(!grupo){ grupo = { y, itens: [] }; grupos.push(grupo); }
-      grupo.itens.push({ x: item.transform[4], texto: item.str });
+      grupo.itens.push({ x: item.transform[4], largura: item.width || 0, texto: item.str });
     });
     grupos.sort((a, b) => b.y - a.y); // maior y = mais acima na página → lê de cima pra baixo
     grupos.forEach(g => {
-      const linha = g.itens.sort((a, b) => a.x - b.x).map(i => i.texto).join(" ").replace(/\s+/g, " ").trim();
+      // Só entra espaço entre dois pedaços quando existe um vão de verdade
+      // entre eles. Sem isso, uma palavra acentuada que o PDF divide em
+      // vários itens colados (ex.: "PRESTA" + "ÇÃ" + "O", sem nenhuma
+      // distância entre um e outro) ganhava espaço no meio ("PRESTA ÇÃ O")
+      // e quebrava qualquer busca de texto por essa palavra depois.
+      const itens = g.itens.sort((a, b) => a.x - b.x);
+      let linha = "";
+      let fimAnterior = null;
+      itens.forEach(it => {
+        if(fimAnterior !== null && (it.x - fimAnterior) > 1) linha += " ";
+        linha += it.texto;
+        fimAnterior = it.x + it.largura;
+      });
+      linha = linha.replace(/\s+/g, " ").trim();
       if(linha) linhas.push(linha);
     });
   }
