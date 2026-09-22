@@ -327,6 +327,7 @@ export function contratoEstadoInicial(){
     contatoResp: "",           // WhatsApp do responsável
     // curso
     curso: "", cargaHoraria: "2",
+    turmaId: "",               // turma (coleção "turmas") em que o aluno já entra ao salvar o cadastro — opcional
     dias: [], horaInicio: "", horaFim: "",
     duracao: "12", duracaoCustom: "",
     dataInicio: "", dataTermino: "",
@@ -932,6 +933,25 @@ function campo(label, field, valor, { tipo = "text", placeholder = "", largura =
     </label>`;
 }
 
+/* <option>s de turma para os seletores de contrato. Se o curso já foi
+   escolhido, as turmas dessa disciplina vêm primeiro (grupo próprio) e as
+   demais ficam em "Outras turmas" — assim nada some da lista, mas o mais
+   provável fica no topo. */
+function opcoesTurmaHtml(turmas, curso, selecionada){
+  const lista = [...(turmas || [])].sort((a, b) => String(a.nome || "").localeCompare(String(b.nome || "")));
+  const alvo = String(curso || "").toLowerCase().trim();
+  const doCurso = alvo ? lista.filter(t => String(t.disciplina || "").toLowerCase().trim() === alvo) : [];
+  const outras = lista.filter(t => !doCurso.includes(t));
+  const opt = (t, comDisciplina) => `<option value="${esc(t.id)}" ${t.id === selecionada ? "selected" : ""}>${esc(
+    `${t.nome}${comDisciplina && t.disciplina ? ` (${t.disciplina})` : ""}${t.horario ? ` · ${t.horario}` : ""}`
+  )}</option>`;
+  const vazio = `<option value="">— sem turma —</option>`;
+  if(!doCurso.length) return vazio + outras.map(t => opt(t, true)).join("");
+  return vazio
+    + `<optgroup label="Turmas de ${esc(curso)}">${doCurso.map(t => opt(t, false)).join("")}</optgroup>`
+    + (outras.length ? `<optgroup label="Outras turmas">${outras.map(t => opt(t, true)).join("")}</optgroup>` : "");
+}
+
 function selectCampo(label, field, valor, opcoes, { largura = "" } = {}){
   return `
     <label class="contrato-campo" style="${largura ? `flex:1 1 ${largura};` : ""}">
@@ -962,7 +982,7 @@ function credencial(rotulo, email, senha, quem, nome){
 
 /* `cursos` vem da unidade selecionada no sistema; `alunos` é a lista já
    cadastrada, só pra preencher o nome rapidinho. */
-export function contratoModal(c, { cursos = [], alunos = [] } = {}){
+export function contratoModal(c, { cursos = [], alunos = [], turmas = [] } = {}){
   if(!c.aberto) return "";
 
   const empresa = empresaPorCnpj(c.cnpj);
@@ -972,11 +992,17 @@ export function contratoModal(c, { cursos = [], alunos = [] } = {}){
 
   // Painel que aparece depois de gerar: o que foi criado e com quais senhas.
   const r = c.resultadoAcessos;
-  const linhaAcesso = (rotulo, item) => item ? `<li><b>${esc(rotulo)}:</b> ${esc(item.email)} · senha <b>${esc(item.senha)}</b></li>` : "";
+  const linhaAcesso = (rotulo, item, quem, contato) => item ? `
+    <li>
+      <span><b>${esc(rotulo)}:</b> login <b>${esc(item.email)}</b> · senha <b>${esc(item.senha)}</b></span>
+      ${telefoneOk(contato)
+        ? `<button type="button" class="aniversario-btn" data-action="contrato-enviar-acesso" data-quem="${quem}">${ICONS_IMPORT.send} Enviar acesso no WhatsApp</button>`
+        : `<span class="section-eyebrow" style="margin:0;">sem WhatsApp cadastrado</span>`}
+    </li>` : "";
   const resultadoHtml = r ? `
     <div class="aluno-modal-section">
       <p class="teacher-success" style="margin:0 0 6px;">Contrato gerado na outra aba.</p>
-      ${(r.aluno || r.responsavel) ? `<ul class="contrato-acessos-lista">${linhaAcesso("Aluno", r.aluno)}${linhaAcesso("Responsável", r.responsavel)}</ul>` : ""}
+      ${(r.aluno || r.responsavel) ? `<ul class="contrato-acessos-lista">${linhaAcesso("Aluno", r.aluno, "aluno", c.contatoAluno)}${linhaAcesso("Responsável", r.responsavel, "resp", c.contatoResp)}</ul>` : ""}
       ${(r.avisos || []).map(a => `<p class="section-eyebrow" style="margin:4px 0 0;">${esc(a)}</p>`).join("")}
     </div>` : (c.salvandoAcessos ? `
     <div class="aluno-modal-section"><p class="section-eyebrow" style="margin:0;">Criando os cadastros e os logins…</p></div>` : "");
@@ -1084,6 +1110,12 @@ export function contratoModal(c, { cursos = [], alunos = [] } = {}){
         <h3 class="teacher-label">4. Curso, horário e duração</h3>
         <div class="contrato-linha">
           ${selectCampo("Curso", "curso", c.curso, opcoesCurso, { largura: "180px" })}
+          <label class="contrato-campo" style="flex:1 1 220px;">
+            <span>Turma (opcional)</span>
+            <select class="teacher-text-input" data-contrato-select="turmaId" ${turmas.length ? "" : "disabled"}>
+              ${turmas.length ? opcoesTurmaHtml(turmas, c.curso, c.turmaId) : `<option value="">— nenhuma turma criada —</option>`}
+            </select>
+          </label>
           ${campo("Horas/aula por semana", "cargaHoraria", c.cargaHoraria, { largura: "150px" })}
           ${campo("Início da aula", "horaInicio", c.horaInicio, { tipo: "time", largura: "130px" })}
           ${campo("Fim da aula", "horaFim", c.horaFim, { tipo: "time", largura: "130px" })}
@@ -1179,10 +1211,18 @@ export function contratoModal(c, { cursos = [], alunos = [] } = {}){
    parte — importar de volta do script.js criaria um import circular.
    São cópias dos mesmos SVGs que o script.js usa para as outras telas,
    pra manter a aparência idêntica. */
+/* Mesmo critério do script.js: só vale como WhatsApp se tiver cara de
+   telefone (DDD + número). */
+function telefoneOk(v){
+  const d = String(v || "").replace(/\D/g, "");
+  return d.length >= 10 && d.length <= 13;
+}
+
 const ICONS_IMPORT = {
   check: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m20 6-11 11-5-5"/></svg>`,
   warn: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a1 1 0 0 0 .9 1.5h18.6a1 1 0 0 0 .9-1.5L13.7 3.9a1 1 0 0 0-1.7 0Z"/><path d="M12 9v4M12 17h.01"/></svg>`,
   close: `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18"/></svg>`,
+  send: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>`,
   spinner: `<svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2a10 10 0 0 1 10 10"/></svg>`,
   upload: `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M5 16v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3"/></svg>`,
 };
@@ -1191,7 +1231,7 @@ const ICONS_IMPORT = {
    reconhecer. Fica compacto (só o essencial) porque pode vir junto
    com dezenas de outros; qualquer ajuste fino sobra pra editar depois
    na ficha do aluno. */
-function itemImportacaoHtml(item, i, cursosDisponiveis){
+function itemImportacaoHtml(item, i, cursosDisponiveis, turmas = []){
   const c = item.contrato;
   const empresa = empresaPorCnpj(c.cnpj);
   const opcoesCurso = [{ valor: "", texto: "— curso —" }].concat(
@@ -1202,6 +1242,25 @@ function itemImportacaoHtml(item, i, cursosDisponiveis){
     : item.status === "ok" ? `<span class="import-contrato-status is-ok">${ICONS_IMPORT.check} Importado</span>`
     : item.status === "erro" ? `<span class="import-contrato-status is-erro">${ICONS_IMPORT.warn} ${esc(item.erro || "Erro")}</span>`
     : "";
+
+  /* Contrato pendente já gravado: aparece o botão de mandar o PDF pro
+     responsável no WhatsApp (o arquivo ainda está na memória, então dá
+     pra anexar direto). */
+  const enviarHtml = item.status === "ok" && !item.assinado ? `
+    <button type="button" class="aniversario-btn" data-action="import-contrato-enviar" data-row="${i}">${ICONS_IMPORT.send} Enviar pra assinatura</button>` : "";
+  const linhaAcessoImport = (rotulo, acesso, quem, contato) => acesso ? `
+    <li>
+      <span><b>${esc(rotulo)}:</b> login <b>${esc(acesso.email)}</b> · senha <b>${esc(acesso.senha)}</b></span>
+      ${telefoneOk(contato)
+        ? `<button type="button" class="aniversario-btn" data-action="import-contrato-enviar-acesso" data-row="${i}" data-quem="${quem}">${ICONS_IMPORT.send} Enviar acesso no WhatsApp</button>`
+        : `<span class="section-eyebrow" style="margin:0;">sem WhatsApp cadastrado</span>`}
+    </li>` : "";
+  const acessosHtml = item.status === "ok" && item.acessos && (item.acessos.aluno || item.acessos.responsavel) ? `
+    <ul class="contrato-acessos-lista">
+      ${linhaAcessoImport("Aluno", item.acessos.aluno, "aluno", c.contatoAluno)}
+      ${linhaAcessoImport("Responsável", item.acessos.responsavel, "resp", c.contatoResp)}
+    </ul>` : "";
+  const envioMsgHtml = item.envioMsg ? `<p class="section-eyebrow" style="margin:0;">${esc(item.envioMsg)}</p>` : "";
 
   const avisosHtml = item.avisos.length ? `
     <div class="import-contrato-avisos">
@@ -1219,6 +1278,9 @@ function itemImportacaoHtml(item, i, cursosDisponiveis){
           <input class="teacher-text-input" style="flex:1 1 220px;" placeholder="Nome do aluno" value="${esc(c.alunoNome)}" data-import-campo="alunoNome" data-row="${i}" />
           <input type="date" class="teacher-text-input" style="flex:1 1 150px;" value="${esc(c.alunoNascimento)}" data-import-campo="alunoNascimento" data-row="${i}" />
           <select class="teacher-text-input" style="flex:1 1 150px;" data-import-campo="curso" data-row="${i}">${opcoesCurso.map(o => `<option value="${esc(o.valor)}" ${c.curso === o.valor ? "selected" : ""}>${esc(o.texto)}</option>`).join("")}</select>
+          <select class="teacher-text-input" style="flex:1 1 190px;" data-import-campo="turmaId" data-row="${i}" ${turmas.length ? "" : "disabled"} aria-label="Turma do aluno">
+            ${turmas.length ? opcoesTurmaHtml(turmas, c.curso, c.turmaId) : `<option value="">— nenhuma turma criada —</option>`}
+          </select>
           <select class="teacher-text-input" style="flex:0 1 140px;" data-import-campo="cnpj" data-row="${i}">
             <option value="">— CNPJ —</option>
             ${EMPRESAS.map(e => `<option value="${esc(e.cnpj)}" ${c.cnpj === e.cnpj ? "selected" : ""}>${esc(e.cnpj)}</option>`).join("")}
@@ -1229,6 +1291,13 @@ function itemImportacaoHtml(item, i, cursosDisponiveis){
           <input class="teacher-text-input" style="flex:1 1 170px;" placeholder="WhatsApp do aluno" value="${esc(c.contatoAluno)}" data-import-campo="contatoAluno" data-row="${i}" />
           <input class="teacher-text-input" style="flex:1 1 170px;" placeholder="WhatsApp do responsável" value="${esc(c.contatoResp)}" data-import-campo="contatoResp" data-row="${i}" />
         </div>
+        <div class="import-contrato-assinatura" role="group" aria-label="Situação da assinatura">
+          <span class="import-contrato-assinatura-rotulo">Este contrato já foi assinado?</span>
+          <div class="import-assinatura-opcoes">
+            <button type="button" class="import-assinatura-btn is-assinado${item.assinado ? " active" : ""}" data-action="import-contrato-assinatura" data-row="${i}" data-valor="assinado" ${item.status === "ok" ? "disabled" : ""}>Já assinado</button>
+            <button type="button" class="import-assinatura-btn is-pendente${item.assinado ? "" : " active"}" data-action="import-contrato-assinatura" data-row="${i}" data-valor="pendente" ${item.status === "ok" ? "disabled" : ""}>Pendente de assinatura</button>
+          </div>
+        </div>
         <div class="import-contrato-rodape">
           <span class="section-eyebrow" style="margin:0;">${empresa ? `${esc(empresa.cidade === "SALTO DO LONTRA" ? "Salto do Lontra" : "Nova Prata do Iguaçu")} · ` : ""}${c.dataInicio ? `início ${esc(c.dataInicio.split("-").reverse().join("/"))}` : "sem data de início"}</span>
           <label class="responsavel-vinculo-item" style="padding:2px 8px;">
@@ -1236,14 +1305,17 @@ function itemImportacaoHtml(item, i, cursosDisponiveis){
             <span>Criar acesso ao app</span>
           </label>
           ${statusHtml}
+          ${enviarHtml}
         </div>
+        ${envioMsgHtml}
+        ${acessosHtml}
         ${avisosHtml}
       </div>
       <button type="button" class="secretaria-modal-close" style="color:var(--slate);align-self:flex-start;" data-action="import-contrato-remover" data-row="${i}" title="Remover da lista">${ICONS_IMPORT.close}</button>
     </div>`;
 }
 
-export function importarContratosModal(state_, { cursos = [] } = {}){
+export function importarContratosModal(state_, { cursos = [], turmas = [] } = {}){
   if(!state_.importContratosModalAberto) return "";
   const itens = state_.importContratosItens;
   const selecionados = itens.filter(it => it.selecionado && it.status !== "ok").length;
@@ -1265,13 +1337,18 @@ export function importarContratosModal(state_, { cursos = [] } = {}){
   const listaHtml = itens.length ? `
     <div class="aluno-modal-section">
       <h3 class="teacher-label">${itens.length} contrato(s) lido(s) — confira antes de importar</h3>
-      <div class="import-contrato-lista">${itens.map((it, i) => itemImportacaoHtml(it, i, cursos)).join("")}</div>
+      <div class="import-contrato-bulk">
+        <span>Assinatura de todos:</span>
+        <button type="button" class="import-assinatura-btn is-assinado" data-action="import-contrato-assinatura-todos" data-valor="assinado">Já assinados</button>
+        <button type="button" class="import-assinatura-btn is-pendente" data-action="import-contrato-assinatura-todos" data-valor="pendente">Pendentes</button>
+      </div>
+      <div class="import-contrato-lista">${itens.map((it, i) => itemImportacaoHtml(it, i, cursos, turmas)).join("")}</div>
     </div>` : "";
 
   const resumo = state_.importContratosResumo;
   const resumoHtml = resumo ? `
     <div class="aluno-modal-section">
-      <p class="teacher-success" style="margin:0;">${resumo.criados} cadastro(s) novo(s), ${resumo.atualizados} atualizado(s), ${resumo.comLogin} com login criado.${resumo.erros ? ` ${resumo.erros} com erro — veja acima.` : ""}</p>
+      <p class="teacher-success" style="margin:0;">${resumo.criados} cadastro(s) novo(s), ${resumo.atualizados} atualizado(s), ${resumo.comLogin} com login criado.${resumo.pendentes ? ` ${resumo.pendentes} aguardando assinatura.` : ""}${resumo.erros ? ` ${resumo.erros} com erro — veja acima.` : ""}</p>
     </div>` : "";
 
   const progresso = state_.importContratosProgresso;
@@ -1284,8 +1361,8 @@ export function importarContratosModal(state_, { cursos = [] } = {}){
     <div class="aluno-modal contrato-modal" role="dialog" aria-modal="true" aria-label="Importar contratos" data-action="noop">
       <div class="aluno-modal-head">
         <div>
-          <h2>Importar contratos já assinados</h2>
-          <p class="section-eyebrow" style="margin:2px 0 0;">Reconhece os dados do modelo da escola. Confira a prévia antes de confirmar.</p>
+          <h2>Importar contratos</h2>
+          <p class="section-eyebrow" style="margin:2px 0 0;">Reconhece os dados do modelo da escola. Diga se cada contrato já foi assinado; os pendentes ficam aguardando assinatura.</p>
         </div>
         <button type="button" class="secretaria-modal-close" style="color:var(--slate);" data-action="fechar-importar-contratos-modal" aria-label="Fechar">${ICONS_IMPORT.close}</button>
       </div>

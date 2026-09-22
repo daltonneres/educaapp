@@ -1584,3 +1584,143 @@ button {
 @media (max-width: 640px) {
   .import-contrato-item { flex-wrap: wrap; }
 }
+
+/* ---------------- Assinatura do contrato (importação + pendentes) ---------------- */
+.import-contrato-assinatura { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-top: 2px; }
+.import-contrato-assinatura-rotulo { font-size: 12.5px; font-weight: 700; color: var(--ink); }
+.import-assinatura-opcoes { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.import-assinatura-btn {
+  padding: 6px 12px; border-radius: 999px; font-size: 12.5px; font-weight: 700; cursor: pointer;
+  border: 1px solid rgba(18,32,50,.18); background: #fff; color: var(--slate);
+}
+.import-assinatura-btn:disabled { opacity: .6; cursor: default; }
+.import-assinatura-btn.is-assinado.active { background: rgba(31,157,85,.12); border-color: #1f9d55; color: #17803f; }
+.import-assinatura-btn.is-pendente.active { background: rgba(201,162,74,.16); border-color: var(--gold); color: var(--gold-deep); }
+.import-contrato-bulk { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0 0 10px; font-size: 12.5px; color: var(--slate); }
+
+.pendente-contrato-lista { display: flex; flex-direction: column; gap: 10px; }
+.pendente-contrato-item {
+  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px 16px;
+  padding: 12px; border: 1px solid rgba(18,32,50,.10); border-radius: 12px; background: #fff;
+}
+.pendente-contrato-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 220px; }
+.pendente-contrato-info strong { color: var(--ink); font-size: 14px; }
+.pendente-contrato-info span { color: var(--slate); font-size: 12.5px; }
+.pendente-contrato-info .pendente-contrato-msg { color: #9a6a12; }
+.pendente-contrato-acoes { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.pendente-contrato-anexar {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 220px; cursor: pointer;
+  padding: 8px 12px; border-radius: 9px; border: 1px dashed rgba(18,32,50,.28);
+  font-size: 12.5px; font-weight: 700; color: var(--slate);
+}
+.pendente-contrato-anexar svg { width: 15px; height: 15px; flex-shrink: 0; }
+.pendente-contrato-anexar span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pendente-contrato-assinado {
+  padding: 9px 14px; border-radius: 9px; font-size: 12.5px; font-weight: 700; cursor: pointer;
+  border: 1px solid rgba(18,32,50,.18); background: transparent; color: var(--slate);
+}
+.pendente-contrato-assinado:hover { border-color: #1f9d55; color: #17803f; }
+.aniversario-btn:disabled { opacity: .45; cursor: not-allowed; }
+@media (max-width: 640px) {
+  .pendente-contrato-acoes { width: 100%; }
+  .pendente-contrato-acoes > * { flex: 1 1 100%; justify-content: center; max-width: none; }
+}
+
+.contrato-acessos-lista { list-style: none; padding-left: 0; }
+.contrato-acessos-lista li { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; margin-bottom: 6px; }
+.contrato-acessos-lista li span { word-break: break-all; }
+
+
+/* ==================================================================
+   Calendário (aluno / responsável / professor) — ver calendario.js
+   verde = presença · amarelo = justificada · vermelho = falta
+   ================================================================== */
+.cal-topo { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
+.cal-topo .cal-novo { margin-top: 0; }
+.cal-card { padding: 18px; }
+
+.cal-nav { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.cal-nav-titulo { font-family: var(--font-display); font-size: 23px; color: var(--ink); font-weight: 500; text-align: center; }
+.cal-nav-titulo span { color: var(--slate); font-size: 18px; }
+.cal-nav-btn { display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 38px; border: 1px solid rgba(18, 32, 50, .14); border-radius: 50%; background: #fff; color: var(--ink); cursor: pointer; }
+.cal-nav-btn:hover { border-color: var(--gold); background: rgba(201, 162, 74, .1); }
+.cal-nav-extra { display: flex; justify-content: center; gap: 18px; margin: 6px 0 14px; }
+.cal-link { padding: 4px 2px; border: 0; background: none; color: var(--gold-deep); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.cal-link:hover { text-decoration: underline; }
+.cal-link:disabled { opacity: .6; cursor: default; text-decoration: none; }
+
+.cal-erro { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; padding: 10px 12px; border: 1px solid rgba(177, 74, 61, .3); border-radius: 10px; background: rgba(177, 74, 61, .07); color: var(--red); font-size: 13px; }
+
+.cal-grade { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
+.cal-semana { padding-bottom: 4px; text-align: center; color: var(--slate); font-size: 12px; font-weight: 600; }
+.cal-vazio { min-height: 66px; }
+
+.cal-dia { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 4px; min-height: 66px; padding: 7px 4px 6px; border: 1.5px solid rgba(18, 32, 50, .08); border-radius: 10px; background: #fff; color: var(--ink); font: inherit; cursor: pointer; transition: transform .1s, box-shadow .1s; }
+.cal-dia:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(18, 32, 50, .12); }
+.cal-dia:disabled { cursor: default; color: var(--slate); background: rgba(255, 255, 255, .6); }
+.cal-dia-num { display: inline-flex; align-items: center; justify-content: center; min-width: 26px; height: 26px; border-radius: 50%; font-size: 14px; font-weight: 700; }
+
+.cal-presente { border-color: rgba(62, 122, 87, .6); background: rgba(62, 122, 87, .15); }
+.cal-presente .cal-dia-num { color: var(--green); }
+.cal-justificada { border-color: #E0B325; background: rgba(240, 196, 25, .26); }
+.cal-justificada .cal-dia-num { color: #7A5B00; }
+.cal-falta { border-color: rgba(177, 74, 61, .65); background: rgba(177, 74, 61, .14); }
+.cal-falta .cal-dia-num { color: var(--red); }
+
+.cal-hoje .cal-dia-num { background: var(--navy); color: #fff; }
+
+.cal-dia-marcas { display: inline-flex; gap: 3px; }
+.cal-ponto { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--navy); }
+.cal-alerta { position: absolute; top: 4px; right: 4px; display: inline-flex; color: #C25E00; }
+
+.cal-legenda { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-top: 16px; color: var(--slate); font-size: 12.5px; }
+.cal-legenda span { display: inline-flex; align-items: center; gap: 6px; }
+.cal-leg { display: inline-block; width: 13px; height: 13px; border-radius: 4px; border: 1.5px solid transparent; }
+.cal-leg-presente { border-color: rgba(62, 122, 87, .7); background: rgba(62, 122, 87, .3); }
+.cal-leg-justificada { border-color: #E0B325; background: rgba(240, 196, 25, .5); }
+.cal-leg-falta { border-color: rgba(177, 74, 61, .75); background: rgba(177, 74, 61, .3); }
+.cal-leg-alerta { color: #C25E00; }
+
+/* pop-up do dia */
+.cal-modal { max-width: 520px; }
+.cal-linha-presenca { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; border: 1px solid rgba(18, 32, 50, .1); border-radius: 10px; font-size: 14px; color: var(--ink); font-weight: 600; }
+.cal-linha-presenca small { color: var(--slate); font-weight: 400; }
+.pill.cal-pill-presente { background: rgba(90, 150, 120, .14); color: var(--green); }
+.pill.cal-pill-falta { background: rgba(196, 84, 74, .14); color: var(--red); }
+.pill.cal-pill-justificada { background: rgba(240, 196, 25, .28); color: #7A5B00; }
+.pill.cal-pill-lembrete { background: rgba(14, 32, 56, .08); color: var(--navy); }
+
+.cal-observacao { display: flex; gap: 10px; padding: 10px 12px; border: 1px solid rgba(194, 94, 0, .3); border-radius: 10px; background: rgba(194, 94, 0, .07); }
+.cal-observacao-icone { display: inline-flex; padding-top: 2px; color: #C25E00; }
+.cal-observacao p { margin: 0 0 3px; color: var(--ink); font-size: 13.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.cal-observacao small { color: var(--slate); font-size: 12px; }
+
+.cal-evento { padding: 10px 12px; border: 1px solid rgba(18, 32, 50, .1); border-radius: 10px; }
+.cal-evento-topo { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.cal-evento-topo strong { color: var(--ink); font-size: 14.5px; overflow-wrap: anywhere; }
+.cal-evento-desc { margin: 6px 0 0; color: var(--ink); font-size: 13.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.cal-evento-meta { margin-top: 6px; color: var(--slate); font-size: 12px; }
+.cal-evento-acoes { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.cal-evento-acoes .attendance-btn { display: inline-flex; align-items: center; gap: 5px; }
+
+/* formulário de novo aviso */
+.cal-form { display: flex; flex-direction: column; margin-top: 4px; }
+.cal-form .teacher-label { display: block; margin: 14px 0 5px; }
+.cal-form textarea { resize: vertical; }
+.cal-form-botoes { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
+.cal-form-botoes .teacher-primary-btn { margin-top: 0; }
+
+@media (max-width: 640px) {
+    .cal-card { padding: 12px 10px; }
+    .cal-nav-titulo { font-size: 20px; }
+    .cal-nav-titulo span { font-size: 16px; }
+    .cal-grade { gap: 4px; }
+    .cal-semana { font-size: 11px; }
+    .cal-vazio { min-height: 48px; }
+    .cal-dia { min-height: 48px; padding: 5px 2px 4px; border-radius: 8px; }
+    .cal-dia-num { min-width: 23px; height: 23px; font-size: 13px; }
+    .cal-ponto { width: 6px; height: 6px; }
+    .cal-alerta { top: 1px; right: 1px; }
+    .cal-alerta svg { width: 11px; height: 11px; }
+    .cal-legenda { gap: 6px 12px; font-size: 12px; }
+}

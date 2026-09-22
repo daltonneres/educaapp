@@ -53,6 +53,25 @@
      conteudoId, conteudoTexto, observacao
      presencas: { [nomeAluno]: "presente" | "falta" | "justificada" }
      observacoesAlunos: { [nomeAluno]: string }
+
+   presencasAluno/{turmaId_data_nomeDoAluno}   (calendário do aluno/responsável —
+                                    uma cópia "por aluno" de cada chamada salva,
+                                    gravada junto com registrosAula; ver
+                                    sincronizarCalendarioDaChamada)
+     alunoKey: "escolaId:nome normalizado"    // liga o registro ao aluno (ver chaveAluno em calendario.js)
+     alunoNome, escolaId, turmaId, turmaNome, disciplina, data
+     status: "presente" | "falta" | "justificada"
+     observacao: string          // observação do professor sobre o aluno naquele dia
+     professorId, professorNome, atualizadoEm
+
+   eventosCalendario/{id}   (avisos e lembretes criados pelo professor)
+     tipo: "aviso" | "lembrete"
+     titulo, descricao, data ("AAAA-MM-DD")
+     alvo: "turma" | "aluno"        // turma inteira ou um aluno só
+     paraQuem: "todos" | "responsaveis" | "alunos"
+     turmaId, turmaNome, disciplina, alunoNome (só quando alvo == "aluno"), escolaId
+     destinatarios: string[]   // chaveAluno de cada aluno que deve ver (consulta: array-contains)
+     professorId, professorNome, criadoEm
    ================================================================== */
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
@@ -79,6 +98,7 @@ import {
   getDocs,
   arrayUnion,
   arrayRemove,
+  writeBatch,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
 import { firebaseConfig } from "./firebase-config.js";
@@ -98,6 +118,15 @@ import {
   interpretarContratoTexto,
   importarContratosModal,
 } from "./contratos.js";
+import {
+  calendarioHtml,
+  eventoFormModalHtml,
+  montarDias,
+  chaveAluno,
+  slugNome,
+  hojeISO,
+  dataValida,
+} from "./calendario.js";
 
 const firebaseApp = initializeApp(firebaseConfig);
 const auth = getAuth(firebaseApp);
@@ -213,6 +242,7 @@ const ICONS = {
   shield: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-4"/></svg>`,
   lifebuoy: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5"/><path d="m5.6 5.6 3.9 3.9M14.5 14.5l3.9 3.9M18.4 5.6l-3.9 3.9M9.5 14.5l-3.9 3.9"/></svg>`,
   cake: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21h16v-6a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v6Z"/><path d="M4 16c1.5 1.2 3 1.2 4.5 0S11.5 14.8 13 16s3 1.2 4.5 0"/><path d="M12 8V5"/><path d="M12 3.5c.7.6.7 1.4 0 1.5-.7-.1-.7-.9 0-1.5Z"/><path d="M8 9V6.5M16 9V6.5"/></svg>`,
+  calendar: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>`,
   fileText: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h6"/></svg>`,
 };
 
@@ -263,6 +293,103 @@ function whatsappLink(numero){
   const digits = String(numero).replace(/\D/g, "");
   const comDdi = digits.startsWith("55") ? digits : `55${digits}`;
   return `https://wa.me/${comDdi}`;
+}
+
+/* Mensagem que acompanha o contrato enviado pra assinatura. Edite aqui. */
+const MENSAGEM_CONTRATO = {
+  paraAssinatura: (primeiroNomeQuemAssina, nomeAluno) =>
+    `Olá${primeiroNomeQuemAssina ? `, ${primeiroNomeQuemAssina}` : ""}! Tudo bem?\n\nSegue o contrato de prestação de serviços do(a) ${nomeAluno} no Educa+ Centro Educacional, em PDF, para assinatura.\n\nDepois de assinado, é só devolver por aqui mesmo (pode ser o PDF ou uma foto legível). Qualquer dúvida, é só chamar!`,
+};
+
+/* Endereço do app que vai na mensagem de acesso. Deixe vazio pra usar o
+   endereço em que a secretaria está usando o sistema agora; se ela às
+   vezes abre por um endereço de teste, preencha aqui com o endereço
+   público (ex.: "https://app.educamais.com.br/"). */
+const URL_DO_APP = "";
+
+function linkDoApp(){
+  return URL_DO_APP || `${window.location.origin}${window.location.pathname.replace(/index\.html$/, "")}`;
+}
+
+/* Mensagem com o link do app + login + senha provisória. Edite aqui. */
+const MENSAGEM_ACESSO = {
+  paraResponsavel: (primeiroNomeResp, nomeAluno, link, login, senha) =>
+    `Olá, ${primeiroNomeResp}! Tudo bem?\n\nSeguem os dados de acesso ao app do Educa+ Centro Educacional para acompanhar o(a) ${nomeAluno}:\n\n📲 Acesse: ${link}\n👤 Login: ${login}\n🔑 Senha provisória: ${senha}\n\nNo primeiro acesso, troque a senha em "Meu perfil". Qualquer dúvida, é só chamar!`,
+  paraAluno: (primeiroNomeAluno, link, login, senha) =>
+    `Olá, ${primeiroNomeAluno}! Tudo bem?\n\nSeguem seus dados de acesso ao app do Educa+ Centro Educacional:\n\n📲 Acesse: ${link}\n👤 Login: ${login}\n🔑 Senha provisória: ${senha}\n\nNo primeiro acesso, troque a senha em "Meu perfil". Qualquer dúvida, é só chamar!`,
+};
+
+/* Abre o WhatsApp já na conversa da pessoa, com a mensagem de acesso
+   escrita. Precisa ser chamada direto de um clique. Devolve false se não
+   há número válido ou acesso pra enviar. */
+function abrirWhatsappDeAcesso({ ehResponsavel, acesso, nomeAluno, nomeDestino, contato }){
+  const numero = telefoneValido(contato);
+  if(!numero || !acesso) return false;
+  const texto = ehResponsavel
+    ? MENSAGEM_ACESSO.paraResponsavel(primeiroNome(nomeDestino), nomeAluno, linkDoApp(), acesso.email, acesso.senha)
+    : MENSAGEM_ACESSO.paraAluno(primeiroNome(nomeDestino), linkDoApp(), acesso.email, acesso.senha);
+  window.open(whatsappLinkComTexto(numero, texto), "_blank", "noopener");
+  return true;
+}
+
+/* Manda o contrato em PDF pra assinatura pelo WhatsApp.
+   O link "wa.me" só leva texto — não anexa arquivo. Então:
+   - no celular (e em navegadores que suportam), abre a folha de
+     compartilhamento com o PDF já anexado e a mensagem escrita; a
+     secretaria escolhe o contato do WhatsApp;
+   - no computador, baixa o PDF e abre a conversa já com a mensagem, e a
+     secretaria arrasta o PDF pra dentro da conversa.
+   Precisa ser chamada direto de um clique (sem esperar nada antes),
+   senão o navegador bloqueia o compartilhamento.
+   Devolve: "compartilhado" | "cancelado" | "manual" | "sem-numero". */
+async function enviarContratoParaAssinatura({ arquivo, alunoNome, respNome, numero }){
+  const texto = MENSAGEM_CONTRATO.paraAssinatura(primeiroNome(respNome), alunoNome);
+
+  if(arquivo && typeof navigator.canShare === "function" && navigator.canShare({ files: [arquivo] })){
+    try {
+      await navigator.share({ files: [arquivo], text: texto });
+      return "compartilhado";
+    } catch(err){
+      if(err?.name === "AbortError") return "cancelado";
+      // qualquer outro tropeço: segue pro plano B
+    }
+  }
+
+  if(arquivo){
+    const url = URL.createObjectURL(arquivo);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = arquivo.name || "contrato.pdf";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  }
+  if(!numero) return "sem-numero";
+  window.open(whatsappLinkComTexto(numero, texto), "_blank", "noopener");
+  return "manual";
+}
+
+function textoResultadoEnvio(resultado){
+  if(resultado === "compartilhado") return "Enviado pela folha de compartilhamento.";
+  if(resultado === "manual") return "PDF baixado e WhatsApp aberto — arraste (ou anexe) o PDF na conversa antes de enviar.";
+  if(resultado === "sem-numero") return "Não há WhatsApp cadastrado pra quem assina. O PDF foi baixado — cadastre o número e envie manualmente.";
+  return "";
+}
+
+/* Quem assina o contrato: o responsável; se o aluno é maior de idade
+   (sem responsável), o próprio aluno. Devolve o nome e o número. */
+function destinoDoContratoImportado(c){
+  if(!c.semResponsavel && telefoneValido(c.contatoResp)) return { nome: c.respNome, numero: telefoneValido(c.contatoResp) };
+  return { nome: c.semResponsavel ? c.alunoNome : c.respNome, numero: telefoneValido(c.contatoAluno) };
+}
+
+function destinoDoContratoDoAluno(aluno){
+  const resp = (state.gestaoResponsaveis || [])
+    .find(r => r.alunosIds.includes(aluno.id) && telefoneValido(r.contato));
+  if(resp) return { nome: resp.nome, numero: telefoneValido(resp.contato) };
+  const respSemTel = (state.gestaoResponsaveis || []).find(r => r.alunosIds.includes(aluno.id));
+  return { nome: respSemTel?.nome || aluno.nome, numero: telefoneValido(aluno.contato) };
 }
 
 /* Manuais e materiais de apoio mostrados na página "Meu perfil" da equipe
@@ -534,14 +661,15 @@ const state = {
     escolas: {},                // { [escolaId]: { nome, uf, data, turmas, faltantes, financeiro, inadimplentes, alunos } }
   },
 
-  alunoTab: "notas",
-  familiaTab: "notas",
+  alunoTab: "calendario",
+  familiaTab: "calendario",
+  cal: calNovoEstado(),          // calendário (aluno / responsável / professor) — ver seção "Calendário"
   familiaStudentId: null,
   escolaSelecionadaId: null,
   instTab: "turmas",
-  gestaoSubTab: "cadastro",   // cadastro | contratos — sub-abas dentro de "Gestão"
+  gestaoSubTab: "cadastro",   // cadastro | acessos — sub-abas dentro de "Gestão"
   alunosBusca: "",
-  professorTab: "aulas",
+  professorTab: "calendario",
   professorTurmaId: null,
   professorPresencas: {},
   professorObservacoes: {},
@@ -705,13 +833,18 @@ const state = {
   aniversarioMes: String(new Date().getMonth() + 1),  // "1".."12" ou "todos"
 
   alunoDetalheNascimentoInput: "",
+  // ficha do aluno > seção "Turmas"
+  alunoTurmaSelecionada: "",       // id da turma escolhida no seletor, ainda não adicionada
+  alunoTurmaSalvando: false,
+  alunoTurmaErro: "",
+  alunoTurmaMensagem: "",
 
-  // Gestão > Contratos — formulário do contrato que vai ser gerado.
+  // Aba "Contratos" — formulário do contrato que vai ser gerado.
   // Todo o conteúdo (modelos por CNPJ, cláusulas, cálculo das parcelas)
   // mora em contratos.js; aqui fica só o que o formulário digitou.
   contrato: contratoEstadoInicial(),
 
-  // Gestão > Contratos > "Importar contratos já assinados": lê vários
+  // Aba "Contratos" > "Importar contratos": lê vários
   // PDFs de uma vez, tenta reconhecer os dados de cada um e mostra uma
   // prévia editável antes de gravar qualquer coisa no banco.
   importContratosModalAberto: false,
@@ -719,7 +852,12 @@ const state = {
   importContratosItens: [],             // [{ id, arquivoNome, contrato, avisos, selecionado, criarAcesso, status, erro }]
   importContratosSalvando: false,
   importContratosProgresso: { feito: 0, total: 0 },
-  importContratosResumo: null,          // { criados, atualizados, comLogin, erros }
+  importContratosResumo: null,          // { criados, atualizados, comLogin, pendentes, erros }
+
+  // Contratos pendentes de assinatura: PDF escolhido pra enviar (só na
+  // memória da aba — não é gravado em lugar nenhum) e recado do último envio.
+  contratoArquivosEnvio: {},            // { [alunoId]: File }
+  contratoEnvioMsg: {},                 // { [alunoId]: "texto" }
 };
 
 const app = document.getElementById("app");
@@ -735,8 +873,9 @@ async function carregarDadosDoPerfil(){
     const snap = await getDoc(doc(db, "alunos", perfil.alunoId));
     if(!snap.exists()) throw new Error("Cadastro do aluno não encontrado. Fale com a secretaria.");
     state.data.aluno = normalizeAluno(snap.id, snap.data());
-    state.alunoTab = "notas";
+    state.alunoTab = "calendario";
     state.screen = "aluno";
+    carregarCalendarioDoAluno(state.data.aluno);
     return;
   }
 
@@ -748,8 +887,9 @@ async function carregarDadosDoPerfil(){
     if(alunos.length === 0) throw new Error("Não encontramos os cadastros dos seus filhos. Fale com a secretaria.");
     state.data.familiaAlunos = alunos;
     state.familiaStudentId = alunos[0].id;
-    state.familiaTab = "notas";
+    state.familiaTab = "calendario";
     state.screen = "familia";
+    carregarCalendarioDoAluno(alunos[0]);
     return;
   }
 
@@ -761,10 +901,11 @@ async function carregarDadosDoPerfil(){
     const q = query(collection(db, "turmas"), where("professorId", "==", state.authUser.uid));
     const snaps = await getDocs(q);
     state.data.professorTurmas = snaps.docs.map(d => ({ id: d.id, ...d.data(), alunos: d.data().alunos || [] }));
-    state.professorTab = "aulas";
+    state.professorTab = "calendario";
     state.professorTurmaId = null;
     state.screen = "professor";
     carregarConteudosDoProfessor(state.authUser.uid);
+    carregarEventosDoProfessor();
     return;
   }
 
@@ -802,6 +943,8 @@ function normalizeAluno(id, dados){
     email: dados.email || "",      // e-mail de acesso (login), quando o aluno tem
     uid: dados.uid || null,        // uid no Firebase Auth, quando o aluno tem login
     escolaId: dados.escolaId || "",
+    contratoStatus: dados.contratoStatus || "",          // "assinado" | "pendente" | "" (sem contrato registrado)
+    contratoEnviadoEm: dados.contratoEnviadoEm || "",    // "AAAA-MM-DD" do último envio pra assinatura
     foto: dados.foto || (dados.nome || "?").split(" ").map(p=>p[0]).slice(0,2).join("").toUpperCase(),
     notas: Array.isArray(dados.notas) ? dados.notas : [],
     presenca: {
@@ -839,12 +982,14 @@ onAuthStateChanged(auth, async (user) => {
   if(!user){
     state.authUser = null;
     state.perfil = null;
+    state.cal = calNovoEstado();
     state.screen = "login";
     state.loginCarregando = false;
     render();
     return;
   }
   state.authUser = user;
+  state.cal = calNovoEstado();
   state.screen = "carregando";
   render();
   try {
@@ -1077,13 +1222,15 @@ function shell({ navItems, active, headerSub, headerTitle, bodyHtml, navAction, 
 function renderAluno(){
   const student = state.data.aluno;
   const navItems = [
+    { key:"calendario", label:"Calendário", icon:"calendar" },
     { key:"notas", label:"Notas", icon:"cap" },
     { key:"presenca", label:"Presença", icon:"clipboard" },
     { key:"comunicados", label:"Comunicados", icon:"megaphone" },
   ];
 
   let body = "";
-  if(state.alunoTab === "notas") body = notasView(student);
+  if(state.alunoTab === "calendario") body = calendarioAlunoView(student, "aluno");
+  else if(state.alunoTab === "notas") body = notasView(student);
   else if(state.alunoTab === "presenca") body = presencaView(student);
   else if(state.alunoTab === "comunicados") body = comunicadosView(student);
 
@@ -1100,6 +1247,7 @@ function renderFamilia(){
   const alunos = state.data.familiaAlunos;
   const student = alunos.find(s => s.id === state.familiaStudentId) || alunos[0];
   const navItems = [
+    { key:"calendario", label:"Calendário", icon:"calendar" },
     { key:"notas", label:"Notas", icon:"cap" },
     { key:"presenca", label:"Presença", icon:"clipboard" },
     { key:"financeiro", label:"Financeiro", icon:"wallet" },
@@ -1117,7 +1265,8 @@ function renderFamilia(){
   }
 
   let body = "";
-  if(state.familiaTab === "notas") body = notasView(student);
+  if(state.familiaTab === "calendario") body = calendarioAlunoView(student, "responsavel");
+  else if(state.familiaTab === "notas") body = notasView(student);
   else if(state.familiaTab === "presenca") body = presencaView(student);
   else if(state.familiaTab === "financeiro") body = financeiroFamiliaView(student);
   else if(state.familiaTab === "comunicados") body = comunicadosView(student);
@@ -1215,6 +1364,163 @@ function comunicadosView(student){
     <div>${items}</div>`;
 }
 
+/* ================================================================== */
+/* Calendário (aluno / responsável / professor)                         */
+/* ================================================================== */
+/* A parte visual e as regras de cores estão em calendario.js. Aqui ficam
+   só o estado, a leitura/gravação no Firestore e a ligação com as telas. */
+function calNovoEstado(){
+  const hoje = new Date();
+  return {
+    ano: hoje.getFullYear(),
+    mes: hoje.getMonth(),        // 0–11
+    diaAberto: null,             // "AAAA-MM-DD" do pop-up aberto
+    cache: {},                   // { [alunoId]: { presencas, eventos, carregando, erro, carregadoEm } }
+    prof: { eventos: [], carregando: false, erro: "", carregadoEm: 0 },
+    form: null,                  // formulário de novo aviso (professor) — null = fechado
+    excluirConfirmId: null,      // aviso esperando o 2º toque de "Confirmar exclusão"
+    excluindoId: null,
+  };
+}
+
+const CALENDARIO_ATUALIZA_APOS_MS = 60 * 1000;   // reabrir a aba dentro de 1 min não busca de novo
+
+function mensagemErroCalendario(err){
+  console.error("Erro no calendário:", err?.code, err);
+  const codigo = err?.code ? ` (${err.code})` : "";
+  if(err?.code === "permission-denied"){
+    return `O servidor não liberou a leitura do calendário${codigo}. Avise o suporte técnico.`;
+  }
+  if(err?.code === "failed-precondition"){
+    return `O Firestore pediu um índice para montar o calendário${codigo}. Avise o suporte técnico (o link para criar aparece no console do navegador, F12).`;
+  }
+  return `Não foi possível carregar o calendário agora${codigo}. Tente de novo.`;
+}
+
+/* Aluno atualmente na tela do calendário (o próprio aluno, ou o filho
+   escolhido no seletor da família). */
+function calAlunoAtual(){
+  if(state.screen === "aluno") return state.data.aluno;
+  if(state.screen === "familia"){
+    return state.data.familiaAlunos.find(s => s.id === state.familiaStudentId) || state.data.familiaAlunos[0] || null;
+  }
+  return null;
+}
+
+/* Busca presenças (copiadas da chamada) e avisos que valem pra esse aluno.
+   As duas consultas filtram por escolaId (as regras do Firestore precisam
+   disso pra liberar a leitura) e pela chave do aluno. */
+async function carregarCalendarioDoAluno(student, forcar = false){
+  if(!student) return;
+  const cal = state.cal;   // guarda a referência: se a pessoa sair no meio, o resultado cai no estado antigo
+  const cache = cal.cache[student.id] || (cal.cache[student.id] = { presencas: [], eventos: [], carregando: false, erro: "", carregadoEm: 0 });
+  if(cache.carregando) return;
+  if(!forcar && cache.carregadoEm && Date.now() - cache.carregadoEm < CALENDARIO_ATUALIZA_APOS_MS) return;
+
+  cache.carregando = true;
+  cache.erro = "";
+  render();
+  try {
+    const chave = chaveAluno(student.escolaId, student.nome);
+    const [presSnap, evSnap] = await Promise.all([
+      getDocs(query(collection(db, "presencasAluno"), where("escolaId", "==", student.escolaId), where("alunoKey", "==", chave))),
+      getDocs(query(collection(db, "eventosCalendario"), where("escolaId", "==", student.escolaId), where("destinatarios", "array-contains", chave))),
+    ]);
+    cache.presencas = presSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    cache.eventos = evSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    cache.carregadoEm = Date.now();
+  } catch(err){
+    cache.erro = mensagemErroCalendario(err);
+  } finally {
+    cache.carregando = false;
+    render();
+  }
+}
+
+/* Avisos e lembretes que o professor logado criou. */
+async function carregarEventosDoProfessor(forcar = false){
+  const cal = state.cal;
+  const prof = cal.prof;
+  if(prof.carregando) return;
+  if(!forcar && prof.carregadoEm && Date.now() - prof.carregadoEm < CALENDARIO_ATUALIZA_APOS_MS) return;
+
+  prof.carregando = true;
+  prof.erro = "";
+  render();
+  try {
+    const snaps = await getDocs(query(collection(db, "eventosCalendario"), where("professorId", "==", state.authUser.uid)));
+    prof.eventos = snaps.docs.map(d => ({ id: d.id, ...d.data() }));
+    prof.carregadoEm = Date.now();
+  } catch(err){
+    prof.erro = mensagemErroCalendario(err);
+  } finally {
+    prof.carregando = false;
+    render();
+  }
+}
+
+function calendarioAlunoView(student, papel){
+  const cal = state.cal;
+  const dados = cal.cache[student.id] || { presencas: [], eventos: [], carregando: false, erro: "" };
+  return calendarioHtml({
+    papel,
+    ano: cal.ano, mes: cal.mes,
+    dias: montarDias({ presencas: dados.presencas, eventos: dados.eventos, papel }),
+    hoje: hojeISO(),
+    carregando: dados.carregando,
+    erro: dados.erro,
+    diaAberto: cal.diaAberto,
+    podeCriar: false,
+  });
+}
+
+function calendarioProfessorView(){
+  const cal = state.cal;
+  return calendarioHtml({
+    papel: "professor",
+    ano: cal.ano, mes: cal.mes,
+    dias: montarDias({ eventos: cal.prof.eventos, papel: "professor" }),
+    hoje: hojeISO(),
+    carregando: cal.prof.carregando,
+    erro: cal.prof.erro,
+    diaAberto: cal.diaAberto,
+    podeCriar: true,
+    excluirConfirmId: cal.excluirConfirmId,
+    excluindoId: cal.excluindoId,
+  }) + eventoFormModalHtml({ form: cal.form, turmas: state.data.professorTurmas });
+}
+
+/* Chamada salva -> grava também uma cópia por aluno em "presencasAluno".
+   É essa cópia que o aluno e o responsável leem (a chamada em
+   "registrosAula" tem TODOS os alunos da turma juntos, não dá pra abrir
+   pra eles). O id é fixo (turma + dia + aluno), então salvar de novo a
+   chamada do mesmo dia só sobrescreve. */
+async function sincronizarCalendarioDaChamada(turma, presencas, observacoesAlunos, disciplina){
+  const data = dataDeHojeISO();
+  const nomes = turma.alunos || [];
+  const agora = new Date().toISOString();
+  for(let i = 0; i < nomes.length; i += 400){   // um lote do Firestore aceita até 500 gravações
+    const lote = writeBatch(db);
+    nomes.slice(i, i + 400).forEach((nome, j) => {
+      lote.set(doc(db, "presencasAluno", `${turma.id}_${data}_${slugNome(nome, `aluno${i + j}`)}`), {
+        alunoKey: chaveAluno(turma.escolaId, nome),
+        alunoNome: nome,
+        escolaId: turma.escolaId,
+        turmaId: turma.id,
+        turmaNome: turma.nome || "",
+        disciplina: disciplina || turma.disciplina || "",
+        data,
+        status: presencas[nome] || "presente",
+        observacao: String(observacoesAlunos[nome] || "").trim(),
+        professorId: state.authUser.uid,
+        professorNome: state.data.professorNome || "",
+        atualizadoEm: agora,
+      });
+    });
+    await lote.commit();
+  }
+}
+
 /* ---------------- PROFESSOR ---------------- */
 function professorTurmaAtual(){
   return state.data.professorTurmas.find(turma => turma.id === state.professorTurmaId);
@@ -1231,15 +1537,15 @@ function professorTurmaSelect(){
 
 function renderProfessor(){
   const navItems = [
+    { key:"calendario", label:"Calendário", icon:"calendar" },
     { key:"aulas", label:"Aulas & chamada", icon:"clipboard" },
     { key:"conteudos", label:"Conteúdos", icon:"book" },
     { key:"avaliacoes", label:"Notas & atividades", icon:"cap" },
-    { key:"recados", label:"Recados", icon:"megaphone" },
   ];
-  const body = state.professorTab === "aulas" ? professorAulasView()
+  const body = state.professorTab === "calendario" ? calendarioProfessorView()
+    : state.professorTab === "aulas" ? professorAulasView()
     : state.professorTab === "conteudos" ? professorConteudosView()
-    : state.professorTab === "avaliacoes" ? professorAvaliacoesView()
-    : professorRecadosView();
+    : professorAvaliacoesView();
 
   return shell({
     navItems, active: state.professorTab,
@@ -1378,24 +1684,6 @@ function professorAvaliacoesView(){
     </div>`;
 }
 
-function professorRecadosView(){
-  return `
-    <h2 class="section-title">Enviar recado</h2>
-    <p class="section-eyebrow">Escolha o público e envie uma comunicação pelo Educa+.</p>
-    <div class="teacher-panel teacher-message-panel">
-      <label class="teacher-label" for="notice-audience">Enviar para</label>
-      <select id="notice-audience" class="teacher-text-input"><option value="Aluno individual">Aluno individual</option><option value="Família">Família</option><option value="Turma">Turma</option><option value="Todos">Todos os responsáveis e alunos</option></select>
-      <label class="teacher-label" for="notice-recipient">Destinatário</label>
-      <input id="notice-recipient" class="teacher-text-input" placeholder="Ex.: Ana Beatriz, Família Souza ou 5º Ano B" />
-      <label class="teacher-label" for="notice-subject">Assunto</label>
-      <input id="notice-subject" class="teacher-text-input" placeholder="Ex.: Lembrete sobre a atividade" />
-      <label class="teacher-label" for="notice-message">Mensagem</label>
-      <textarea id="notice-message" placeholder="Escreva o recado aqui."></textarea>
-      <button class="teacher-primary-btn" data-action="send-notice">Enviar recado</button>
-      ${state.professorAvisoEnviado ? `<p class="teacher-success">${escapeHtml(state.professorAvisoEnviado)}</p>` : ""}
-    </div>`;
-}
-
 /* ---------------- INSTITUIÇÃO DASHBOARD ---------------- */
 function nomeEquipePendenteBanner(){
   return `
@@ -1422,6 +1710,7 @@ function renderInstituicao(){
     { key:"aniversarios", label:"Aniversários", icon:"cake" },
     { key:"professores", label:"Professores", icon:"users2" },
     { key:"responsaveis", label:"Responsáveis", icon:"users2" },
+    { key:"contratos", label:"Contratos", icon:"fileText" },
     { key:"gestao", label:"Gestão", icon:"building" },
     { key:"perfil", label:"Meu perfil", icon:"user" },
   ];
@@ -1434,6 +1723,7 @@ function renderInstituicao(){
   else if(state.instTab === "aniversarios") body = aniversariosView(school);
   else if(state.instTab === "professores") body = professoresView(school);
   else if(state.instTab === "responsaveis") body = responsaveisView(school);
+  else if(state.instTab === "contratos") body = contratosView(school);
   else if(state.instTab === "gestao") body = gestaoInstituicaoView(school);
   else if(state.instTab === "perfil") body = perfilInstituicaoView(school);
 
@@ -1453,14 +1743,17 @@ function renderInstituicao(){
   }) + alunoDetalheModal() + turmaDetalheModal() + professorTurmasModal() + editarProfessorModal() + importarTurmasModal() + responsavelVinculoModal() + acessoUsuarioModal() + contratoModal(state.contrato, {
     cursos: cursosDaEscola(school?.nome || ""),
     alunos: state.instAlunos || [],
-  }) + importarContratosModal(state, { cursos: cursosDaEscola(school?.nome || "") });
+    turmas: state.instTurmas || [],
+  }) + importarContratosModal(state, {
+    cursos: cursosDaEscola(school?.nome || ""),
+    turmas: state.instTurmas || [],
+  });
 }
 
 function gestaoInstituicaoView(school){
   const subTabs = [
     { key: "cadastro", label: "Criar cadastro", icon: ICONS.user },
     { key: "acessos", label: "Senhas & acessos", icon: ICONS.key },
-    { key: "contratos", label: "Contratos & plano", icon: ICONS.wallet },
   ];
   const subNav = `<div class="subtab-bar">${subTabs.map(t => `
     <button type="button" class="subtab-btn ${state.gestaoSubTab === t.key ? "active" : ""}" data-action="set-gestao-subtab" data-key="${t.key}">
@@ -1468,13 +1761,12 @@ function gestaoInstituicaoView(school){
     </button>`).join("")}</div>`;
 
   let corpo;
-  if(state.gestaoSubTab === "contratos") corpo = gestaoContratosPlanoView();
-  else if(state.gestaoSubTab === "acessos") corpo = gestaoAcessosView();
+  if(state.gestaoSubTab === "acessos") corpo = gestaoAcessosView();
   else corpo = gestaoCadastroView(school);
 
   return `
     <h2 class="section-title">Gestão da unidade</h2>
-    <p class="section-eyebrow">Cadastros, senhas, contratos e plano de ${escapeHtml(school.nome)}. Para editar turmas de professores e vínculos de responsáveis, veja as abas "Professores" e "Responsáveis" no menu.</p>
+    <p class="section-eyebrow">Cadastros e senhas de ${escapeHtml(school.nome)}. Os contratos agora têm aba própria no menu. Para editar turmas de professores e vínculos de responsáveis, veja as abas "Professores" e "Responsáveis" no menu.</p>
     ${subNav}
     ${corpo}
     ${state.instituicaoMensagem ? `<p class="teacher-success institution-success">${escapeHtml(state.instituicaoMensagem)}</p>` : ""}`;
@@ -1745,10 +2037,58 @@ function acessoUsuarioModal(){
   </div>`;
 }
 
-/* Sub-aba "Contratos & plano": ações administrativas ainda simuladas,
-   isoladas do formulário de cadastro pra não poluir a tela principal. */
-function gestaoContratosPlanoView(){
+/* Contratos que foram importados como "pendente de assinatura". Enquanto
+   a validação por link não existe, o fluxo é: escolher o PDF, mandar pro
+   responsável pelo WhatsApp e, quando voltar assinado, marcar aqui. O PDF
+   não fica guardado no sistema (só a situação), por isso é preciso
+   escolher o arquivo de novo se a página foi recarregada. */
+function contratosPendentesCard(){
+  if(state.instAlunosCarregando || state.gestaoEquipeCarregando){
+    return `<div class="management-card management-card-wide" style="max-width:none;"><h3>Aguardando assinatura</h3><p>Carregando…</p></div>`;
+  }
+  const pendentes = (state.instAlunos || [])
+    .filter(a => a.contratoStatus === "pendente")
+    .sort((a, b) => a.nome.localeCompare(b.nome));
+  if(!pendentes.length) return "";
+
+  const linhas = pendentes.map(a => {
+    const destino = destinoDoContratoDoAluno(a);
+    const arquivo = state.contratoArquivosEnvio[a.id];
+    const msg = state.contratoEnvioMsg[a.id];
+    const enviado = a.contratoEnviadoEm ? `Enviado em ${a.contratoEnviadoEm.split("-").reverse().join("/")}` : "Ainda não enviado";
+    return `
+      <div class="pendente-contrato-item">
+        <div class="pendente-contrato-info">
+          <strong>${escapeHtml(a.nome)}</strong>
+          <span>${destino.numero ? `Enviar para ${escapeHtml(destino.nome)}` : `Sem WhatsApp cadastrado (${escapeHtml(destino.nome)})`} · ${enviado}</span>
+          ${msg ? `<span class="pendente-contrato-msg">${escapeHtml(msg)}</span>` : ""}
+        </div>
+        <div class="pendente-contrato-acoes">
+          <label class="pendente-contrato-anexar">
+            ${ICONS.upload} <span>${arquivo ? escapeHtml(arquivo.name) : "Escolher PDF"}</span>
+            <input type="file" accept="application/pdf" data-contrato-envio="${a.id}" style="display:none;" />
+          </label>
+          <button type="button" class="aniversario-btn" data-action="contrato-pendente-enviar" data-aluno="${a.id}" ${arquivo ? "" : "disabled"}>Enviar no WhatsApp</button>
+          <button type="button" class="pendente-contrato-assinado" data-action="contrato-pendente-assinado" data-aluno="${a.id}">Marcar como assinado</button>
+        </div>
+      </div>`;
+  }).join("");
+
   return `
+    <div class="management-card management-card-wide" style="max-width:none;">
+      <h3>Aguardando assinatura (${pendentes.length})</h3>
+      <p>Escolha o PDF do contrato, envie pelo WhatsApp e, quando voltar assinado, marque como assinado.</p>
+      <div class="pendente-contrato-lista">${linhas}</div>
+    </div>`;
+}
+
+/* Aba "Contratos": gerar contrato, importar PDFs e acompanhar quem ainda
+   não assinou. Antes vivia como sub-aba dentro de "Gestão". */
+function contratosView(school){
+  return `
+    <h2 class="section-title">Contratos</h2>
+    <p class="section-eyebrow">Gere, importe e acompanhe a assinatura dos contratos de ${escapeHtml(school.nome)}.</p>
+    ${contratosPendentesCard()}
     <div class="management-grid">
       <div class="management-card">
         <h3>Contratos</h3>
@@ -1757,18 +2097,13 @@ function gestaoContratosPlanoView(){
         <p class="section-eyebrow" style="margin-top:8px;">O modelo (Salto do Lontra ou Nova Prata do Iguaçu) é definido pelo CNPJ escolhido.</p>
       </div>
       <div class="management-card">
-        <h3>Importar contratos já assinados</h3>
-        <p>Envie os PDFs dos contratos que a unidade já tem e o sistema cadastra os alunos (e responsáveis) de uma vez, com uma prévia pra conferir antes de salvar.</p>
+        <h3>Importar contratos</h3>
+        <p>Envie os PDFs dos contratos e o sistema cadastra os alunos (e responsáveis) de uma vez, com uma prévia pra conferir antes de salvar. Pra cada contrato você diz se já foi assinado e em qual turma o aluno entra.</p>
         <button class="teacher-primary-btn" data-action="abrir-importar-contratos-modal">${ICONS.upload} Importar contratos</button>
         <p class="section-eyebrow" style="margin-top:8px;">Funciona melhor com os PDFs do próprio modelo da escola — outros formatos podem vir com campos em branco pra preencher na mão.</p>
       </div>
-      <div class="management-card">
-        <h3>Planos</h3><p>Plano atual: <strong>Profissional</strong></p>
-        <div class="plan-tags"><span>Alunos ilimitados</span><span>Financeiro</span><span>Comunicados</span></div>
-        <button class="teacher-primary-btn" data-action="manage-plan">Gerenciar plano</button>
-        <p class="section-eyebrow" style="margin-top:8px;">Esta ação ainda é simulada.</p>
-      </div>
-    </div>`;
+    </div>
+    ${state.instituicaoMensagem ? `<p class="teacher-success institution-success">${escapeHtml(state.instituicaoMensagem)}</p>` : ""}`;
 }
 
 /* Seção "Professores": lista quem já está cadastrado na unidade e permite
@@ -2384,6 +2719,50 @@ async function carregarTurmasDaInstituicao(escolaId){
   }
 }
 
+/* Carrega as turmas da unidade só se ainda não estiverem em memória —
+   usado pelas telas que precisam do seletor de turma (ficha do aluno,
+   contrato, importação de contratos). */
+function garantirTurmasDaUnidade(){
+  const escolaId = state.escolaSelecionadaId;
+  if(!escolaId) return;
+  if((state.instTurmas === null || state.instTurmasEscolaId !== escolaId) && !state.instTurmasCarregando){
+    carregarTurmasDaInstituicao(escolaId);
+  }
+}
+
+/* Turmas em que um aluno já está. A turma guarda só o NOME dos alunos
+   (turmas/{id}.alunos: [nomes] — é assim que a chamada e o calendário
+   os enxergam), então a comparação é por nome sem acento/maiúscula. */
+function turmasDoAluno(nome){
+  const alvo = normalizarNome(nome);
+  return (state.instTurmas || []).filter(t => (t.alunos || []).some(n => normalizarNome(n) === alvo));
+}
+
+/* Coloca o aluno na turma. Devolve "ja-estava" se já constava (não grava
+   nada) ou "ok". arrayUnion evita duplicar e não mexe no resto do
+   documento da turma (professor, horário, etc.). */
+async function vincularAlunoNaTurma(nome, turmaId){
+  const nomeLimpo = String(nome || "").trim();
+  const turma = (state.instTurmas || []).find(t => t.id === turmaId);
+  const alvo = normalizarNome(nomeLimpo);
+  if(turma && (turma.alunos || []).some(n => normalizarNome(n) === alvo)) return "ja-estava";
+  await updateDoc(doc(db, "turmas", turmaId), { alunos: arrayUnion(nomeLimpo) });
+  if(turma) turma.alunos = [...(turma.alunos || []), nomeLimpo];
+  return "ok";
+}
+
+/* Tira o aluno da turma. arrayRemove precisa do valor exato que está
+   gravado, então removemos a grafia que a própria turma tem. */
+async function desvincularAlunoDaTurma(nome, turmaId){
+  const turma = (state.instTurmas || []).find(t => t.id === turmaId);
+  if(!turma) return;
+  const alvo = normalizarNome(nome);
+  const gravados = (turma.alunos || []).filter(n => normalizarNome(n) === alvo);
+  if(!gravados.length) return;
+  await updateDoc(doc(db, "turmas", turmaId), { alunos: arrayRemove(...gravados) });
+  turma.alunos = (turma.alunos || []).filter(n => normalizarNome(n) !== alvo);
+}
+
 /* Frequência real de cada turma, calculada em cima da chamada que os
    professores já fizeram (coleção "registrosAula" — um documento por
    turma por dia, com `presencas: { [nomeAluno]: "presente"|"falta"|
@@ -2570,6 +2949,20 @@ async function excluirAlunoDaInstituicao(aluno, escolaId){
   state.alunoDetalheErro = "";
   render();
   try {
+    // O documento de login (usuarios/{uid}) precisa sair ANTES do cadastro
+    // do aluno: a regra de segurança descobre a unidade dele lendo
+    // alunos/{id}, que deixa de existir depois do deleteDoc abaixo.
+    const uid = aluno.uid || await descobrirUidDoAluno(aluno.id);
+    let loginDocApagado = false;
+    if(uid){
+      try {
+        await deleteDoc(doc(db, "usuarios", uid));
+        loginDocApagado = true;
+      } catch(e){
+        console.warn("Não consegui apagar o cadastro de login do aluno (usuarios):", e?.code || e);
+      }
+    }
+
     await deleteDoc(doc(db, "alunos", aluno.id));
     try {
       await updateDoc(doc(db, "escolas", escolaId), {
@@ -2597,11 +2990,9 @@ async function excluirAlunoDaInstituicao(aluno, escolaId){
       }));
     } catch(_vinculoErr) { /* não bloqueia a exclusão principal */ }
 
-    // Apaga o cadastro de login do aluno (usuarios/{uid}) e, se a Cloud
-    // Function de admin estiver publicada, o login em si.
-    const uid = aluno.uid || await descobrirUidDoAluno(aluno.id);
+    // Se a Cloud Function de admin estiver publicada, apaga o login em si
+    // (Firebase Authentication).
     if(uid){
-      try { await deleteDoc(doc(db, "usuarios", uid)); } catch(_e){ /* ignora */ }
       try { await excluirLoginDeOutroUsuario(uid); } catch(_e){ /* sem backend: login fica órfão */ }
     }
 
@@ -2644,6 +3035,8 @@ function garantirPessoasDaUnidade(){
   if((state.gestaoProfessores === null || state.gestaoEquipeEscolaId !== escolaId) && !state.gestaoEquipeCarregando){
     carregarEquipeDaEscola(escolaId);
   }
+  // as turmas alimentam o seletor "Turma" dos contratos
+  garantirTurmasDaUnidade();
 }
 
 /* Cadastros de aluno feitos ANTES de o uid passar a ser guardado no
@@ -2930,6 +3323,31 @@ async function criarCadastrosDoContrato(c){
     }
   }
 
+  // --- turma ---
+  if(alunoId && c.turmaId){
+    const turmaEscolhida = (state.instTurmas || []).find(t => t.id === c.turmaId);
+    const nomeNaTurma = jaCadastrado ? jaCadastrado.nome : c.alunoNome.trim();
+    try {
+      const r = await vincularAlunoNaTurma(nomeNaTurma, c.turmaId);
+      const nomeTurma = turmaEscolhida?.nome || "escolhida";
+      avisos.push(r === "ja-estava"
+        ? `${nomeNaTurma} já estava na turma ${nomeTurma}.`
+        : `${nomeNaTurma} foi colocado(a) na turma ${nomeTurma}.`);
+    } catch(err){
+      console.error("Erro ao colocar o aluno na turma:", err);
+      avisos.push(`Não consegui colocar ${nomeNaTurma} na turma agora${err?.code ? ` (${err.code})` : ""}. Abra a ficha do aluno e adicione a turma por lá.`);
+    }
+  }
+
+  // --- situação da assinatura ---
+  if(alunoId && c.contratoStatus){
+    const gravou = await gravarStatusContrato(alunoId, c.contratoStatus);
+    if(gravou === "mantido"){
+      avisos.push(`${c.alunoNome} já constava com contrato assinado — mantive como assinado.`);
+    }
+  }
+  resultado.alunoId = alunoId;
+
   // --- responsável ---
   if(!c.semResponsavel && c.respNome.trim()){
     const respExistente = (state.gestaoResponsaveis || [])
@@ -2981,6 +3399,29 @@ async function criarCadastrosDoContrato(c){
   }
 
   return resultado;
+}
+
+/* Situação da assinatura do contrato, guardada no próprio cadastro do
+   aluno ("assinado" | "pendente"). Um contrato que já constava como
+   assinado nunca volta a "pendente" só porque outro PDF foi importado.
+   Devolve "mantido" quando ignorou o rebaixamento, "ok" quando gravou. */
+async function gravarStatusContrato(alunoId, status, extras = {}){
+  const aluno = (state.instAlunos || []).find(a => a.id === alunoId);
+  if(status === "pendente" && aluno?.contratoStatus === "assinado") return "mantido";
+  const dados = { contratoStatus: status, ...extras };
+  await updateDoc(doc(db, "alunos", alunoId), dados);
+  if(aluno) Object.assign(aluno, dados);
+  return "ok";
+}
+
+async function marcarContratoEnviado(alunoId){
+  try {
+    await updateDoc(doc(db, "alunos", alunoId), { contratoEnviadoEm: dataDeHojeISO() });
+    const aluno = (state.instAlunos || []).find(a => a.id === alunoId);
+    if(aluno) aluno.contratoEnviadoEm = dataDeHojeISO();
+  } catch(err){
+    console.warn("Não consegui registrar o envio do contrato:", err?.code || err);
+  }
 }
 
 /* Deixa marcado no cadastro que a senha atual é a provisória de 6
@@ -3106,7 +3547,7 @@ function turmaDetalheModal(){
         <div class="row">
           <span style="font-size:14.5px;color:var(--ink);font-weight:500;">${escapeHtml(nome)}</span>
         </div>`).join("")}</div>`
-    : `<div class="teacher-empty-state"><strong>Nenhum aluno vinculado ainda.</strong><span>Edite a turma pra adicionar alunos.</span></div>`;
+    : `<div class="teacher-empty-state"><strong>Nenhum aluno vinculado ainda.</strong><span>Abra a ficha do aluno (aba "Alunos") e use "Adicionar à turma".</span></div>`;
 
   return `
   <div class="aluno-modal-backdrop" data-action="fechar-turma-detalhe-modal">
@@ -3387,6 +3828,42 @@ function alunoDetalheModal(){
   const aluno = (state.instAlunos || []).find(a => a.id === state.alunoDetalheId);
   if(!aluno) return "";
 
+  // Turmas: as que ele já frequenta (com botão de tirar) + seletor pra
+  // colocá-lo em outra. Vem de instTurmas (coleção "turmas").
+  let turmasHtml;
+  if(state.instTurmasCarregando && state.instTurmas === null){
+    turmasHtml = `<p class="section-eyebrow" style="margin:6px 0;">Carregando turmas…</p>`;
+  } else if(state.instTurmasErro || state.instTurmas === null){
+    turmasHtml = `<p class="teacher-error" style="color:var(--red);font-size:12.5px;margin:6px 0;">${escapeHtml(state.instTurmasErro || "Não foi possível carregar as turmas agora.")}</p>`;
+  } else {
+    const dele = turmasDoAluno(aluno.nome);
+    const disponiveis = state.instTurmas
+      .filter(t => !dele.some(x => x.id === t.id))
+      .sort((a, b) => String(a.nome || "").localeCompare(String(b.nome || "")));
+    const listaHtml = dele.length
+      ? `<div class="aluno-modal-resp-list">${dele.map(t => `
+        <div class="aluno-modal-resp-item" style="align-items:flex-start;">
+          <span>
+            <span style="font-weight:600;color:var(--ink);font-size:13.5px;display:block;">${escapeHtml(t.nome)}</span>
+            <span style="color:var(--slate);font-size:12px;">${escapeHtml([t.disciplina, t.horario, t.sala ? `Sala ${t.sala}` : ""].filter(Boolean).join(" · ") || "—")}</span>
+          </span>
+          <button type="button" class="attendance-btn" data-action="remover-aluno-da-turma" data-turma="${escapeHtml(t.id)}" aria-label="Tirar da turma" title="Tirar da turma" ${state.alunoTurmaSalvando ? "disabled" : ""}>${ICONS.close}</button>
+        </div>`).join("")}</div>`
+      : `<p class="section-eyebrow" style="margin:6px 0;">Ainda não está em nenhuma turma.</p>`;
+    const adicionarHtml = state.instTurmas.length === 0
+      ? `<p class="section-eyebrow" style="margin:8px 0 0;">Nenhuma turma criada nesta unidade ainda — crie na aba "Turmas".</p>`
+      : disponiveis.length === 0
+        ? `<p class="section-eyebrow" style="margin:8px 0 0;">Este aluno já está em todas as turmas da unidade.</p>`
+        : `<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center;">
+            <select id="aluno-turma-select" class="teacher-text-input" style="flex:1 1 220px;margin:0;">
+              <option value="" ${!state.alunoTurmaSelecionada ? "selected" : ""} disabled>Escolha a turma</option>
+              ${disponiveis.map(t => `<option value="${escapeHtml(t.id)}" ${state.alunoTurmaSelecionada === t.id ? "selected" : ""}>${escapeHtml(`${t.nome}${t.disciplina ? ` (${t.disciplina})` : ""}${t.horario ? ` · ${t.horario}` : ""}`)}</option>`).join("")}
+            </select>
+            <button type="button" class="teacher-primary-btn" style="margin-top:0;white-space:nowrap;" data-action="adicionar-aluno-na-turma" ${state.alunoTurmaSalvando ? "disabled" : ""}>${state.alunoTurmaSalvando ? "Salvando…" : "Adicionar à turma"}</button>
+          </div>`;
+    turmasHtml = `${listaHtml}${adicionarHtml}`;
+  }
+
   let respHtml;
   if(state.alunoRespCarregando){
     respHtml = `<p class="section-eyebrow" style="margin:6px 0;">Carregando responsáveis…</p>`;
@@ -3428,6 +3905,13 @@ function alunoDetalheModal(){
         <input id="aluno-detalhe-nascimento" type="date" class="teacher-text-input" value="${escapeHtml(state.alunoDetalheNascimentoInput)}" />
         <p class="section-eyebrow" style="margin:6px 0 0;">Com a data preenchida o aluno passa a aparecer na aba "Aniversários".</p>
         <button type="button" class="teacher-primary-btn" data-action="salvar-aluno-contato" ${state.alunoDetalheSalvandoContato ? "disabled" : ""}>${state.alunoDetalheSalvandoContato ? "Salvando…" : "Salvar contato e data"}</button>
+      </div>
+
+      <div class="aluno-modal-section">
+        <h3 class="teacher-label">Turmas</h3>
+        ${turmasHtml}
+        ${state.alunoTurmaErro ? `<p class="teacher-error" style="color:var(--red);font-size:12.5px;margin-top:8px;">${escapeHtml(state.alunoTurmaErro)}</p>` : ""}
+        ${state.alunoTurmaMensagem ? `<p class="teacher-success" style="margin-top:8px;">${escapeHtml(state.alunoTurmaMensagem)}</p>` : ""}
       </div>
 
       <div class="aluno-modal-section">
@@ -3497,6 +3981,11 @@ function bindEvents(){
 
   app.addEventListener("input", (e) => {
     const t = e.target;
+    // Formulário de novo aviso (professor): guarda sem re-renderizar, pro cursor não pular.
+    if(t.dataset && t.dataset.evCampo){
+      if(state.cal.form) state.cal.form[t.dataset.evCampo] = t.value;
+      return;
+    }
     if(t.id === "alunos-busca"){
       const cursor = t.selectionStart;
       state.alunosBusca = t.value;
@@ -3563,9 +4052,25 @@ function bindEvents(){
 
   app.addEventListener("change", async (e) => {
     const t = e.target;
+    if(t.dataset && t.dataset.evCampo){
+      const f = state.cal.form;
+      if(!f) return;
+      const campo = t.dataset.evCampo;
+      f[campo] = t.value;
+      // trocar turma ou "enviar para" muda a lista de alunos do formulário
+      if(campo === "turmaId" || campo === "alvo"){
+        f.alunoNome = "";
+        render();
+      }
+      return;
+    }
     if(t.id === "aniversario-mes"){
       state.aniversarioMes = t.value;
       render();
+      return;
+    }
+    if(t.id === "aluno-turma-select"){
+      state.alunoTurmaSelecionada = t.value;
       return;
     }
     if(t.id === "conteudo-disciplina-select"){
@@ -3587,6 +4092,13 @@ function bindEvents(){
       render();
       return;
     }
+    if(t.dataset && t.dataset.contratoEnvio){
+      const arq = t.files && t.files[0];
+      if(arq) state.contratoArquivosEnvio[t.dataset.contratoEnvio] = arq;
+      t.value = "";
+      render();
+      return;
+    }
     if(t.id === "import-contratos-pdf-files"){
       const arquivos = Array.from(t.files || []);
       if(!arquivos.length) return;
@@ -3602,6 +4114,8 @@ function bindEvents(){
           state.importContratosItens.push({
             id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
             arquivoNome: arquivo.name,
+            arquivo,            // fica só na memória, pra poder mandar o PDF pra assinatura
+            assinado: true,     // padrão: já assinado; a secretaria troca pra "pendente" se for o caso
             contrato,
             avisos,
             selecionado: true,
@@ -3616,6 +4130,8 @@ function bindEvents(){
           state.importContratosItens.push({
             id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
             arquivoNome: arquivo.name,
+            arquivo,
+            assinado: true,
             contrato: contratoEstadoInicial(),
             avisos: [err?.message === "pdfjs-nao-carregado"
               ? "A biblioteca de leitura de PDF não carregou (conexão bloqueada?). Tente de novo."
@@ -3789,13 +4305,22 @@ function bindEvents(){
         break;
 
       case "set-aluno-tab":
-        state.alunoTab = el.dataset.key; render();
+        state.alunoTab = el.dataset.key;
+        state.cal.diaAberto = null;
+        render();
+        if(state.alunoTab === "calendario") carregarCalendarioDoAluno(state.data.aluno);
         break;
       case "set-familia-tab":
-        state.familiaTab = el.dataset.key; render();
+        state.familiaTab = el.dataset.key;
+        state.cal.diaAberto = null;
+        render();
+        if(state.familiaTab === "calendario") carregarCalendarioDoAluno(calAlunoAtual());
         break;
       case "switch-student":
-        state.familiaStudentId = el.dataset.id; render();
+        state.familiaStudentId = el.dataset.id;
+        state.cal.diaAberto = null;
+        render();
+        if(state.familiaTab === "calendario") carregarCalendarioDoAluno(calAlunoAtual());
         break;
       case "set-inst-tab":
         state.instTab = el.dataset.key;
@@ -3819,6 +4344,11 @@ function bindEvents(){
           carregarAlunosDaInstituicao(state.escolaSelecionadaId);
         }
         if(state.instTab === "gestao" && state.gestaoSubTab === "acessos"){
+          garantirPessoasDaUnidade();
+        }
+        // contratos precisa dos alunos (pendentes de assinatura, nomes já
+        // cadastrados) e das turmas (seletor de turma)
+        if(state.instTab === "contratos"){
           garantirPessoasDaUnidade();
         }
         // aniversários precisa dos alunos (data de nascimento) e dos
@@ -3854,7 +4384,10 @@ function bindEvents(){
         window.open(whatsappLink(SUPORTE_TECNICO.whatsapp), "_blank", "noopener");
         break;
       case "set-professor-tab":
-        state.professorTab = el.dataset.key; render();
+        state.professorTab = el.dataset.key;
+        state.cal.diaAberto = null;
+        render();
+        if(state.professorTab === "calendario") carregarEventosDoProfessor();
         break;
       case "set-professor-class": {
         state.professorTurmaId = el.dataset.id;
@@ -3909,6 +4442,14 @@ function bindEvents(){
             observacoesAlunos,
           });
           state.professorRegistroSalvo = true;
+          // Cópia por aluno, que alimenta o calendário do aluno e do responsável.
+          // Se falhar, a chamada em si já está salva — só avisa o professor.
+          try {
+            await sincronizarCalendarioDaChamada(turma, presencas, observacoesAlunos, disciplina);
+          } catch(errCal){
+            console.error("Erro ao atualizar o calendário dos alunos:", errCal?.code, errCal);
+            state.professorRegistroErro = `A chamada foi salva, mas não foi possível atualizar o calendário dos alunos agora${errCal?.code ? ` (${errCal.code})` : ""}. Avise o suporte técnico.`;
+          }
         } catch(err){
           state.professorRegistroErro = `Não foi possível salvar a chamada agora${err.code ? ` (${err.code})` : ""}. Tente de novo.`;
         } finally {
@@ -3983,10 +4524,6 @@ function bindEvents(){
       }
       case "save-grades":
         state.professorNotasSalvas = true; render();
-        break;
-      case "send-notice":
-        state.professorAvisoEnviado = "Recado enviado (simulado — ainda não grava no banco).";
-        render();
         break;
 
       case "toggle-vinculo-aluno": {
@@ -4137,6 +4674,97 @@ function bindEvents(){
         break;
       }
 
+      case "import-contrato-assinatura": {
+        const item = state.importContratosItens[Number(el.dataset.row)];
+        if(item && item.status !== "ok") item.assinado = el.dataset.valor === "assinado";
+        render();
+        break;
+      }
+
+      case "import-contrato-assinatura-todos":
+        state.importContratosItens.forEach(it => {
+          if(it.status !== "ok") it.assinado = el.dataset.valor === "assinado";
+        });
+        render();
+        break;
+
+      case "import-contrato-enviar": {
+        const item = state.importContratosItens[Number(el.dataset.row)];
+        if(!item || !item.arquivo) break;
+        const destino = destinoDoContratoImportado(item.contrato);
+        const resultado = await enviarContratoParaAssinatura({
+          arquivo: item.arquivo,
+          alunoNome: item.contrato.alunoNome,
+          respNome: destino.nome,
+          numero: destino.numero,
+        });
+        item.envioMsg = textoResultadoEnvio(resultado);
+        if((resultado === "compartilhado" || resultado === "manual") && item.alunoId){
+          await marcarContratoEnviado(item.alunoId);
+        }
+        render();
+        break;
+      }
+
+      case "contrato-pendente-enviar": {
+        const alunoId = el.dataset.aluno;
+        const aluno = (state.instAlunos || []).find(a => a.id === alunoId);
+        const arquivo = state.contratoArquivosEnvio[alunoId];
+        if(!aluno || !arquivo) break;
+        const destino = destinoDoContratoDoAluno(aluno);
+        const resultado = await enviarContratoParaAssinatura({
+          arquivo, alunoNome: aluno.nome, respNome: destino.nome, numero: destino.numero,
+        });
+        state.contratoEnvioMsg[alunoId] = textoResultadoEnvio(resultado);
+        if(resultado === "compartilhado" || resultado === "manual") await marcarContratoEnviado(alunoId);
+        render();
+        break;
+      }
+
+      case "contrato-pendente-assinado": {
+        const alunoId = el.dataset.aluno;
+        try {
+          await gravarStatusContrato(alunoId, "assinado");
+          delete state.contratoArquivosEnvio[alunoId];
+          delete state.contratoEnvioMsg[alunoId];
+        } catch(err){
+          console.error("Erro ao marcar contrato como assinado:", err);
+          state.contratoEnvioMsg[alunoId] = `Não consegui salvar${err?.code ? ` (${err.code})` : ""}. Tente de novo.`;
+        }
+        render();
+        break;
+      }
+
+      case "import-contrato-enviar-acesso": {
+        const item = state.importContratosItens[Number(el.dataset.row)];
+        if(!item || !item.acessos) break;
+        const c = item.contrato;
+        const ehResp = el.dataset.quem === "resp";
+        abrirWhatsappDeAcesso({
+          ehResponsavel: ehResp,
+          acesso: ehResp ? item.acessos.responsavel : item.acessos.aluno,
+          nomeAluno: c.alunoNome,
+          nomeDestino: ehResp ? c.respNome : c.alunoNome,
+          contato: ehResp ? c.contatoResp : c.contatoAluno,
+        });
+        break;
+      }
+
+      case "contrato-enviar-acesso": {
+        const c = state.contrato;
+        const r = c.resultadoAcessos;
+        if(!r) break;
+        const ehResp = el.dataset.quem === "resp";
+        abrirWhatsappDeAcesso({
+          ehResponsavel: ehResp,
+          acesso: ehResp ? r.responsavel : r.aluno,
+          nomeAluno: c.alunoNome,
+          nomeDestino: ehResp ? c.respNome : c.alunoNome,
+          contato: ehResp ? c.contatoResp : c.contatoAluno,
+        });
+        break;
+      }
+
       case "import-contrato-remover":
         state.importContratosItens.splice(Number(el.dataset.row), 1);
         render();
@@ -4155,7 +4783,7 @@ function bindEvents(){
         // homônimos do mesmo lote não saírem com o mesmo login antes
         // mesmo de qualquer um ter sido gravado no banco
         let emailsLote = emailsUsadosDaUnidade();
-        const resumo = { criados: 0, atualizados: 0, comLogin: 0, erros: 0 };
+        const resumo = { criados: 0, atualizados: 0, comLogin: 0, pendentes: 0, erros: 0 };
 
         for(const item of itens){
           const c = item.contrato;
@@ -4186,6 +4814,8 @@ function bindEvents(){
             c.emailResp = ""; c.senhaResp = "";
           }
 
+          c.contratoStatus = item.assinado ? "assinado" : "pendente";
+
           const jaExistiaAntes = (state.instAlunos || [])
             .some(a => normalizarNome(a.nome) === normalizarNome(c.alunoNome));
 
@@ -4195,6 +4825,9 @@ function bindEvents(){
             if(resultado.aluno) { emailsLote.push(resultado.aluno.email); resumo.comLogin++; }
             if(resultado.responsavel){ emailsLote.push(resultado.responsavel.email); resumo.comLogin++; }
             item.status = "ok";
+            item.alunoId = resultado.alunoId || null;
+            item.acessos = { aluno: resultado.aluno, responsavel: resultado.responsavel };
+            if(!item.assinado) resumo.pendentes++;
             item.avisos = resultado.avisos || [];
           } catch(err){
             console.error("Erro ao importar contrato:", item.arquivoNome, err);
@@ -4335,7 +4968,6 @@ function bindEvents(){
         break;
       }
 
-      case "manage-plan":
       case "generate-boleto":
         state.instituicaoMensagem = "Ação simulada — a integração de escrita com o banco entra na próxima etapa.";
         render();
@@ -4613,7 +5245,11 @@ function bindEvents(){
         state.alunoRespContato = "";
         state.alunoRespErro = "";
         state.alunoRespMensagem = "";
+        state.alunoTurmaSelecionada = "";
+        state.alunoTurmaErro = "";
+        state.alunoTurmaMensagem = "";
         render();
+        garantirTurmasDaUnidade();
         carregarResponsaveisDoAluno(id);
         break;
       }
@@ -4663,6 +5299,56 @@ function bindEvents(){
         const aluno = (state.instAlunos || []).find(a => a.id === state.alunoDetalheId);
         if(!aluno || !state.escolaSelecionadaId) break;
         await excluirAlunoDaInstituicao(aluno, state.escolaSelecionadaId);
+        break;
+      }
+
+      case "adicionar-aluno-na-turma": {
+        const aluno = (state.instAlunos || []).find(a => a.id === state.alunoDetalheId);
+        if(!aluno) break;
+        const turmaId = state.alunoTurmaSelecionada;
+        state.alunoTurmaErro = "";
+        state.alunoTurmaMensagem = "";
+        if(!turmaId){
+          state.alunoTurmaErro = "Escolha a turma primeiro.";
+          render();
+          break;
+        }
+        state.alunoTurmaSalvando = true;
+        render();
+        try {
+          await vincularAlunoNaTurma(aluno.nome, turmaId);
+          const turma = (state.instTurmas || []).find(t => t.id === turmaId);
+          state.alunoTurmaMensagem = `${aluno.nome} agora está na turma ${turma?.nome || "escolhida"}.`;
+          state.alunoTurmaSelecionada = "";
+        } catch(err){
+          console.error("Erro ao adicionar aluno na turma:", err);
+          state.alunoTurmaErro = `Não foi possível adicionar à turma agora${err?.code ? ` (${err.code})` : ""}. Tente de novo.`;
+        } finally {
+          state.alunoTurmaSalvando = false;
+          render();
+        }
+        break;
+      }
+
+      case "remover-aluno-da-turma": {
+        const aluno = (state.instAlunos || []).find(a => a.id === state.alunoDetalheId);
+        const turmaId = el.dataset.turma;
+        if(!aluno || !turmaId) break;
+        state.alunoTurmaErro = "";
+        state.alunoTurmaMensagem = "";
+        state.alunoTurmaSalvando = true;
+        render();
+        try {
+          await desvincularAlunoDaTurma(aluno.nome, turmaId);
+          const turma = (state.instTurmas || []).find(t => t.id === turmaId);
+          state.alunoTurmaMensagem = `${aluno.nome} saiu da turma ${turma?.nome || ""}.`.replace(" .", ".");
+        } catch(err){
+          console.error("Erro ao tirar aluno da turma:", err);
+          state.alunoTurmaErro = `Não foi possível tirar da turma agora${err?.code ? ` (${err.code})` : ""}. Tente de novo.`;
+        } finally {
+          state.alunoTurmaSalvando = false;
+          render();
+        }
         break;
       }
 
@@ -5015,6 +5701,152 @@ function bindEvents(){
           state.respModalErro = `Não foi possível salvar os vínculos agora${err.code ? ` (${err.code})` : ""}.`;
         } finally {
           state.respModalSalvando = false;
+          render();
+        }
+        break;
+      }
+
+      /* ---------- Calendário ---------- */
+      case "cal-mes-anterior": {
+        const c = state.cal;
+        c.mes -= 1;
+        if(c.mes < 0){ c.mes = 11; c.ano -= 1; }
+        render();
+        break;
+      }
+      case "cal-mes-proximo": {
+        const c = state.cal;
+        c.mes += 1;
+        if(c.mes > 11){ c.mes = 0; c.ano += 1; }
+        render();
+        break;
+      }
+      case "cal-hoje": {
+        const hoje = new Date();
+        state.cal.ano = hoje.getFullYear();
+        state.cal.mes = hoje.getMonth();
+        render();
+        break;
+      }
+      case "cal-abrir-dia":
+        state.cal.diaAberto = el.dataset.dia;
+        state.cal.excluirConfirmId = null;
+        render();
+        break;
+      case "cal-fechar-dia":
+        state.cal.diaAberto = null;
+        state.cal.excluirConfirmId = null;
+        render();
+        break;
+      case "cal-atualizar":
+        if(state.screen === "professor") carregarEventosDoProfessor(true);
+        else carregarCalendarioDoAluno(calAlunoAtual(), true);
+        break;
+
+      case "cal-novo-evento": {
+        const turmas = state.data.professorTurmas;
+        const turmaPadrao = turmas.find(t => t.id === state.professorTurmaId) || turmas[0];
+        state.cal.form = {
+          tipo: "aviso", titulo: "", descricao: "",
+          data: el.dataset.dia || hojeISO(),
+          alvo: "turma", turmaId: turmaPadrao ? turmaPadrao.id : "", alunoNome: "",
+          paraQuem: "todos", salvando: false, erro: "",
+        };
+        state.cal.diaAberto = null;
+        render();
+        break;
+      }
+      case "cal-fechar-form":
+        state.cal.form = null;
+        render();
+        break;
+
+      case "cal-salvar-evento": {
+        const cal = state.cal;
+        const f = cal.form;
+        if(!f || f.salvando) break;
+        const turma = state.data.professorTurmas.find(t => t.id === f.turmaId);
+        const titulo = (f.titulo || "").trim();
+        const alunosDaTurma = turma ? (turma.alunos || []) : [];
+
+        let erro = "";
+        let destinatarios = [];
+        if(!titulo) erro = "Digite o título do aviso.";
+        else if(!dataValida(f.data)) erro = "Escolha uma data válida.";
+        else if(!turma) erro = "Escolha a turma.";
+        else if(f.alvo === "aluno"){
+          if(!f.alunoNome || !alunosDaTurma.includes(f.alunoNome)) erro = "Escolha o aluno.";
+          else destinatarios = [chaveAluno(turma.escolaId, f.alunoNome)];
+        } else {
+          if(alunosDaTurma.length === 0) erro = "Esta turma ainda não tem alunos.";
+          else destinatarios = [...new Set(alunosDaTurma.map(n => chaveAluno(turma.escolaId, n)))];
+        }
+        if(erro){ f.erro = erro; render(); break; }
+
+        f.erro = "";
+        f.salvando = true;
+        render();
+        try {
+          const dados = {
+            tipo: f.tipo === "lembrete" ? "lembrete" : "aviso",
+            titulo,
+            descricao: (f.descricao || "").trim(),
+            data: f.data,
+            alvo: f.alvo === "aluno" ? "aluno" : "turma",
+            paraQuem: ["todos", "responsaveis", "alunos"].includes(f.paraQuem) ? f.paraQuem : "todos",
+            turmaId: turma.id,
+            turmaNome: turma.nome || "",
+            disciplina: turma.disciplina || "",
+            alunoNome: f.alvo === "aluno" ? f.alunoNome : "",
+            escolaId: turma.escolaId,
+            destinatarios,
+            professorId: state.authUser.uid,
+            professorNome: state.data.professorNome || "",
+            criadoEm: new Date().toISOString(),
+          };
+          const ref = doc(collection(db, "eventosCalendario"));
+          await setDoc(ref, dados);
+          cal.prof.eventos.push({ id: ref.id, ...dados });
+          // leva o calendário pro mês do aviso e abre o dia, pra a pessoa ver onde ele caiu
+          const [ano, mes] = dados.data.split("-").map(Number);
+          cal.ano = ano;
+          cal.mes = mes - 1;
+          cal.diaAberto = dados.data;
+          cal.form = null;
+        } catch(err){
+          f.erro = `Não foi possível salvar o aviso agora${err?.code ? ` (${err.code})` : ""}. Tente de novo.`;
+          f.salvando = false;
+          console.error("Erro ao salvar aviso:", err?.code, err);
+        } finally {
+          render();
+        }
+        break;
+      }
+
+      case "cal-cancelar-exclusao":
+        state.cal.excluirConfirmId = null;
+        render();
+        break;
+
+      case "cal-excluir-evento": {
+        const cal = state.cal;
+        const id = el.dataset.id;
+        if(cal.excluirConfirmId !== id){   // 1º toque só pede confirmação
+          cal.excluirConfirmId = id;
+          render();
+          break;
+        }
+        cal.excluindoId = id;
+        render();
+        try {
+          await deleteDoc(doc(db, "eventosCalendario", id));
+          cal.prof.eventos = cal.prof.eventos.filter(e => e.id !== id);
+        } catch(err){
+          cal.prof.erro = `Não foi possível excluir o aviso agora${err?.code ? ` (${err.code})` : ""}.`;
+          cal.diaAberto = null;
+        } finally {
+          cal.excluirConfirmId = null;
+          cal.excluindoId = null;
           render();
         }
         break;
