@@ -20,7 +20,7 @@
 
    alunos/{alunoId}
      nome, turma, foto, escolaId, contato
-     notas: [{ materia, nota, bimestre }]
+     notas: [] // campo antigo, não é mais usado (ver "atividades" e "notasAluno" abaixo)
      presenca: { percentual, faltasMes, registros: [{data,status}] }
      financeiro: { status, proxima, valor, historico: [{mes,status,data}] }
      comunicados: [{ titulo, data, urgente }]
@@ -64,7 +64,45 @@
      observacao: string          // observação do professor sobre o aluno naquele dia
      professorId, professorNome, atualizadoEm
 
-   eventosCalendario/{id}   (avisos e lembretes criados pelo professor)
+   atividades/{atividadeId}   (uma prova/trabalho lançado pelo professor —
+                                um documento por atividade, com a nota de
+                                cada aluno da turma junto)
+     turmaId, turmaNome, professorId, professorNome, escolaId, disciplina
+     bimestre: 1 | 2
+     nome (ex.: "Prova 1 — Frações"), data ("AAAA-MM-DD" do lançamento)
+     notas: { [nomeAluno]: number }   // só entra quem tem nota lançada
+     atualizadoEm
+
+   certificadosAluno/{turmaId_modulo_nomeDoAluno}   (certificado de um módulo,
+                                anexado pela secretaria ou pelo professor —
+                                hoje, um link do Drive. Recreação não entra
+                                aqui: não tem módulo pra certificar. Mesmo
+                                padrão de id determinístico de presencasAluno/
+                                notasAluno, pra reanexar o mesmo módulo do
+                                mesmo aluno atualizar em vez de duplicar)
+     alunoKey, alunoNome, escolaId, turmaId, turmaNome, disciplina
+     modulo (ex.: "Módulo 1"), link (URL do Drive)
+     anexadoPorId, anexadoPorNome, atualizadoEm
+
+   notasAluno/{atividadeId_nomeDoAluno}   (cópia "por aluno" de cada nota
+                                de "atividades", igual o padrão de
+                                presencasAluno — é o que o boletim do
+                                aluno/responsável lê, sem precisar de
+                                acesso à turma inteira)
+     alunoKey, alunoNome, escolaId, turmaId, turmaNome, disciplina
+     bimestre: 1 | 2
+     atividadeId, atividadeNome, nota: number
+     professorId, professorNome, atualizadoEm
+     — a média do bimestre é a média das notas de todas as atividades da
+       disciplina naquele bimestre; a média final do semestre é a média
+       simples entre o 1º e o 2º bimestre (só calculada quando os dois
+       já têm nota lançada).
+
+   eventosCalendario/{id}   (avisos e lembretes criados pelo professor OU
+                              itens do calendário da secretaria — os dois
+                              tipos moram na mesma coleção, diferenciados
+                              pelo campo "escopo")
+     -- criado pelo professor (escopo ausente, vale só pra turma/aluno) --
      tipo: "aviso" | "lembrete"
      titulo, descricao, data ("AAAA-MM-DD")
      alvo: "turma" | "aluno"        // turma inteira ou um aluno só
@@ -72,6 +110,19 @@
      turmaId, turmaNome, disciplina, alunoNome (só quando alvo == "aluno"), escolaId
      destinatarios: string[]   // chaveAluno de cada aluno que deve ver (consulta: array-contains)
      professorId, professorNome, criadoEm
+
+     -- criado pela secretaria (escopo == "escola", vale pra toda a unidade) --
+     escopo: "escola"
+     tipo: "sem_aula" | "prova" | "atividade" | "aviso" | "outro"  (ver TIPOS_INSTITUICAO em calendario.js)
+     titulo, descricao, data ("AAAA-MM-DD"), escolaId
+     cursos: string[] | null   // null = vale pra escola inteira (padrão);
+                                // array = só pros cursos listados (ex.: um
+                                // feriado que não vale pra Recreação). Ver
+                                // destinatariosDaEscola/destinatariosProfessoresDaEscola.
+     destinatarios: string[]              // chaveAluno de todo aluno da escola que está em algum curso incluído
+     destinatariosProfessores: string[]   // uid de todo professor que dá aula em algum curso incluído
+     criadoPorId, criadoPorNome, criadoEm
+     origemSeed?: true   // marca os itens trazidos do botão "Importar calendário da SEED"
    ================================================================== */
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
@@ -121,12 +172,50 @@ import {
 import {
   calendarioHtml,
   eventoFormModalHtml,
+  eventoInstituicaoFormModalHtml,
+  importarSeedModalHtml,
+  TIPOS_INSTITUICAO,
   montarDias,
   chaveAluno,
   slugNome,
   hojeISO,
   dataValida,
 } from "./calendario.js";
+
+/* Datas do calendário oficial da SEED-PR pra 2026 (Anexo da Resolução
+   6.494/2025 - GS/SEED), usadas no botão "Importar calendário da SEED" da
+   aba Calendário da secretaria. Só os itens que vêm escritos por extenso
+   no documento (feriados, observações numeradas e início/fim de cada
+   trimestre) — os dias de recesso/estudo-planejamento que só aparecem
+   coloridos no PDF (sem a data escrita ao lado) não entraram aqui pra não
+   arriscar errar a data; lance-os à mão pela tela se precisar. As datas
+   exatas da Prova Paraná (maio e setembro) também não estão aqui porque o
+   documento não informa o dia. */
+const CALENDARIO_SEED_PR_2026 = [
+  { data: "2026-01-01", tipo: "sem_aula", titulo: "Feriado — Ano Novo" },
+  { data: "2026-02-05", tipo: "aviso", titulo: "Início do 1º trimestre" },
+  { data: "2026-03-16", tipo: "aviso", titulo: "Semana de combate à violência contra a mulher", descricao: "De 16 a 20/03. Lei Nº 14.164/2021." },
+  { data: "2026-04-03", tipo: "sem_aula", titulo: "Feriado — Paixão (Sexta-feira Santa)" },
+  { data: "2026-04-05", tipo: "sem_aula", titulo: "Feriado — Páscoa" },
+  { data: "2026-04-21", tipo: "sem_aula", titulo: "Feriado — Tiradentes" },
+  { data: "2026-05-01", tipo: "sem_aula", titulo: "Feriado — Dia do Trabalho" },
+  { data: "2026-05-14", tipo: "aviso", titulo: "Fim do 1º trimestre" },
+  { data: "2026-05-18", tipo: "aviso", titulo: "Início do 2º trimestre" },
+  { data: "2026-06-04", tipo: "sem_aula", titulo: "Feriado — Corpus Christi" },
+  { data: "2026-08-07", tipo: "aviso", titulo: "Dia do Funcionário de Escola" },
+  { data: "2026-08-11", tipo: "aviso", titulo: "Dia do Estudante" },
+  { data: "2026-09-04", tipo: "aviso", titulo: "Fim do 2º trimestre" },
+  { data: "2026-09-07", tipo: "sem_aula", titulo: "Feriado — Independência" },
+  { data: "2026-09-08", tipo: "aviso", titulo: "Início do 3º trimestre" },
+  { data: "2026-10-12", tipo: "sem_aula", titulo: "Feriado — N. Sra. Aparecida" },
+  { data: "2026-10-13", tipo: "aviso", titulo: "Dia do Professor (antecipado) / Dia Internacional p/ Redução do Risco e Desastre" },
+  { data: "2026-10-28", tipo: "aviso", titulo: "Dia do Servidor Público" },
+  { data: "2026-11-02", tipo: "sem_aula", titulo: "Feriado — Finados" },
+  { data: "2026-11-15", tipo: "sem_aula", titulo: "Feriado — Proclamação da República" },
+  { data: "2026-11-20", tipo: "sem_aula", titulo: "Feriado — Zumbi e Consciência Negra" },
+  { data: "2026-12-18", tipo: "aviso", titulo: "Fim do 3º trimestre" },
+  { data: "2026-12-25", tipo: "sem_aula", titulo: "Feriado — Natal" },
+];
 
 const firebaseApp = initializeApp(firebaseConfig);
 const auth = getAuth(firebaseApp);
@@ -244,6 +333,7 @@ const ICONS = {
   cake: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21h16v-6a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v6Z"/><path d="M4 16c1.5 1.2 3 1.2 4.5 0S11.5 14.8 13 16s3 1.2 4.5 0"/><path d="M12 8V5"/><path d="M12 3.5c.7.6.7 1.4 0 1.5-.7-.1-.7-.9 0-1.5Z"/><path d="M8 9V6.5M16 9V6.5"/></svg>`,
   calendar: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>`,
   fileText: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h6"/></svg>`,
+  award: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="6"/><path d="m9 13.5-1.5 7L12 18l4.5 2.5-1.5-7"/></svg>`,
 };
 
 /* Contatos de WhatsApp da secretaria, por unidade. Ajuste os números aqui
@@ -260,6 +350,13 @@ const SUPORTE_TECNICO = {
   nome: "Suporte do Educa+",
   whatsapp: "46999711937",
   email: "dev.neresdalton@gmail.com",
+};
+
+/* Mensagem que o responsável manda pra secretaria pedindo o certificado
+   do filho, na aba "Certificados". Ajuste o texto aqui. */
+const MENSAGEM_CERTIFICADO = {
+  solicitar: (nomeAluno, turma) =>
+    `Olá! Gostaria de solicitar o certificado do(a) aluno(a) ${nomeAluno}${turma ? ` (${turma})` : ""}, por favor.`,
 };
 
 /* Mensagem de parabéns enviada pela aba "Aniversários". Ajuste os textos
@@ -536,6 +633,15 @@ function adivinharDisciplina(turmaRaw, cursosDisponiveis){
   return cursosDisponiveis.includes("Inglês") ? "Inglês" : (cursosDisponiveis[0] || "Inglês");
 }
 
+/* A Recreação é só um turno de brincadeiras, sem módulo nem avaliação —
+   por isso não entra na aba "Certificados" (nem do lado de quem anexa,
+   nem do lado do aluno/responsável). Recebe a disciplina da turma quando
+   tem (mais confiável) ou o nome da turma como alternativa, e usa a mesma
+   heurística de texto de adivinharDisciplina. */
+function ehTurmaDeRecreacao(textoOuTurma){
+  return normalizarNome(textoOuTurma || "").includes("recrea");
+}
+
 /* Recebe o texto colado (várias linhas) e devolve uma lista de linhas
    interpretadas, já tentando casar professor e disciplina — pronta pra
    virar a tabela de prévia. Linhas que não têm um horário reconhecível
@@ -664,6 +770,7 @@ const state = {
   alunoTab: "calendario",
   familiaTab: "calendario",
   cal: calNovoEstado(),          // calendário (aluno / responsável / professor) — ver seção "Calendário"
+  boletim: { cache: {} },        // notas do aluno/responsável — { cache: { [alunoId]: { registros, carregando, erro, carregadoEm } } }
   familiaStudentId: null,
   escolaSelecionadaId: null,
   instTab: "turmas",
@@ -689,10 +796,22 @@ const state = {
   professorRegistroCarregando: false,     // carregando a chamada já registrada hoje, ao trocar de turma
   professorRegistroSalvando: false,       // salvando a chamada de hoje no Firestore
   professorConteudosNovoTextoGerenciar: "", // texto do novo conteúdo digitado na aba "Conteúdos"
-  professorNotas: {},
   professorAvisoEnviado: "",
   professorRegistroSalvo: false,
+
+  // --- Notas & atividades (boletim) ---
+  professorAvaliacaoBimestre: 1,        // 1 ou 2 — etapa escolhida na aba "Notas & atividades"
+  professorAtividadesTodas: [],         // TODAS as atividades da turma selecionada (as duas etapas), carregadas do Firestore
+  professorAtividadesCarregando: false,
+  professorAtividadesErro: "",
+  professorAtividadeEditandoId: null,   // id da atividade em edição (null = lançando uma nova)
+  professorAtividadeNome: "",           // texto do campo "Atividade ou avaliação"
+  professorAtividadeExcluirConfirmId: null, // id esperando o 2º toque de "Confirmar exclusão"
+  professorAtividadeExcluindoId: null,
+  professorNotas: {},                   // notas digitadas agora, chave `${turmaId}-${nomeAluno}`
+  professorNotasSalvando: false,
   professorNotasSalvas: false,
+  professorNotasErro: "",
   mobileMenuOpen: false,
   secretariaModalOpen: false,
   instituicaoMensagem: "",
@@ -858,6 +977,25 @@ const state = {
   // memória da aba — não é gravado em lugar nenhum) e recado do último envio.
   contratoArquivosEnvio: {},            // { [alunoId]: File }
   contratoEnvioMsg: {},                 // { [alunoId]: "texto" }
+
+  // --- Certificados (aba "Certificados") ---
+  // Lado da secretaria/professor: escolhe a turma, vê os alunos dela e
+  // anexa/edita o certificado (link do Drive) de cada um, módulo a módulo.
+  certTurmaId: null,               // turma escolhida na aba
+  certLista: null,                 // [{id, alunoNome, modulo, link, ...}] da turma escolhida, ou null se não carregou
+  certListaTurmaId: null,          // turma a que certLista pertence
+  certCarregando: false,
+  certErro: "",
+  certFormAlunoNome: null,         // aluno com o formulário de "novo certificado" aberto
+  certFormModulo: "",
+  certFormLink: "",
+  certFormErro: "",
+  certSalvando: false,
+  certExcluirConfirmId: null,      // id esperando o 2º toque de "Confirmar exclusão"
+  certExcluindoId: null,
+
+  // Lado do aluno/responsável: mesmo padrão de cache do boletim (por alunoId)
+  certificados: { cache: {} },     // { cache: { [alunoId]: { registros, carregando, erro, carregadoEm } } }
 };
 
 const app = document.getElementById("app");
@@ -1225,6 +1363,7 @@ function renderAluno(){
     { key:"calendario", label:"Calendário", icon:"calendar" },
     { key:"notas", label:"Notas", icon:"cap" },
     { key:"presenca", label:"Presença", icon:"clipboard" },
+    ...(ehTurmaDeRecreacao(student.turma) ? [] : [{ key:"certificados", label:"Certificados", icon:"award" }]),
     { key:"comunicados", label:"Comunicados", icon:"megaphone" },
   ];
 
@@ -1232,6 +1371,7 @@ function renderAluno(){
   if(state.alunoTab === "calendario") body = calendarioAlunoView(student, "aluno");
   else if(state.alunoTab === "notas") body = notasView(student);
   else if(state.alunoTab === "presenca") body = presencaView(student);
+  else if(state.alunoTab === "certificados") body = certificadosView(student, false);
   else if(state.alunoTab === "comunicados") body = comunicadosView(student);
 
   return shell({
@@ -1246,10 +1386,14 @@ function renderAluno(){
 function renderFamilia(){
   const alunos = state.data.familiaAlunos;
   const student = alunos.find(s => s.id === state.familiaStudentId) || alunos[0];
+  // Mostra a aba se pelo menos um dos filhos não for só de Recreação; ao
+  // abrir num filho que é só de Recreação, certificadosView já explica.
+  const algumFilhoTemCertificado = alunos.some(s => !ehTurmaDeRecreacao(s.turma));
   const navItems = [
     { key:"calendario", label:"Calendário", icon:"calendar" },
     { key:"notas", label:"Notas", icon:"cap" },
     { key:"presenca", label:"Presença", icon:"clipboard" },
+    ...(algumFilhoTemCertificado ? [{ key:"certificados", label:"Certificados", icon:"award" }] : []),
     { key:"financeiro", label:"Financeiro", icon:"wallet" },
     { key:"comunicados", label:"Comunicados", icon:"megaphone" },
   ];
@@ -1268,6 +1412,7 @@ function renderFamilia(){
   if(state.familiaTab === "calendario") body = calendarioAlunoView(student, "responsavel");
   else if(state.familiaTab === "notas") body = notasView(student);
   else if(state.familiaTab === "presenca") body = presencaView(student);
+  else if(state.familiaTab === "certificados") body = certificadosView(student, true);
   else if(state.familiaTab === "financeiro") body = financeiroFamiliaView(student);
   else if(state.familiaTab === "comunicados") body = comunicadosView(student);
 
@@ -1280,19 +1425,123 @@ function renderFamilia(){
 }
 
 function notasView(student){
-  const media = student.notas.length
-    ? (student.notas.reduce((a,n)=>a+n.nota,0)/student.notas.length).toFixed(1)
-    : "—";
-  const rows = student.notas.map(n => `
-    <div class="row">
-      <span style="font-size:14.5px;color:var(--ink);font-weight:500;">${escapeHtml(n.materia)}</span>
-      <span style="font-size:15px;font-weight:700;color:${n.nota>=7?'var(--green)':'var(--red)'}">${Number(n.nota).toFixed(1)}</span>
-    </div>`).join("") || `<div style="padding:20px;font-size:14px;color:var(--slate);">Nenhuma nota lançada ainda.</div>`;
+  const cache = state.boletim.cache[student.id] || { registros: [], carregando: false, erro: "" };
+
+  if(cache.erro){
+    return `
+      <h2 class="section-title">Boletim</h2>
+      <p class="section-eyebrow">${escapeHtml(student.turma)}</p>
+      <p class="teacher-error" style="color:var(--red,#C4544A);font-size:13px;">${escapeHtml(cache.erro)}</p>`;
+  }
+  if(cache.carregando && cache.registros.length === 0){
+    return `
+      <h2 class="section-title">Boletim</h2>
+      <p class="section-eyebrow">${escapeHtml(student.turma)}</p>
+      <p class="section-eyebrow">Carregando notas…</p>`;
+  }
+
+  const disciplinas = montarBoletim(cache.registros);
+  const fmt = v => v === null ? "—" : v.toFixed(1);
+  const corMedia = v => v === null ? "var(--slate)" : (v >= 7 ? "var(--green)" : "var(--red)");
+  const pillMedia = v => v === null ? "" : (v >= 7 ? "pill-green" : "pill-red");
+  const mediaGeral = mediaDeNotas(disciplinas.map(d => d.final).filter(v => v !== null));
+
+  if(disciplinas.length === 0){
+    return `
+      <h2 class="section-title" style="display:inline-block;margin-right:12px;">Boletim</h2>
+      <p class="section-eyebrow">${escapeHtml(student.turma)}</p>
+      <div class="card flush"><div style="padding:20px;font-size:14px;color:var(--slate);">Nenhuma nota lançada ainda.</div></div>`;
+  }
+
+  const listaAtividades = atividades => atividades.length
+    ? atividades.map(a => `
+        <div class="row">
+          <span style="font-size:13.5px;color:var(--ink);">${escapeHtml(a.atividadeNome || "")}</span>
+          <span style="font-size:14px;font-weight:700;color:${corMedia(Number(a.nota))};">${fmt(Number(a.nota))}</span>
+        </div>`).join("")
+    : `<div class="row"><span style="font-size:13px;color:var(--slate);">Nenhuma atividade lançada ainda</span></div>`;
+
+  const cards = disciplinas.map(d => `
+    <div class="boletim-disciplina">
+      <div class="boletim-disciplina-head">
+        <h3>${escapeHtml(d.disciplina)}</h3>
+        <span class="pill ${pillMedia(d.final)}">Média final ${fmt(d.final)}</span>
+      </div>
+      <div class="boletim-etapa">
+        <div class="boletim-etapa-head"><strong>1º bimestre</strong><span style="color:${corMedia(d.media1)};font-weight:700;">${fmt(d.media1)}</span></div>
+        <div class="card flush">${listaAtividades(d.atividades1)}</div>
+      </div>
+      <div class="boletim-etapa">
+        <div class="boletim-etapa-head"><strong>2º bimestre</strong><span style="color:${corMedia(d.media2)};font-weight:700;">${fmt(d.media2)}</span></div>
+        <div class="card flush">${listaAtividades(d.atividades2)}</div>
+      </div>
+    </div>`).join("");
+
   return `
     <h2 class="section-title" style="display:inline-block;margin-right:12px;">Boletim</h2>
-    <span class="pill ${media!=="—" && media>=7?'pill-green':'pill-red'}">Média geral ${media}</span>
-    <p class="section-eyebrow">${escapeHtml(student.turma)} · ${escapeHtml(student.notas[0]?.bimestre||'')}</p>
-    <div class="card flush">${rows}</div>`;
+    <span class="pill ${pillMedia(mediaGeral)}">Média geral ${fmt(mediaGeral)}</span>
+    <p class="section-eyebrow">${escapeHtml(student.turma)}</p>
+    ${cards}`;
+}
+
+/* ---------------- Certificados (lado do aluno/responsável) ----------------
+   A Recreação não tem módulo pra certificar, então nem mostra a lista —
+   só uma explicação curta. Responsável também ganha um jeito rápido de
+   pedir o certificado direto pra secretaria pelo WhatsApp. */
+function certificadosView(student, ehResponsavel){
+  if(ehTurmaDeRecreacao(student.turma)){
+    return `
+      <h2 class="section-title">Certificados</h2>
+      <p class="section-eyebrow">${escapeHtml(student.turma)}</p>
+      <div class="card flush"><div style="padding:20px;font-size:14px;color:var(--slate);">A Recreação não tem módulos, então não emite certificado por aqui.</div></div>`;
+  }
+
+  const cache = state.certificados.cache[student.id] || { registros: [], carregando: false, erro: "" };
+
+  if(cache.erro){
+    return `
+      <h2 class="section-title">Certificados</h2>
+      <p class="section-eyebrow">${escapeHtml(student.turma)}</p>
+      <p class="teacher-error" style="color:var(--red,#C4544A);font-size:13px;">${escapeHtml(cache.erro)}</p>`;
+  }
+  if(cache.carregando && cache.registros.length === 0){
+    return `
+      <h2 class="section-title">Certificados</h2>
+      <p class="section-eyebrow">${escapeHtml(student.turma)}</p>
+      <p class="section-eyebrow">Carregando certificados…</p>`;
+  }
+
+  const linhas = cache.registros.length
+    ? cache.registros.map(c => `
+      <div class="row">
+        <div>
+          <strong style="display:block;font-size:14px;color:var(--ink);">${escapeHtml(c.modulo)}</strong>
+          <span style="font-size:12px;color:var(--slate);">Anexado em ${escapeHtml((c.atualizadoEm || "").slice(0, 10))}</span>
+        </div>
+        <a class="attendance-btn" style="text-decoration:none;" href="${escapeHtml(c.link)}" target="_blank" rel="noopener">${ICONS.award} Ver certificado</a>
+      </div>`).join("")
+    : `<div style="padding:20px;font-size:14px;color:var(--slate);">Nenhum certificado anexado ainda.</div>`;
+
+  const blocoSolicitar = ehResponsavel ? `
+    <div class="teacher-panel" style="margin-top:16px;">
+      <h3>Não achou o certificado?</h3>
+      <p class="section-eyebrow">Peça direto pra secretaria da unidade do(a) ${escapeHtml(primeiroNome(student.nome))}, pelo WhatsApp.</p>
+      ${SECRETARIA_WHATSAPP.map(escola => `
+        <a class="secretaria-option" style="text-decoration:none;margin-top:8px;" href="${whatsappLinkComTexto(escola.numero, MENSAGEM_CERTIFICADO.solicitar(student.nome, student.turma))}" target="_blank" rel="noopener">
+          <span class="secretaria-option-icon">${ICONS.pin}</span>
+          <span>
+            <span class="secretaria-option-name">${escapeHtml(escola.nome)}</span>
+            <span class="secretaria-option-desc">Solicitar pelo WhatsApp</span>
+          </span>
+          ${ICONS.chevronRight}
+        </a>`).join("")}
+    </div>` : "";
+
+  return `
+    <h2 class="section-title">Certificados</h2>
+    <p class="section-eyebrow">${escapeHtml(student.turma)}</p>
+    <div class="card flush">${linhas}</div>
+    ${blocoSolicitar}`;
 }
 
 function presencaView(student){
@@ -1377,7 +1626,10 @@ function calNovoEstado(){
     diaAberto: null,             // "AAAA-MM-DD" do pop-up aberto
     cache: {},                   // { [alunoId]: { presencas, eventos, carregando, erro, carregadoEm } }
     prof: { eventos: [], carregando: false, erro: "", carregadoEm: 0 },
+    inst: { cache: {} },         // { [escolaId]: { eventos, carregando, erro, carregadoEm } } — calendário da secretaria
     form: null,                  // formulário de novo aviso (professor) — null = fechado
+    formInst: null,               // formulário de novo item (secretaria) — null = fechado
+    seed: null,                   // { itens, enviando, erro } — modal "Importar calendário da SEED"
     excluirConfirmId: null,      // aviso esperando o 2º toque de "Confirmar exclusão"
     excluindoId: null,
   };
@@ -1437,6 +1689,146 @@ async function carregarCalendarioDoAluno(student, forcar = false){
   }
 }
 
+/* Média simples de uma lista de notas, ignorando o que não for número.
+   Devolve null (em vez de 0) quando não há nenhuma nota — assim dá pra
+   distinguir "tirou zero" de "ainda não tem nota lançada". */
+function mediaDeNotas(valores){
+  const nums = (valores || []).map(Number).filter(n => !isNaN(n));
+  if(!nums.length) return null;
+  return nums.reduce((a, b) => a + b, 0) / nums.length;
+}
+
+/* Agrupa os registros de "notasAluno" por disciplina e bimestre, e já
+   calcula a média de cada etapa e a média final (só quando as duas
+   etapas têm nota). Uma função pura, sem tocar no state — assim
+   notasView() e o resumo do professor podem reaproveitar a mesma conta. */
+function montarBoletim(registros){
+  const porDisciplina = {};
+  (registros || []).forEach(r => {
+    const disciplina = r.disciplina || "Sem disciplina";
+    if(!porDisciplina[disciplina]) porDisciplina[disciplina] = { 1: [], 2: [] };
+    const bimestre = Number(r.bimestre) === 2 ? 2 : 1;
+    porDisciplina[disciplina][bimestre].push(r);
+  });
+  return Object.keys(porDisciplina).sort().map(disciplina => {
+    const etapas = porDisciplina[disciplina];
+    const atividades1 = etapas[1].sort((a, b) => (a.data || "").localeCompare(b.data || ""));
+    const atividades2 = etapas[2].sort((a, b) => (a.data || "").localeCompare(b.data || ""));
+    const media1 = mediaDeNotas(atividades1.map(a => a.nota));
+    const media2 = mediaDeNotas(atividades2.map(a => a.nota));
+    const final = (media1 !== null && media2 !== null) ? (media1 + media2) / 2 : null;
+    return { disciplina, atividades1, atividades2, media1, media2, final };
+  });
+}
+
+/* Busca as notas (copiadas de "atividades" em "notasAluno") do aluno,
+   pra montar o boletim. Mesmo padrão de carregarCalendarioDoAluno: cache
+   por alunoId, com uma leitura só que filtra por escolaId + alunoKey. */
+async function carregarBoletimDoAluno(student, forcar = false){
+  if(!student) return;
+  const cache = state.boletim.cache[student.id] || (state.boletim.cache[student.id] = { registros: [], carregando: false, erro: "", carregadoEm: 0 });
+  if(cache.carregando) return;
+  if(!forcar && cache.carregadoEm && Date.now() - cache.carregadoEm < CALENDARIO_ATUALIZA_APOS_MS) return;
+
+  cache.carregando = true;
+  cache.erro = "";
+  render();
+  try {
+    const chave = chaveAluno(student.escolaId, student.nome);
+    const snap = await getDocs(query(collection(db, "notasAluno"), where("escolaId", "==", student.escolaId), where("alunoKey", "==", chave)));
+    cache.registros = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    cache.carregadoEm = Date.now();
+  } catch(err){
+    cache.erro = mensagemErroCalendario(err);
+  } finally {
+    cache.carregando = false;
+    render();
+  }
+}
+
+/* ---------------- Certificados ----------------
+   Um documento por aluno por módulo (coleção "certificadosAluno"), no
+   mesmo padrão de "notasAluno"/"presencasAluno": id determinístico (pra
+   reanexar o mesmo módulo do mesmo aluno atualizar em vez de duplicar) e
+   alunoKey pra quem lê do lado do aluno/responsável. */
+function certificadoDocId(turmaId, modulo, alunoNome){
+  return `${turmaId}_${slugNome(modulo, "modulo")}_${slugNome(alunoNome, "aluno")}`;
+}
+
+/* Todos os certificados já anexados pra uma turma (usado do lado de quem
+   anexa — secretaria/professor). Uma leitura só, filtrando por turmaId;
+   agrupar por aluno é feito na hora de montar a tela. */
+async function carregarCertificadosDaTurma(turma, forcar = false){
+  if(!turma) return;
+  if(!forcar && state.certLista !== null && state.certListaTurmaId === turma.id) return;
+  state.certCarregando = true;
+  state.certErro = "";
+  render();
+  try {
+    const snap = await getDocs(query(collection(db, "certificadosAluno"), where("turmaId", "==", turma.id)));
+    state.certLista = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    state.certListaTurmaId = turma.id;
+  } catch(err){
+    state.certLista = [];
+    state.certListaTurmaId = turma.id;
+    state.certErro = "Não foi possível carregar os certificados desta turma. Tente de novo.";
+  } finally {
+    state.certCarregando = false;
+    render();
+  }
+}
+
+/* Salva (ou corrige, se já existir o mesmo módulo pra esse aluno nessa
+   turma) o link do certificado. Quem chama (secretaria ou professor) já
+   está identificado por state.authUser/state.perfil. */
+async function salvarCertificado(turma, alunoNome, modulo, link){
+  const id = certificadoDocId(turma.id, modulo, alunoNome);
+  const agora = new Date().toISOString();
+  const dados = {
+    alunoKey: chaveAluno(turma.escolaId, alunoNome),
+    alunoNome,
+    escolaId: turma.escolaId,
+    turmaId: turma.id,
+    turmaNome: turma.nome || "",
+    disciplina: turma.disciplina || "",
+    modulo,
+    link,
+    anexadoPorId: state.authUser ? state.authUser.uid : "",
+    anexadoPorNome: (state.perfil && state.perfil.nome) || state.data.professorNome || "",
+    atualizadoEm: agora,
+  };
+  await setDoc(doc(db, "certificadosAluno", id), dados);
+  return { id, ...dados };
+}
+
+async function excluirCertificado(id){
+  await deleteDoc(doc(db, "certificadosAluno", id));
+}
+
+/* Lado do aluno/responsável — mesmo padrão de carregarBoletimDoAluno:
+   cache por alunoId, uma leitura só filtrando por escolaId + alunoKey. */
+async function carregarCertificadosDoAluno(student, forcar = false){
+  if(!student) return;
+  const cache = state.certificados.cache[student.id] || (state.certificados.cache[student.id] = { registros: [], carregando: false, erro: "", carregadoEm: 0 });
+  if(cache.carregando) return;
+  if(!forcar && cache.carregadoEm && Date.now() - cache.carregadoEm < CALENDARIO_ATUALIZA_APOS_MS) return;
+
+  cache.carregando = true;
+  cache.erro = "";
+  render();
+  try {
+    const chave = chaveAluno(student.escolaId, student.nome);
+    const snap = await getDocs(query(collection(db, "certificadosAluno"), where("escolaId", "==", student.escolaId), where("alunoKey", "==", chave)));
+    cache.registros = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.modulo || "").localeCompare(b.modulo || ""));
+    cache.carregadoEm = Date.now();
+  } catch(err){
+    cache.erro = mensagemErroCalendario(err);
+  } finally {
+    cache.carregando = false;
+    render();
+  }
+}
+
 /* Avisos e lembretes que o professor logado criou. */
 async function carregarEventosDoProfessor(forcar = false){
   const cal = state.cal;
@@ -1448,8 +1840,16 @@ async function carregarEventosDoProfessor(forcar = false){
   prof.erro = "";
   render();
   try {
-    const snaps = await getDocs(query(collection(db, "eventosCalendario"), where("professorId", "==", state.authUser.uid)));
-    prof.eventos = snaps.docs.map(d => ({ id: d.id, ...d.data() }));
+    // Duas leituras: os avisos/lembretes que o próprio professor criou, e
+    // os itens da secretaria (sem aula, prova...) marcados pra ele.
+    const [proprios, daSecretaria] = await Promise.all([
+      getDocs(query(collection(db, "eventosCalendario"), where("professorId", "==", state.authUser.uid))),
+      getDocs(query(collection(db, "eventosCalendario"), where("destinatariosProfessores", "array-contains", state.authUser.uid))),
+    ]);
+    const porId = new Map();
+    proprios.docs.forEach(d => porId.set(d.id, { id: d.id, ...d.data() }));
+    daSecretaria.docs.forEach(d => porId.set(d.id, { id: d.id, ...d.data() }));
+    prof.eventos = [...porId.values()];
     prof.carregadoEm = Date.now();
   } catch(err){
     prof.erro = mensagemErroCalendario(err);
@@ -1488,6 +1888,90 @@ function calendarioProfessorView(){
     excluirConfirmId: cal.excluirConfirmId,
     excluindoId: cal.excluindoId,
   }) + eventoFormModalHtml({ form: cal.form, turmas: state.data.professorTurmas });
+}
+
+/* Chave de cada aluno atualmente matriculado na escola — usada como
+   "destinatarios" nos itens do calendário da secretaria, pro aluno e o
+   responsável dele já enxergarem no calendário deles (mesma consulta que
+   já existe em carregarCalendarioDoAluno). Alunos matriculados DEPOIS de
+   um item já salvo não entram nele automaticamente — mesma limitação que
+   já existe hoje pros avisos de turma do professor. */
+function destinatariosDaEscola(escolaId, cursos){
+  const alunos = (state.instAlunos || []).filter(a => a.escolaId === escolaId);
+  // cursos ausente/null = comportamento antigo, vale pra escola inteira.
+  if(!Array.isArray(cursos)){
+    return [...new Set(alunos.map(a => chaveAluno(a.escolaId, a.nome)))];
+  }
+  // Só entra quem está em pelo menos uma turma (desta escola) de um dos
+  // cursos escolhidos — turmasDoAluno já filtra por state.instTurmas,
+  // que só tem turmas da escola selecionada.
+  return [...new Set(
+    alunos
+      .filter(a => turmasDoAluno(a.nome).some(t => cursos.includes(t.disciplina)))
+      .map(a => chaveAluno(a.escolaId, a.nome))
+  )];
+}
+
+/* uid de cada professor atualmente cadastrado na escola — usado pra
+   professores também enxergarem os itens da secretaria no calendário
+   deles (precisa de uma leitura correspondente no lado do professor).
+   cursos ausente/null = todo mundo; array = só quem dá aula em algum dos
+   cursos escolhidos (campo "disciplinas" do cadastro do professor). */
+function destinatariosProfessoresDaEscola(cursos){
+  const professores = state.gestaoProfessores || [];
+  if(!Array.isArray(cursos)) return professores.map(p => p.id).filter(Boolean);
+  return professores
+    .filter(p => (p.disciplinas || []).some(d => cursos.includes(d)))
+    .map(p => p.id)
+    .filter(Boolean);
+}
+
+/* Itens do calendário lançados pela SECRETARIA (sem aula, prova, atividade
+   diferente…) pra toda a escola. Ao contrário do calendário do professor,
+   aqui a leitura é direta por escolaId — a mesma unidade que a instituição
+   já lê integralmente em outras abas (turmas, alunos, professores). */
+async function carregarEventosDaInstituicao(escolaId, forcar = false){
+  if(!escolaId) return;
+  const cal = state.cal;
+  const cache = cal.inst.cache[escolaId] || (cal.inst.cache[escolaId] = { eventos: [], carregando: false, erro: "", carregadoEm: 0 });
+  if(cache.carregando) return;
+  if(!forcar && cache.carregadoEm && Date.now() - cache.carregadoEm < CALENDARIO_ATUALIZA_APOS_MS) return;
+
+  cache.carregando = true;
+  cache.erro = "";
+  render();
+  try {
+    const snaps = await getDocs(query(collection(db, "eventosCalendario"), where("escolaId", "==", escolaId), where("escopo", "==", "escola")));
+    cache.eventos = snaps.docs.map(d => ({ id: d.id, ...d.data() }));
+    cache.carregadoEm = Date.now();
+  } catch(err){
+    cache.erro = mensagemErroCalendario(err);
+  } finally {
+    cache.carregando = false;
+    render();
+  }
+}
+
+function calendarioInstituicaoView(school){
+  const escolaId = state.escolaSelecionadaId;
+  const cal = state.cal;
+  const cache = cal.inst.cache[escolaId] || { eventos: [], carregando: false, erro: "" };
+  const cursos = cursosDaEscola(school?.nome || "");
+  return calendarioHtml({
+    papel: "instituicao",
+    ano: cal.ano, mes: cal.mes,
+    dias: montarDias({ eventos: cache.eventos, papel: "instituicao" }),
+    hoje: hojeISO(),
+    carregando: cache.carregando,
+    erro: cache.erro,
+    diaAberto: cal.diaAberto,
+    podeCriar: true,
+    excluirConfirmId: cal.excluirConfirmId,
+    excluindoId: cal.excluindoId,
+  }) + `
+    <div style="margin-top:14px;">
+      <button type="button" class="attendance-btn" data-action="calseed-abrir">Importar calendário da SEED</button>
+    </div>` + eventoInstituicaoFormModalHtml({ form: cal.formInst, cursos }) + importarSeedModalHtml({ form: cal.seed, cursos });
 }
 
 /* Chamada salva -> grava também uma cópia por aluno em "presencasAluno".
@@ -1541,10 +2025,12 @@ function renderProfessor(){
     { key:"aulas", label:"Aulas & chamada", icon:"clipboard" },
     { key:"conteudos", label:"Conteúdos", icon:"book" },
     { key:"avaliacoes", label:"Notas & atividades", icon:"cap" },
+    { key:"certificados", label:"Certificados", icon:"award" },
   ];
   const body = state.professorTab === "calendario" ? calendarioProfessorView()
     : state.professorTab === "aulas" ? professorAulasView()
     : state.professorTab === "conteudos" ? professorConteudosView()
+    : state.professorTab === "certificados" ? certificadosGestaoView(state.data.professorTurmas)
     : professorAvaliacoesView();
 
   return shell({
@@ -1666,21 +2152,144 @@ function professorAvaliacoesView(){
       <p class="section-eyebrow">Selecione a turma em que deseja lançar uma atividade ou notas.</p>
       ${professorTurmaSelect()}`;
   }
+
+  const bimestre = state.professorAvaliacaoBimestre === 2 ? 2 : 1;
+  const todas = state.professorAtividadesTodas || [];
+  const atividadesEtapa = todas.filter(a => Number(a.bimestre) === bimestre).sort((a, b) => (a.data || "").localeCompare(b.data || ""));
+  const editando = atividadesEtapa.find(a => a.id === state.professorAtividadeEditandoId) || null;
+
   const rows = turma.alunos.map(aluno => {
     const key = `${turma.id}-${aluno}`;
-    return `<div class="grade-row"><strong>${escapeHtml(aluno)}</strong><input class="grade-input" data-grade="${escapeHtml(key)}" type="number" min="0" max="10" step="0.1" value="${escapeHtml(state.professorNotas[key])}" placeholder="Nota" /></div>`;
+    const valor = state.professorNotas[key] ?? "";
+    return `<div class="grade-row"><strong>${escapeHtml(aluno)}</strong><input class="grade-input" data-grade="${escapeHtml(key)}" type="number" min="0" max="10" step="0.1" value="${escapeHtml(valor)}" placeholder="Nota" /></div>`;
   }).join("");
+
+  const listaAtividades = atividadesEtapa.length ? `
+    <h3 style="margin-top:22px;">Atividades lançadas nesta etapa (${atividadesEtapa.length})</h3>
+    <div class="card flush">
+      ${atividadesEtapa.map(a => `
+        <div class="row">
+          <div>
+            <strong style="display:block;font-size:14px;color:var(--ink);">${escapeHtml(a.nome)}</strong>
+            <span style="font-size:12px;color:var(--slate);">${escapeHtml(a.data || "")} · ${Object.keys(a.notas || {}).length} nota(s) lançada(s)</span>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button type="button" class="attendance-btn" data-action="editar-atividade" data-id="${escapeHtml(a.id)}">Editar</button>
+            <button type="button" class="attendance-btn" data-action="excluir-atividade" data-id="${escapeHtml(a.id)}" ${state.professorAtividadeExcluindoId === a.id ? "disabled" : ""}>${state.professorAtividadeExcluindoId === a.id ? "Excluindo…" : (state.professorAtividadeExcluirConfirmId === a.id ? "Confirmar exclusão?" : `${ICONS.trash} Excluir`)}</button>
+          </div>
+        </div>`).join("")}
+    </div>` : "";
+
+  const resumo = professorResumoMediasHtml(turma, todas);
+
   return `
     <h2 class="section-title">Notas e atividades</h2>
-    <p class="section-eyebrow">Lance uma atividade e as notas da turma selecionada.</p>
+    <p class="section-eyebrow">Lance atividades e notas — o boletim do aluno é montado automaticamente a partir delas.</p>
     ${professorTurmaSelect()}
+    <div class="teacher-class-list" style="grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 360px;">
+      <button type="button" class="teacher-class-card ${bimestre === 1 ? "active" : ""}" data-action="set-bimestre" data-bimestre="1"><strong>1º bimestre</strong></button>
+      <button type="button" class="teacher-class-card ${bimestre === 2 ? "active" : ""}" data-action="set-bimestre" data-bimestre="2"><strong>2º bimestre</strong></button>
+    </div>
     <div class="teacher-panel">
       <div class="teacher-panel-head"><div><h2>${escapeHtml(turma.nome)}</h2><p>${escapeHtml(turma.escola)} · ${escapeHtml(turma.disciplina)}</p></div></div>
+      ${editando ? `<p class="section-eyebrow" style="color:var(--gold-deep);">Editando "${escapeHtml(editando.nome)}" — salvar vai substituir as notas já lançadas para essa atividade.</p>` : ""}
       <label class="teacher-label" for="activity-name">Atividade ou avaliação</label>
-      <input id="activity-name" class="teacher-text-input" placeholder="Ex.: Lista de exercícios — Frações" />
+      <input id="activity-name" class="teacher-text-input" placeholder="Ex.: Lista de exercícios — Frações" value="${escapeHtml(state.professorAtividadeNome || "")}" ${state.professorNotasSalvando ? "disabled" : ""} />
       <div class="grade-list">${rows}</div>
-      <button class="teacher-primary-btn" data-action="save-grades">Salvar notas e atividade</button>
-      ${state.professorNotasSalvas ? `<p class="teacher-success">Notas e atividade salvas para a turma (ainda só nesta sessão).</p>` : ""}
+      <button class="teacher-primary-btn" data-action="save-grades" ${state.professorNotasSalvando ? "disabled" : ""}>${state.professorNotasSalvando ? "Salvando…" : (editando ? "Salvar alterações" : "Salvar notas da atividade")}</button>
+      ${editando ? `<button type="button" class="attendance-btn" style="margin-top:10px;" data-action="cancelar-edicao-atividade">Cancelar edição e lançar nova atividade</button>` : ""}
+      ${state.professorNotasErro ? `<p class="teacher-error" style="color:var(--red,#C4544A);font-size:12.5px;margin-top:8px;">${escapeHtml(state.professorNotasErro)}</p>` : ""}
+      ${state.professorNotasSalvas ? `<p class="teacher-success">Notas salvas — já aparecem no boletim do aluno e do responsável.</p>` : ""}
+    </div>
+    ${state.professorAtividadesErro ? `<p class="teacher-error" style="color:var(--red,#C4544A);font-size:12.5px;margin-top:12px;">${escapeHtml(state.professorAtividadesErro)}</p>` : ""}
+    ${state.professorAtividadesCarregando ? `<p class="section-eyebrow" style="margin-top:12px;">Carregando notas já lançadas…</p>` : listaAtividades}
+    ${resumo}`;
+}
+
+/* ---------------- Certificados (lado de quem anexa: secretaria/professor) ----------------
+   Compartilhada pelas abas "Certificados" da instituição e do professor —
+   só muda a lista de turmas que cada uma passa (state.instTurmas ou
+   state.data.professorTurmas). Recreação fica de fora: não tem módulo. */
+function certificadosGestaoView(turmasDisponiveis){
+  const turmas = (turmasDisponiveis || []).filter(t => !ehTurmaDeRecreacao(t.disciplina || t.nome));
+  const intro = `
+    <h2 class="section-title">Certificados</h2>
+    <p class="section-eyebrow">Ao fim de cada módulo, anexe aqui o certificado do aluno — hoje, como um link do Drive. A Recreação não entra: não tem módulo pra certificar.</p>`;
+
+  if(turmas.length === 0){
+    return `${intro}<p class="section-eyebrow">Nenhuma turma disponível ainda.</p>`;
+  }
+
+  const turmaAtual = turmas.find(t => t.id === state.certTurmaId) || null;
+
+  const seletor = `<div class="teacher-class-list">${turmas.map(t => `
+    <button class="teacher-class-card ${turmaAtual && t.id === turmaAtual.id ? "active" : ""}" data-action="set-cert-turma" data-id="${t.id}">
+      <span>${escapeHtml(t.disciplina || "")}</span><strong>${escapeHtml(t.nome)}</strong><small>${escapeHtml(t.escola || "")} · ${escapeHtml(t.horario || "")}</small>
+    </button>`).join("")}</div>`;
+
+  if(!turmaAtual){
+    return `${intro}${seletor}`;
+  }
+
+  if(state.certCarregando && state.certListaTurmaId !== turmaAtual.id){
+    return `${intro}${seletor}<p class="section-eyebrow" style="margin-top:16px;">Carregando certificados desta turma…</p>`;
+  }
+
+  const certsDaTurma = state.certListaTurmaId === turmaAtual.id ? (state.certLista || []) : [];
+  const alunos = turmaAtual.alunos || [];
+  const linhasAlunos = alunos.length
+    ? alunos.map(alunoNome => certificadoAlunoRowHtml(alunoNome, certsDaTurma.filter(c => c.alunoNome === alunoNome))).join("")
+    : `<div style="padding:20px;font-size:14px;color:var(--slate);">Esta turma ainda não tem alunos.</div>`;
+
+  return `
+    ${intro}
+    ${seletor}
+    <div class="teacher-panel" style="margin-top:16px;">
+      <div class="teacher-panel-head"><div><h2>${escapeHtml(turmaAtual.nome)}</h2><p>${escapeHtml(turmaAtual.escola || "")} · ${escapeHtml(turmaAtual.disciplina || "")}</p></div></div>
+      ${state.certErro ? `<p class="teacher-error" style="color:var(--red,#C4544A);font-size:12.5px;margin-bottom:8px;">${escapeHtml(state.certErro)}</p>` : ""}
+      <div class="card flush">${linhasAlunos}</div>
+    </div>`;
+}
+
+/* Uma linha por aluno: os certificados já anexados (cada um vira um link
+   pro Drive) e, quando o formulário está aberto pra esse aluno, os campos
+   pra anexar mais um módulo. */
+function certificadoAlunoRowHtml(alunoNome, certs){
+  const formAberto = state.certFormAlunoNome === alunoNome;
+
+  const chips = certs.length
+    ? certs.map(c => `<span class="pill pill-green" style="margin:2px 6px 2px 0;"><a href="${escapeHtml(c.link)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">${ICONS.award} ${escapeHtml(c.modulo)}</a></span>`).join("")
+    : `<span style="font-size:12.5px;color:var(--slate);">Nenhum certificado anexado</span>`;
+
+  const excluirBtns = certs.length ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;">${certs.map(c => `
+    <button type="button" class="attendance-btn" data-action="excluir-certificado" data-id="${escapeHtml(c.id)}" ${state.certExcluindoId === c.id ? "disabled" : ""}>
+      ${state.certExcluindoId === c.id ? "Excluindo…" : (state.certExcluirConfirmId === c.id ? `Excluir "${escapeHtml(c.modulo)}"?` : `${ICONS.trash} Excluir "${escapeHtml(c.modulo)}"`)}
+    </button>`).join("")}</div>` : "";
+
+  const form = formAberto ? `
+    <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">
+      <div style="flex:1;min-width:140px;">
+        <label class="teacher-label" for="cert-form-modulo">Módulo</label>
+        <input id="cert-form-modulo" class="teacher-text-input" value="${escapeHtml(state.certFormModulo)}" placeholder="Ex.: Módulo 1" ${state.certSalvando ? "disabled" : ""} />
+      </div>
+      <div style="flex:2;min-width:220px;">
+        <label class="teacher-label" for="cert-form-link">Link do Drive</label>
+        <input id="cert-form-link" class="teacher-text-input" value="${escapeHtml(state.certFormLink)}" placeholder="https://drive.google.com/…" ${state.certSalvando ? "disabled" : ""} />
+      </div>
+      <button type="button" class="teacher-primary-btn" data-action="salvar-certificado" data-aluno="${escapeHtml(alunoNome)}" ${state.certSalvando ? "disabled" : ""}>${state.certSalvando ? "Salvando…" : "Salvar"}</button>
+      <button type="button" class="attendance-btn" data-action="cancelar-certificado-form" ${state.certSalvando ? "disabled" : ""}>Cancelar</button>
+    </div>
+    ${state.certFormErro ? `<p class="teacher-error" style="color:var(--red,#C4544A);font-size:12.5px;margin-top:6px;">${escapeHtml(state.certFormErro)}</p>` : ""}` : "";
+
+  return `
+    <div class="row" style="flex-direction:column;align-items:stretch;gap:6px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+        <strong style="font-size:14px;color:var(--ink);">${escapeHtml(alunoNome)}</strong>
+        <button type="button" class="attendance-btn" data-action="${formAberto ? "cancelar-certificado-form" : "abrir-certificado-form"}" data-aluno="${escapeHtml(alunoNome)}">${formAberto ? "Fechar" : "+ Certificado"}</button>
+      </div>
+      <div>${chips}</div>
+      ${excluirBtns}
+      ${form}
     </div>`;
 }
 
@@ -1704,6 +2313,7 @@ function renderInstituicao(){
   const school = state.data.escolas[state.escolaSelecionadaId];
   const navItems = [
     { key:"turmas", label:"Turmas", icon:"clipboard" },
+    { key:"calendario", label:"Calendário", icon:"calendar" },
     { key:"estatisticas", label:"Estatísticas", icon:"chart" },
     { key:"financeiro", label:"Financeiro", icon:"wallet" },
     { key:"alunos", label:"Alunos", icon:"users" },
@@ -1711,12 +2321,14 @@ function renderInstituicao(){
     { key:"professores", label:"Professores", icon:"users2" },
     { key:"responsaveis", label:"Responsáveis", icon:"users2" },
     { key:"contratos", label:"Contratos", icon:"fileText" },
+    { key:"certificados", label:"Certificados", icon:"award" },
     { key:"gestao", label:"Gestão", icon:"building" },
     { key:"perfil", label:"Meu perfil", icon:"user" },
   ];
 
   let body = "";
   if(state.instTab === "turmas") body = turmasView(school);
+  else if(state.instTab === "calendario") body = calendarioInstituicaoView(school);
   else if(state.instTab === "estatisticas") body = estatisticasView(school);
   else if(state.instTab === "financeiro") body = financeiroInstituicaoView(school);
   else if(state.instTab === "alunos") body = alunosView(school);
@@ -1724,6 +2336,7 @@ function renderInstituicao(){
   else if(state.instTab === "professores") body = professoresView(school);
   else if(state.instTab === "responsaveis") body = responsaveisView(school);
   else if(state.instTab === "contratos") body = contratosView(school);
+  else if(state.instTab === "certificados") body = certificadosGestaoView(state.instTurmas || []);
   else if(state.instTab === "gestao") body = gestaoInstituicaoView(school);
   else if(state.instTab === "perfil") body = perfilInstituicaoView(school);
 
@@ -2918,6 +3531,128 @@ async function carregarRegistroDoDia(turma){
 }
 
 
+/* Busca em "atividades" TODAS as atividades já lançadas pra essa turma
+   (as duas etapas juntas) — filtramos o bimestre no cliente pra não
+   depender de índice composto no Firestore, do mesmo jeito que outras
+   consultas do app preferem trazer um pouco mais de dado a exigir um
+   índice extra (ver comentário de carregarEquipeDaEscola). */
+async function carregarAtividadesDaTurma(turma){
+  state.professorAtividadesCarregando = true;
+  state.professorAtividadesErro = "";
+  render();
+  try {
+    const snap = await getDocs(query(collection(db, "atividades"), where("turmaId", "==", turma.id)));
+    state.professorAtividadesTodas = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  } catch(err){
+    state.professorAtividadesTodas = [];
+    state.professorAtividadesErro = "Não foi possível carregar as notas já lançadas para esta turma. Tente selecioná-la de novo.";
+  } finally {
+    state.professorAtividadesCarregando = false;
+    render();
+  }
+}
+
+/* Salva (ou corrige, se atividadeIdExistente vier preenchido) uma
+   atividade e as notas da turma toda pra ela. Grava o documento
+   "mestre" em "atividades" e, junto, uma cópia por aluno em
+   "notasAluno" — é essa cópia que o boletim (aluno/responsável) lê,
+   igual o padrão já usado pra presença (ver sincronizarCalendarioDaChamada).
+   Quem ficou sem nota (campo em branco) não entra no documento mestre e
+   tem a cópia em "notasAluno" apagada, caso já existisse de uma edição
+   anterior. */
+async function salvarAtividade(turma, bimestre, nome, notasPorAluno, atividadeIdExistente){
+  const atividadeId = atividadeIdExistente || doc(collection(db, "atividades")).id;
+  const agora = new Date().toISOString();
+  const dataAtividade = dataDeHojeISO();
+
+  await setDoc(doc(db, "atividades", atividadeId), {
+    turmaId: turma.id,
+    turmaNome: turma.nome || "",
+    professorId: state.authUser.uid,
+    professorNome: state.data.professorNome || "",
+    escolaId: turma.escolaId,
+    disciplina: turma.disciplina,
+    bimestre,
+    nome,
+    data: dataAtividade,
+    notas: notasPorAluno,
+    atualizadoEm: agora,
+  });
+
+  const nomes = turma.alunos || [];
+  for(let i = 0; i < nomes.length; i += 400){   // um lote do Firestore aceita até 500 gravações
+    const lote = writeBatch(db);
+    nomes.slice(i, i + 400).forEach((aluno, j) => {
+      const ref = doc(db, "notasAluno", `${atividadeId}_${slugNome(aluno, `aluno${i + j}`)}`);
+      const nota = notasPorAluno[aluno];
+      if(nota === undefined){
+        lote.delete(ref);   // sem nota pra esse aluno (ou foi apagada numa correção) — some do boletim dele
+        return;
+      }
+      lote.set(ref, {
+        alunoKey: chaveAluno(turma.escolaId, aluno),
+        alunoNome: aluno,
+        escolaId: turma.escolaId,
+        turmaId: turma.id,
+        turmaNome: turma.nome || "",
+        disciplina: turma.disciplina,
+        bimestre,
+        atividadeId,
+        atividadeNome: nome,
+        nota,
+        professorId: state.authUser.uid,
+        professorNome: state.data.professorNome || "",
+        atualizadoEm: agora,
+      });
+    });
+    await lote.commit();
+  }
+
+  return { id: atividadeId, turmaId: turma.id, bimestre, nome, data: dataAtividade, notas: notasPorAluno, atualizadoEm: agora };
+}
+
+/* Apaga uma atividade e a cópia de cada aluno em "notasAluno". */
+async function excluirAtividade(turma, atividadeId){
+  await deleteDoc(doc(db, "atividades", atividadeId));
+  const nomes = turma.alunos || [];
+  for(let i = 0; i < nomes.length; i += 400){
+    const lote = writeBatch(db);
+    nomes.slice(i, i + 400).forEach((aluno, j) => {
+      lote.delete(doc(db, "notasAluno", `${atividadeId}_${slugNome(aluno, `aluno${i + j}`)}`));
+    });
+    await lote.commit();
+  }
+}
+
+/* Painel "Médias da turma", na aba do professor: para cada aluno, a
+   média de cada bimestre e a média final (as duas etapas juntas),
+   calculadas em cima de todas as atividades já lançadas na turma. */
+function professorResumoMediasHtml(turma, atividades){
+  if(!atividades.length) return "";
+  const bim1 = atividades.filter(a => Number(a.bimestre) === 1);
+  const bim2 = atividades.filter(a => Number(a.bimestre) === 2);
+  const fmt = v => v === null ? "—" : v.toFixed(1);
+  const cor = v => v === null ? "var(--slate)" : (v >= 7 ? "var(--green)" : "var(--red)");
+  const linhas = (turma.alunos || []).map(aluno => {
+    const m1 = mediaDeNotas(bim1.map(a => a.notas ? a.notas[aluno] : undefined));
+    const m2 = mediaDeNotas(bim2.map(a => a.notas ? a.notas[aluno] : undefined));
+    const final = (m1 !== null && m2 !== null) ? (m1 + m2) / 2 : null;
+    return `
+      <div class="row">
+        <span style="font-size:14px;color:var(--ink);font-weight:500;">${escapeHtml(aluno)}</span>
+        <span style="display:flex;gap:16px;font-size:13px;">
+          <span style="color:${cor(m1)};">1º: <strong>${fmt(m1)}</strong></span>
+          <span style="color:${cor(m2)};">2º: <strong>${fmt(m2)}</strong></span>
+          <span style="color:${cor(final)};">Final: <strong>${fmt(final)}</strong></span>
+        </span>
+      </div>`;
+  }).join("");
+  return `
+    <h3 style="margin-top:28px;">Médias da turma</h3>
+    <p class="section-eyebrow">Calculadas em cima de todas as atividades já lançadas nas duas etapas.</p>
+    <div class="card flush">${linhas}</div>`;
+}
+
 async function carregarResponsaveisDoAluno(alunoId){
   state.alunoRespCarregando = true;
   render();
@@ -3986,6 +4721,11 @@ function bindEvents(){
       if(state.cal.form) state.cal.form[t.dataset.evCampo] = t.value;
       return;
     }
+    // Formulário de novo item do calendário da secretaria: mesma lógica.
+    if(t.dataset && t.dataset.eviCampo){
+      if(state.cal.formInst) state.cal.formInst[t.dataset.eviCampo] = t.value;
+      return;
+    }
     if(t.id === "alunos-busca"){
       const cursor = t.selectionStart;
       state.alunosBusca = t.value;
@@ -4013,6 +4753,10 @@ function bindEvents(){
     }
     if(t.id === "lesson-observacao"){
       state.professorConteudoObservacao = t.value;
+      return;
+    }
+    if(t.id === "activity-name"){
+      state.professorAtividadeNome = t.value;
       return;
     }
     if(t.id === "novo-conteudo-chamada"){
@@ -4048,6 +4792,8 @@ function bindEvents(){
     if(t.id === "nova-turma-nome"){ state.novaTurmaNome = t.value; return; }
     if(t.id === "nova-turma-horario"){ state.novaTurmaHorario = t.value; return; }
     if(t.id === "nova-turma-sala"){ state.novaTurmaSala = t.value; return; }
+    if(t.id === "cert-form-modulo"){ state.certFormModulo = t.value; return; }
+    if(t.id === "cert-form-link"){ state.certFormLink = t.value; return; }
   });
 
   app.addEventListener("change", async (e) => {
@@ -4062,6 +4808,12 @@ function bindEvents(){
         f.alunoNome = "";
         render();
       }
+      return;
+    }
+    if(t.dataset && t.dataset.eviCampo){
+      const f = state.cal.formInst;
+      if(!f) return;
+      f[t.dataset.eviCampo] = t.value;
       return;
     }
     if(t.id === "aniversario-mes"){
@@ -4309,21 +5061,28 @@ function bindEvents(){
         state.cal.diaAberto = null;
         render();
         if(state.alunoTab === "calendario") carregarCalendarioDoAluno(state.data.aluno);
+        else if(state.alunoTab === "notas") carregarBoletimDoAluno(state.data.aluno);
+        else if(state.alunoTab === "certificados") carregarCertificadosDoAluno(state.data.aluno);
         break;
       case "set-familia-tab":
         state.familiaTab = el.dataset.key;
         state.cal.diaAberto = null;
         render();
         if(state.familiaTab === "calendario") carregarCalendarioDoAluno(calAlunoAtual());
+        else if(state.familiaTab === "notas") carregarBoletimDoAluno(calAlunoAtual());
+        else if(state.familiaTab === "certificados") carregarCertificadosDoAluno(calAlunoAtual());
         break;
       case "switch-student":
         state.familiaStudentId = el.dataset.id;
         state.cal.diaAberto = null;
         render();
         if(state.familiaTab === "calendario") carregarCalendarioDoAluno(calAlunoAtual());
+        else if(state.familiaTab === "notas") carregarBoletimDoAluno(calAlunoAtual());
+        else if(state.familiaTab === "certificados") carregarCertificadosDoAluno(calAlunoAtual());
         break;
       case "set-inst-tab":
         state.instTab = el.dataset.key;
+        state.cal.diaAberto = null;
         render();
         if(state.instTab === "turmas" && state.escolaSelecionadaId
           && (state.instTurmas === null || state.instTurmasEscolaId !== state.escolaSelecionadaId)
@@ -4342,6 +5101,17 @@ function bindEvents(){
           && (state.instAlunos === null || state.instAlunosEscolaId !== state.escolaSelecionadaId)
           && !state.instAlunosCarregando){
           carregarAlunosDaInstituicao(state.escolaSelecionadaId);
+        }
+        if(state.instTab === "certificados" && state.escolaSelecionadaId
+          && (state.instTurmas === null || state.instTurmasEscolaId !== state.escolaSelecionadaId)
+          && !state.instTurmasCarregando){
+          carregarTurmasDaInstituicao(state.escolaSelecionadaId);
+        }
+        if(state.instTab === "calendario" && state.escolaSelecionadaId){
+          carregarEventosDaInstituicao(state.escolaSelecionadaId);
+          // precisa da lista de alunos e professores da unidade pra saber
+          // quem marcar como destinatário quando a secretaria salvar um item
+          garantirPessoasDaUnidade();
         }
         if(state.instTab === "gestao" && state.gestaoSubTab === "acessos"){
           garantirPessoasDaUnidade();
@@ -4383,6 +5153,90 @@ function bindEvents(){
       case "whatsapp-suporte":
         window.open(whatsappLink(SUPORTE_TECNICO.whatsapp), "_blank", "noopener");
         break;
+
+      /* ---- Certificados (lado de quem anexa: secretaria/professor) ---- */
+      case "set-cert-turma": {
+        state.certTurmaId = el.dataset.id;
+        state.certFormAlunoNome = null;
+        state.certFormModulo = "";
+        state.certFormLink = "";
+        state.certFormErro = "";
+        state.certExcluirConfirmId = null;
+        render();
+        const turmasCert = state.screen === "instituicao" ? (state.instTurmas || []) : (state.data.professorTurmas || []);
+        const turmaCert = turmasCert.find(t => t.id === state.certTurmaId);
+        if(turmaCert) carregarCertificadosDaTurma(turmaCert);
+        break;
+      }
+      case "abrir-certificado-form":
+        state.certFormAlunoNome = el.dataset.aluno;
+        state.certFormModulo = "";
+        state.certFormLink = "";
+        state.certFormErro = "";
+        render();
+        break;
+      case "cancelar-certificado-form":
+        state.certFormAlunoNome = null;
+        state.certFormModulo = "";
+        state.certFormLink = "";
+        state.certFormErro = "";
+        render();
+        break;
+      case "salvar-certificado": {
+        const alunoNomeCert = el.dataset.aluno;
+        const moduloCert = (state.certFormModulo || "").trim();
+        const linkCert = (state.certFormLink || "").trim();
+        if(!moduloCert){
+          state.certFormErro = "Informe o módulo.";
+          render();
+          break;
+        }
+        if(!/^https?:\/\//i.test(linkCert)){
+          state.certFormErro = "Cole o link do Drive (começando com http:// ou https://).";
+          render();
+          break;
+        }
+        const turmasCertSalvar = state.screen === "instituicao" ? (state.instTurmas || []) : (state.data.professorTurmas || []);
+        const turmaCertSalvar = turmasCertSalvar.find(t => t.id === state.certTurmaId);
+        if(!turmaCertSalvar) break;
+        state.certFormErro = "";
+        state.certSalvando = true;
+        render();
+        try {
+          const salvo = await salvarCertificado(turmaCertSalvar, alunoNomeCert, moduloCert, linkCert);
+          state.certLista = [...(state.certLista || []).filter(c => c.id !== salvo.id), salvo];
+          state.certFormAlunoNome = null;
+          state.certFormModulo = "";
+          state.certFormLink = "";
+        } catch(err){
+          state.certFormErro = "Não foi possível salvar o certificado. Tente de novo.";
+        } finally {
+          state.certSalvando = false;
+          render();
+        }
+        break;
+      }
+      case "excluir-certificado": {
+        const certId = el.dataset.id;
+        if(state.certExcluirConfirmId !== certId){
+          state.certExcluirConfirmId = certId;
+          render();
+          break;
+        }
+        state.certExcluirConfirmId = null;
+        state.certExcluindoId = certId;
+        render();
+        try {
+          await excluirCertificado(certId);
+          state.certLista = (state.certLista || []).filter(c => c.id !== certId);
+        } catch(err){
+          state.certErro = "Não foi possível excluir o certificado. Tente de novo.";
+        } finally {
+          state.certExcluindoId = null;
+          render();
+        }
+        break;
+      }
       case "set-professor-tab":
         state.professorTab = el.dataset.key;
         state.cal.diaAberto = null;
@@ -4392,8 +5246,12 @@ function bindEvents(){
       case "set-professor-class": {
         state.professorTurmaId = el.dataset.id;
         state.professorNotasSalvas = false;
+        state.professorNotasErro = "";
+        state.professorAtividadeEditandoId = null;
+        state.professorAtividadeNome = "";
+        state.professorAtividadeExcluirConfirmId = null;
         const turma = professorTurmaAtual();
-        if(turma) await carregarRegistroDoDia(turma);
+        if(turma) await Promise.all([carregarRegistroDoDia(turma), carregarAtividadesDaTurma(turma)]);
         else render();
         break;
       }
@@ -4522,9 +5380,120 @@ function bindEvents(){
         }
         break;
       }
-      case "save-grades":
-        state.professorNotasSalvas = true; render();
+      case "save-grades": {
+        const turma = professorTurmaAtual();
+        if(!turma) break;
+        const bimestre = state.professorAvaliacaoBimestre === 2 ? 2 : 1;
+        const nomeAtividade = (state.professorAtividadeNome || "").trim();
+        if(!nomeAtividade){
+          state.professorNotasErro = "Digite o nome da atividade ou avaliação antes de salvar.";
+          render();
+          break;
+        }
+        const notasPorAluno = {};
+        let algumaNota = false;
+        turma.alunos.forEach(aluno => {
+          const valor = state.professorNotas[`${turma.id}-${aluno}`];
+          if(valor !== undefined && String(valor).trim() !== ""){
+            const num = Number(valor);
+            if(!isNaN(num)){ notasPorAluno[aluno] = num; algumaNota = true; }
+          }
+        });
+        if(!algumaNota){
+          state.professorNotasErro = "Lance a nota de pelo menos um aluno antes de salvar.";
+          render();
+          break;
+        }
+        state.professorNotasErro = "";
+        state.professorNotasSalvando = true;
+        state.professorNotasSalvas = false;
+        render();
+        try {
+          const atividadeSalva = await salvarAtividade(turma, bimestre, nomeAtividade, notasPorAluno, state.professorAtividadeEditandoId);
+          const idx = (state.professorAtividadesTodas || []).findIndex(a => a.id === atividadeSalva.id);
+          if(idx >= 0) state.professorAtividadesTodas[idx] = atividadeSalva;
+          else state.professorAtividadesTodas.push(atividadeSalva);
+          state.professorAtividadeEditandoId = null;
+          state.professorAtividadeNome = "";
+          turma.alunos.forEach(aluno => { delete state.professorNotas[`${turma.id}-${aluno}`]; });
+          state.professorNotasSalvas = true;
+        } catch(err){
+          state.professorNotasErro = `Não foi possível salvar as notas agora${err?.code ? ` (${err.code})` : ""}. Tente de novo.`;
+        } finally {
+          state.professorNotasSalvando = false;
+          render();
+        }
         break;
+      }
+
+      case "set-bimestre": {
+        const turma = professorTurmaAtual();
+        state.professorAvaliacaoBimestre = Number(el.dataset.bimestre) === 2 ? 2 : 1;
+        state.professorAtividadeEditandoId = null;
+        state.professorAtividadeNome = "";
+        state.professorNotasSalvas = false;
+        state.professorNotasErro = "";
+        state.professorAtividadeExcluirConfirmId = null;
+        if(turma) turma.alunos.forEach(aluno => { delete state.professorNotas[`${turma.id}-${aluno}`]; });
+        render();
+        break;
+      }
+
+      case "editar-atividade": {
+        const turma = professorTurmaAtual();
+        const atividade = (state.professorAtividadesTodas || []).find(a => a.id === el.dataset.id);
+        if(!turma || !atividade) break;
+        state.professorAtividadeEditandoId = atividade.id;
+        state.professorAtividadeNome = atividade.nome || "";
+        state.professorNotasSalvas = false;
+        state.professorNotasErro = "";
+        turma.alunos.forEach(aluno => {
+          const nota = atividade.notas ? atividade.notas[aluno] : undefined;
+          state.professorNotas[`${turma.id}-${aluno}`] = (nota === undefined || nota === null) ? "" : String(nota);
+        });
+        render();
+        break;
+      }
+
+      case "cancelar-edicao-atividade": {
+        const turma = professorTurmaAtual();
+        state.professorAtividadeEditandoId = null;
+        state.professorAtividadeNome = "";
+        state.professorNotasSalvas = false;
+        state.professorNotasErro = "";
+        if(turma) turma.alunos.forEach(aluno => { delete state.professorNotas[`${turma.id}-${aluno}`]; });
+        render();
+        break;
+      }
+
+      case "excluir-atividade": {
+        const turma = professorTurmaAtual();
+        const id = el.dataset.id;
+        if(!turma || !id) break;
+        if(state.professorAtividadeExcluirConfirmId !== id){   // 1º toque só pede confirmação
+          state.professorAtividadeExcluirConfirmId = id;
+          render();
+          break;
+        }
+        state.professorAtividadeExcluindoId = id;
+        render();
+        try {
+          await excluirAtividade(turma, id);
+          state.professorAtividadesTodas = (state.professorAtividadesTodas || []).filter(a => a.id !== id);
+          if(state.professorAtividadeEditandoId === id){
+            state.professorAtividadeEditandoId = null;
+            state.professorAtividadeNome = "";
+            turma.alunos.forEach(aluno => { delete state.professorNotas[`${turma.id}-${aluno}`]; });
+          }
+        } catch(err){
+          state.professorAtividadesErro = `Não foi possível excluir a atividade agora${err?.code ? ` (${err.code})` : ""}. Tente de novo.`;
+        } finally {
+          state.professorAtividadeExcluirConfirmId = null;
+          state.professorAtividadeExcluindoId = null;
+          render();
+        }
+        break;
+      }
 
       case "toggle-vinculo-aluno": {
         const id = el.dataset.id;
@@ -5740,6 +6709,7 @@ function bindEvents(){
         break;
       case "cal-atualizar":
         if(state.screen === "professor") carregarEventosDoProfessor(true);
+        else if(state.screen === "instituicao") carregarEventosDaInstituicao(state.escolaSelecionadaId, true);
         else carregarCalendarioDoAluno(calAlunoAtual(), true);
         break;
 
@@ -5847,6 +6817,233 @@ function bindEvents(){
         } finally {
           cal.excluirConfirmId = null;
           cal.excluindoId = null;
+          render();
+        }
+        break;
+      }
+
+      /* ---------------- Calendário da secretaria ---------------- */
+      case "calinst-novo-evento": {
+        state.cal.formInst = {
+          tipo: "sem_aula", titulo: "", descricao: "",
+          data: el.dataset.dia || hojeISO(),
+          cursosTodos: true, cursosSelecionados: [],
+          salvando: false, erro: "",
+        };
+        state.cal.diaAberto = null;
+        render();
+        break;
+      }
+      case "calinst-fechar-form":
+        state.cal.formInst = null;
+        render();
+        break;
+
+      case "calinst-toggle-todos-cursos": {
+        const f = state.cal.formInst;
+        if(!f) break;
+        f.cursosTodos = !f.cursosTodos;
+        // ao desmarcar "todos", parte de tudo marcado — a pessoa desmarca
+        // só as exceções (ex.: tirar a Recreação de um feriado).
+        if(!f.cursosTodos) f.cursosSelecionados = cursosDaEscola(state.data.escolas[state.escolaSelecionadaId]?.nome || "").slice();
+        render();
+        break;
+      }
+      case "calinst-toggle-curso": {
+        const f = state.cal.formInst;
+        const curso = el.dataset.curso;
+        if(!f || !curso) break;
+        f.cursosSelecionados = f.cursosSelecionados.includes(curso)
+          ? f.cursosSelecionados.filter(c => c !== curso)
+          : [...f.cursosSelecionados, curso];
+        render();
+        break;
+      }
+
+      case "calinst-salvar-evento": {
+        const cal = state.cal;
+        const f = cal.formInst;
+        if(!f || f.salvando) break;
+        const titulo = (f.titulo || "").trim();
+        const escolaId = state.escolaSelecionadaId;
+
+        const cursos = f.cursosTodos ? null : f.cursosSelecionados;
+
+        let erro = "";
+        if(!titulo) erro = "Digite o título.";
+        else if(!dataValida(f.data)) erro = "Escolha uma data válida.";
+        else if(!escolaId) erro = "Selecione a unidade primeiro.";
+        else if(cursos && cursos.length === 0) erro = "Selecione ao menos um curso, ou marque \"Todos os cursos\".";
+        if(erro){ f.erro = erro; render(); break; }
+
+        f.erro = "";
+        f.salvando = true;
+        render();
+        try {
+          const dados = {
+            escopo: "escola",
+            tipo: Object.keys(TIPOS_INSTITUICAO).includes(f.tipo) ? f.tipo : "aviso",
+            titulo,
+            descricao: (f.descricao || "").trim(),
+            data: f.data,
+            escolaId,
+            cursos,
+            destinatarios: destinatariosDaEscola(escolaId, cursos),
+            destinatariosProfessores: destinatariosProfessoresDaEscola(cursos),
+            criadoPorId: state.authUser.uid,
+            criadoPorNome: (state.perfil?.nome || "").trim() || "Secretaria",
+            criadoEm: new Date().toISOString(),
+          };
+          const ref = doc(collection(db, "eventosCalendario"));
+          await setDoc(ref, dados);
+          const cache = cal.inst.cache[escolaId] || (cal.inst.cache[escolaId] = { eventos: [], carregando: false, erro: "", carregadoEm: Date.now() });
+          cache.eventos.push({ id: ref.id, ...dados });
+          // leva o calendário pro mês do item e abre o dia, pra a secretaria ver onde caiu
+          const [ano, mes] = dados.data.split("-").map(Number);
+          cal.ano = ano;
+          cal.mes = mes - 1;
+          cal.diaAberto = dados.data;
+          cal.formInst = null;
+        } catch(err){
+          f.erro = `Não foi possível salvar agora${err?.code ? ` (${err.code})` : ""}. Tente de novo.`;
+          f.salvando = false;
+          console.error("Erro ao salvar item do calendário da secretaria:", err?.code, err);
+        } finally {
+          render();
+        }
+        break;
+      }
+
+      case "calinst-excluir-evento": {
+        const cal = state.cal;
+        const id = el.dataset.id;
+        const escolaId = state.escolaSelecionadaId;
+        const cache = cal.inst.cache[escolaId];
+        if(cal.excluirConfirmId !== id){   // 1º toque só pede confirmação
+          cal.excluirConfirmId = id;
+          render();
+          break;
+        }
+        cal.excluindoId = id;
+        render();
+        try {
+          await deleteDoc(doc(db, "eventosCalendario", id));
+          if(cache) cache.eventos = cache.eventos.filter(e => e.id !== id);
+        } catch(err){
+          if(cache) cache.erro = `Não foi possível excluir agora${err?.code ? ` (${err.code})` : ""}.`;
+          cal.diaAberto = null;
+        } finally {
+          cal.excluirConfirmId = null;
+          cal.excluindoId = null;
+          render();
+        }
+        break;
+      }
+
+      /* ---------------- Importar calendário da SEED ---------------- */
+      case "calseed-abrir":
+        state.cal.seed = {
+          itens: CALENDARIO_SEED_PR_2026
+            .slice()
+            .sort((a, b) => a.data.localeCompare(b.data))
+            .map(it => ({ ...it, incluir: true })),
+          cursosTodos: true, cursosSelecionados: [],
+          enviando: false,
+          erro: "",
+        };
+        render();
+        break;
+      case "calseed-fechar":
+        state.cal.seed = null;
+        render();
+        break;
+      case "calseed-marcar-todos":
+        if(state.cal.seed) state.cal.seed.itens.forEach(i => { i.incluir = true; });
+        render();
+        break;
+      case "calseed-desmarcar-todos":
+        if(state.cal.seed) state.cal.seed.itens.forEach(i => { i.incluir = false; });
+        render();
+        break;
+      case "calseed-toggle": {
+        const idx = Number(el.dataset.idx);
+        const item = state.cal.seed && state.cal.seed.itens[idx];
+        if(item) item.incluir = !item.incluir;
+        render();
+        break;
+      }
+      case "calseed-toggle-todos-cursos": {
+        const seed = state.cal.seed;
+        if(!seed) break;
+        seed.cursosTodos = !seed.cursosTodos;
+        if(!seed.cursosTodos) seed.cursosSelecionados = cursosDaEscola(state.data.escolas[state.escolaSelecionadaId]?.nome || "").slice();
+        render();
+        break;
+      }
+      case "calseed-toggle-curso": {
+        const seed = state.cal.seed;
+        const curso = el.dataset.curso;
+        if(!seed || !curso) break;
+        seed.cursosSelecionados = seed.cursosSelecionados.includes(curso)
+          ? seed.cursosSelecionados.filter(c => c !== curso)
+          : [...seed.cursosSelecionados, curso];
+        render();
+        break;
+      }
+      case "calseed-confirmar": {
+        const seed = state.cal.seed;
+        if(!seed || seed.enviando) break;
+        const selecionados = seed.itens.filter(i => i.incluir);
+        const escolaId = state.escolaSelecionadaId;
+        if(!escolaId){ seed.erro = "Selecione a unidade primeiro."; render(); break; }
+        if(selecionados.length === 0){ seed.erro = "Selecione ao menos um item pra importar."; render(); break; }
+
+        const cursos = seed.cursosTodos ? null : seed.cursosSelecionados;
+        if(cursos && cursos.length === 0){ seed.erro = "Selecione ao menos um curso, ou marque \"Todos os cursos\"."; render(); break; }
+
+        seed.erro = "";
+        seed.enviando = true;
+        render();
+        try {
+          // Mesmo público (cursos) pra todos os itens deste lote — dá pra
+          // ajustar item a item depois, criando de novo pela tela se precisar.
+          const destinatarios = destinatariosDaEscola(escolaId, cursos);
+          const destinatariosProfessores = destinatariosProfessoresDaEscola(cursos);
+          const criadoEm = new Date().toISOString();
+          const criadoPorNome = (state.perfil?.nome || "").trim() || "Secretaria";
+
+          const batch = writeBatch(db);
+          const novos = [];
+          selecionados.forEach(item => {
+            const ref = doc(collection(db, "eventosCalendario"));
+            const dados = {
+              escopo: "escola",
+              tipo: Object.keys(TIPOS_INSTITUICAO).includes(item.tipo) ? item.tipo : "aviso",
+              titulo: item.titulo,
+              descricao: item.descricao || "",
+              data: item.data,
+              escolaId,
+              cursos,
+              destinatarios,
+              destinatariosProfessores,
+              criadoPorId: state.authUser.uid,
+              criadoPorNome,
+              criadoEm,
+              origemSeed: true,
+            };
+            batch.set(ref, dados);
+            novos.push({ id: ref.id, ...dados });
+          });
+          await batch.commit();
+
+          const cache = state.cal.inst.cache[escolaId] || (state.cal.inst.cache[escolaId] = { eventos: [], carregando: false, erro: "", carregadoEm: Date.now() });
+          cache.eventos.push(...novos);
+          state.cal.seed = null;
+        } catch(err){
+          seed.erro = `Não foi possível importar agora${err?.code ? ` (${err.code})` : ""}. Tente de novo.`;
+          seed.enviando = false;
+          console.error("Erro ao importar calendário da SEED:", err?.code, err);
+        } finally {
           render();
         }
         break;

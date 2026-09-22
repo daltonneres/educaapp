@@ -37,8 +37,46 @@ const ROTULO_PARA_QUEM = {
 };
 const ISO_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
+/* Itens do calendário lançados pela SECRETARIA (escopo "escola"): valem pra
+   toda a unidade — alunos, responsáveis e professores — ao contrário dos
+   avisos do professor, que só valem pra turma/aluno escolhido. */
+export const TIPOS_INSTITUICAO = {
+  sem_aula:  { rotulo: "Sem aula",             classe: "semaula"   },
+  prova:     { rotulo: "Prova",                classe: "prova"     },
+  atividade: { rotulo: "Atividade diferente",  classe: "atividade" },
+  aviso:     { rotulo: "Aviso da secretaria",  classe: "aviso"     },
+  outro:     { rotulo: "Outro",                classe: "outro"     },
+};
+const PRIORIDADE_INST = { sem_aula: 4, prova: 3, atividade: 2, aviso: 1, outro: 1 };
+
 function esc(value){
   return String(value == null ? "" : value).replace(/[&<>"]/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[char]);
+}
+
+/* ---------------- seletor "Aplica-se a" (cursos) ---------------- */
+/* Usado tanto no item manual da secretaria quanto na importação da SEED.
+   Escolas com um curso só (ou nenhum curso configurado) nem mostram o
+   seletor — não tem o que escolher. "todos" true = comportamento antigo
+   (vale pra escola inteira); false = só os cursos marcados em
+   "selecionados" (a pessoa parte de todos marcados e desmarca as
+   exceções, tipo a Recreação num feriado). */
+function cursosPickerHtml({ prefixo, cursos, todos, selecionados }){
+  if(!Array.isArray(cursos) || cursos.length <= 1) return "";
+  return `
+    <label class="teacher-label">Aplica-se a</label>
+    <label class="cal-curso-check">
+      <input type="checkbox" data-action="${prefixo}-toggle-todos-cursos" ${todos ? "checked" : ""} />
+      Todos os cursos
+    </label>
+    ${!todos ? `
+    <div class="cal-curso-lista">
+      ${cursos.map(c => `
+        <label class="cal-curso-check">
+          <input type="checkbox" data-action="${prefixo}-toggle-curso" data-curso="${esc(c)}" ${(selecionados || []).includes(c) ? "checked" : ""} />
+          ${esc(c)}
+        </label>`).join("")}
+    </div>
+    <p class="section-eyebrow" style="margin:2px 0 0;">Desmarque os cursos que não devem ver isto — por exemplo, a Recreação num dia em que os outros cursos ficam sem aula.</p>` : ""}`;
 }
 
 /* ---------------- nomes / chaves ---------------- */
@@ -107,7 +145,7 @@ export function gradeDoMes(ano, mes){
 export function montarDias({ presencas = [], eventos = [], papel }){
   const dias = {};
   const dia = (iso) => {
-    if(!dias[iso]) dias[iso] = { presencas: [], eventos: [], observacoes: [], status: "" };
+    if(!dias[iso]) dias[iso] = { presencas: [], eventos: [], institucional: [], institucionalTipo: "", observacoes: [], status: "" };
     return dias[iso];
   };
 
@@ -121,6 +159,14 @@ export function montarDias({ presencas = [], eventos = [], papel }){
 
   eventos.forEach(e => {
     if(!ISO_REGEX.test(e.data || "")) return;
+    // Item da secretaria (escopo "escola"): vale pra todo mundo, sem o
+    // filtro de "paraQuem" que só se aplica aos avisos do professor.
+    if(e.escopo === "escola"){
+      const d = dia(e.data);
+      d.institucional.push(e);
+      if((PRIORIDADE_INST[e.tipo] || 0) > (PRIORIDADE_INST[d.institucionalTipo] || 0)) d.institucionalTipo = e.tipo;
+      return;
+    }
     if(papel === "aluno" && e.paraQuem === "responsaveis") return;
     if(papel === "responsavel" && e.paraQuem === "alunos") return;
     dia(e.data).eventos.push(e);
@@ -130,6 +176,7 @@ export function montarDias({ presencas = [], eventos = [], papel }){
     dias[iso].presencas.sort((a, b) => String(a.disciplina || "").localeCompare(String(b.disciplina || ""), "pt-BR"));
     dias[iso].observacoes.sort((a, b) => String(a.disciplina || "").localeCompare(String(b.disciplina || ""), "pt-BR"));
     dias[iso].eventos.sort((a, b) => String(a.criadoEm || "").localeCompare(String(b.criadoEm || "")));
+    dias[iso].institucional.sort((a, b) => String(a.criadoEm || "").localeCompare(String(b.criadoEm || "")));
   });
   return dias;
 }
@@ -144,28 +191,57 @@ const SVG_LIXEIRA = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none"
 
 /* ---------------- célula de um dia ---------------- */
 function celulaHtml(iso, dia, ehHoje, podeCriar){
-  const d = dia || { presencas: [], eventos: [], observacoes: [], status: "" };
-  const temItens = d.presencas.length + d.eventos.length > 0;
+  const d = dia || { presencas: [], eventos: [], institucional: [], institucionalTipo: "", observacoes: [], status: "" };
+  const temItens = d.presencas.length + d.eventos.length + d.institucional.length > 0;
   const clicavel = temItens || podeCriar;
 
+  const classeInst = TIPOS_INSTITUICAO[d.institucionalTipo]?.classe || "";
   const classes = ["cal-dia"];
   if(d.status) classes.push(`cal-${d.status}`);
+  if(classeInst) classes.push(`cal-inst-dia cal-inst-${classeInst}`);
   if(ehHoje) classes.push("cal-hoje");
 
   const numero = Number(iso.slice(8));
   const partes = [`${numero} de ${MESES[Number(iso.slice(5, 7)) - 1].toLowerCase()}`];
   if(ehHoje) partes.push("hoje");
   if(d.status) partes.push(ROTULO_STATUS[d.status]);
+  if(d.institucional.length) partes.push(d.institucional.map(e => TIPOS_INSTITUICAO[e.tipo]?.rotulo || "Aviso da secretaria").join(", "));
   if(d.eventos.length) partes.push(`${d.eventos.length} ${d.eventos.length === 1 ? "aviso" : "avisos"}`);
   if(d.observacoes.length) partes.push("com observação do professor");
 
+  const pontosInst = Math.min(d.institucional.length, 3);
+  const marcasInst = pontosInst ? `<span class="cal-dia-marcas">${`<i class="cal-inst-ponto cal-inst-${classeInst || "outro"}"></i>`.repeat(pontosInst)}</span>` : "";
   const pontos = Math.min(d.eventos.length, 3);
   const marcas = pontos ? `<span class="cal-dia-marcas">${"<i class=\"cal-ponto\"></i>".repeat(pontos)}</span>` : "";
   const alerta = d.observacoes.length ? `<span class="cal-alerta" title="Observação do professor">${SVG_ALERTA}</span>` : "";
 
   return `<button type="button" class="${classes.join(" ")}" ${clicavel ? `data-action="cal-abrir-dia" data-dia="${iso}"` : "disabled"} aria-label="${esc(partes.join(", "))}">
-      <span class="cal-dia-num">${numero}</span>${marcas}${alerta}
+      <span class="cal-dia-num">${numero}</span>${marcasInst}${marcas}${alerta}
     </button>`;
+}
+
+/* ---------------- card de um item do calendário da secretaria ---------------- */
+function eventoInstitucionalCardHtml(e, papel, { excluirConfirmId, excluindoId }){
+  const info = TIPOS_INSTITUICAO[e.tipo] || TIPOS_INSTITUICAO.outro;
+  let acoes = "";
+  if(papel === "instituicao"){
+    acoes = excluirConfirmId === e.id
+      ? `<div class="cal-evento-acoes">
+          <button type="button" class="btn-danger" data-action="calinst-excluir-evento" data-id="${esc(e.id)}" ${excluindoId === e.id ? "disabled" : ""}>${excluindoId === e.id ? "Excluindo…" : "Confirmar exclusão"}</button>
+          <button type="button" class="attendance-btn" data-action="cal-cancelar-exclusao">Cancelar</button>
+        </div>`
+      : `<div class="cal-evento-acoes"><button type="button" class="attendance-btn" data-action="calinst-excluir-evento" data-id="${esc(e.id)}" aria-label="Excluir">${SVG_LIXEIRA} Excluir</button></div>`;
+  }
+  // cursos ausente/null = valia pra escola inteira (comportamento antigo
+  // e itens criados antes deste recurso); array = só pros cursos listados.
+  const aplicaA = Array.isArray(e.cursos) ? ` · Só: ${e.cursos.map(esc).join(", ")}` : "";
+
+  return `<div class="cal-evento cal-evento-inst">
+      <div class="cal-evento-topo"><span class="pill cal-pill-inst-${info.classe}">${esc(info.rotulo)}</span><strong>${esc(e.titulo)}</strong></div>
+      ${e.descricao ? `<p class="cal-evento-desc">${esc(e.descricao)}</p>` : ""}
+      <div class="cal-evento-meta">Secretaria${e.criadoPorNome ? ` · ${esc(e.criadoPorNome)}` : ""}${aplicaA}</div>
+      ${acoes}
+    </div>`;
 }
 
 /* ---------------- pop-up do dia ---------------- */
@@ -232,18 +308,27 @@ function diaModalHtml(iso, dia, papel, opcoes){
       </div>
     </div>` : "";
 
+  const institucionalHtml = d.institucional.length ? `
+    <div class="aluno-modal-section">
+      <h3 class="teacher-label">Calendário da secretaria</h3>
+      <div class="aluno-modal-resp-list">${d.institucional.map(e => eventoInstitucionalCardHtml(e, papel, opcoes)).join("")}</div>
+    </div>` : "";
+
   const eventosHtml = d.eventos.length ? `
     <div class="aluno-modal-section">
       <h3 class="teacher-label">Avisos e lembretes</h3>
       <div class="aluno-modal-resp-list">${d.eventos.map(e => eventoCardHtml(e, papel, opcoes)).join("")}</div>
     </div>` : "";
 
-  const vazio = (!presencasHtml && !observacoesHtml && !eventosHtml)
+  const vazio = (!presencasHtml && !observacoesHtml && !institucionalHtml && !eventosHtml)
     ? `<div class="aluno-modal-section"><p class="section-eyebrow" style="margin:0;">Nada registrado neste dia.</p></div>` : "";
 
   const novo = papel === "professor" ? `
     <div class="aluno-modal-section">
       <button type="button" class="teacher-primary-btn" style="margin-top:0;" data-action="cal-novo-evento" data-dia="${iso}">${SVG_MAIS} Novo aviso ou lembrete neste dia</button>
+    </div>` : papel === "instituicao" ? `
+    <div class="aluno-modal-section">
+      <button type="button" class="teacher-primary-btn" style="margin-top:0;" data-action="calinst-novo-evento" data-dia="${iso}">${SVG_MAIS} Novo item neste dia</button>
     </div>` : "";
 
   return `
@@ -253,7 +338,7 @@ function diaModalHtml(iso, dia, papel, opcoes){
         <div><h2>${esc(dataExtenso(iso))}</h2></div>
         <button type="button" class="secretaria-modal-close" style="color:var(--slate);" data-action="cal-fechar-dia" aria-label="Fechar">${SVG_FECHAR}</button>
       </div>
-      ${presencasHtml}${observacoesHtml}${eventosHtml}${vazio}${novo}
+      ${presencasHtml}${observacoesHtml}${institucionalHtml}${eventosHtml}${vazio}${novo}
     </div>
   </div>`;
 }
@@ -269,13 +354,21 @@ export function calendarioHtml(opcoes){
     .map(iso => iso ? celulaHtml(iso, dias[iso], iso === hoje, podeCriar) : `<div class="cal-vazio"></div>`)
     .join("");
 
+  const legendaInst = `
+       <span><i class="cal-leg cal-leg-inst-semaula"></i>Sem aula</span>
+       <span><i class="cal-leg cal-leg-inst-prova"></i>Prova</span>
+       <span><i class="cal-leg cal-leg-inst-atividade"></i>Atividade diferente</span>`;
+
   const legenda = papel === "professor"
-    ? `<span><i class="cal-ponto"></i>Aviso ou lembrete que você criou</span>`
+    ? `<span><i class="cal-ponto"></i>Aviso ou lembrete que você criou</span>${legendaInst}`
+    : papel === "instituicao"
+    ? legendaInst
     : `<span><i class="cal-leg cal-leg-presente"></i>Presença</span>
        <span><i class="cal-leg cal-leg-justificada"></i>Justificada</span>
        <span><i class="cal-leg cal-leg-falta"></i>Falta</span>
        <span><i class="cal-ponto"></i>Aviso ou lembrete</span>
-       ${papel === "responsavel" ? `<span class="cal-leg-alerta">${SVG_ALERTA}Observação do professor</span>` : ""}`;
+       ${papel === "responsavel" ? `<span class="cal-leg-alerta">${SVG_ALERTA}Observação do professor</span>` : ""}
+       ${legendaInst}`;
 
   const erroHtml = erro ? `
     <div class="cal-erro">
@@ -283,8 +376,9 @@ export function calendarioHtml(opcoes){
       <button type="button" class="attendance-btn" data-action="cal-atualizar">Tentar de novo</button>
     </div>` : "";
 
-  const novoBtn = podeCriar
-    ? `<button type="button" class="teacher-primary-btn cal-novo" data-action="cal-novo-evento">${SVG_MAIS} Novo aviso ou lembrete</button>` : "";
+  const novoBtn = !podeCriar ? "" : papel === "instituicao"
+    ? `<button type="button" class="teacher-primary-btn cal-novo" data-action="calinst-novo-evento">${SVG_MAIS} Novo item no calendário</button>`
+    : `<button type="button" class="teacher-primary-btn cal-novo" data-action="cal-novo-evento">${SVG_MAIS} Novo aviso ou lembrete</button>`;
 
   const modal = diaAberto ? diaModalHtml(diaAberto, dias[diaAberto], papel, opcoes) : "";
 
@@ -294,6 +388,8 @@ export function calendarioHtml(opcoes){
         <h2 class="section-title">Calendário</h2>
         <p class="section-eyebrow" style="margin-bottom:0;">${papel === "professor"
           ? "Avisos e lembretes que você criou. Toque num dia para ver ou adicionar."
+          : papel === "instituicao"
+          ? "Dias sem aula, provas e atividades diferentes. Toda a escola (alunos, responsáveis e professores) vê isso automaticamente."
           : "Toque num dia com cor ou marcação para ver os detalhes."}</p>
       </div>
       ${novoBtn}
@@ -395,6 +491,105 @@ export function eventoFormModalHtml({ form, turmas }){
       <div class="cal-form-botoes">
         <button type="button" class="teacher-primary-btn" data-action="cal-salvar-evento" ${form.salvando ? "disabled" : ""}>${form.salvando ? "Salvando…" : "Salvar no calendário"}</button>
         <button type="button" class="attendance-btn" data-action="cal-fechar-form">Cancelar</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+/* ---------------- formulário "novo item" da SECRETARIA ---------------- */
+/* form: { tipo, titulo, descricao, data, cursosTodos, cursosSelecionados,
+           salvando, erro } — sem turma nem "enviar para": um item da
+   secretaria vale pra toda a escola por padrão; cursosTodos/
+   cursosSelecionados restringem pra só alguns cursos (ex.: feriado que
+   não vale pra Recreação).
+   cursos: lista de cursos da unidade (pra montar o seletor "Aplica-se a"). */
+export function eventoInstituicaoFormModalHtml({ form, cursos }){
+  if(!form) return "";
+  return `
+  <div class="aluno-modal-backdrop" data-action="calinst-fechar-form">
+    <div class="aluno-modal cal-modal" role="dialog" aria-modal="true" aria-label="Novo item no calendário" data-action="noop">
+      <div class="aluno-modal-head">
+        <div>
+          <h2>Novo item no calendário</h2>
+          <p class="section-eyebrow" style="margin:2px 0 0;">Aparece automaticamente pra toda a escola: alunos, responsáveis e professores.</p>
+        </div>
+        <button type="button" class="secretaria-modal-close" style="color:var(--slate);" data-action="calinst-fechar-form" aria-label="Fechar">${SVG_FECHAR}</button>
+      </div>
+
+      <div class="cal-form">
+        <label class="teacher-label" for="evi-tipo">Tipo</label>
+        <select id="evi-tipo" class="teacher-text-input" data-evi-campo="tipo">
+          ${Object.keys(TIPOS_INSTITUICAO).map(k => `<option value="${k}" ${form.tipo === k ? "selected" : ""}>${esc(TIPOS_INSTITUICAO[k].rotulo)}</option>`).join("")}
+        </select>
+
+        <label class="teacher-label" for="evi-titulo">Título</label>
+        <input id="evi-titulo" class="teacher-text-input" data-evi-campo="titulo" maxlength="120" placeholder="Ex.: Sem aula — feriado" value="${esc(form.titulo)}" />
+
+        <label class="teacher-label" for="evi-desc">Detalhes (opcional)</label>
+        <textarea id="evi-desc" class="teacher-text-input" data-evi-campo="descricao" rows="3" maxlength="600" placeholder="Ex.: Recesso escolar conforme calendário da SEED.">${esc(form.descricao)}</textarea>
+
+        <label class="teacher-label" for="evi-data">Data</label>
+        <input id="evi-data" type="date" class="teacher-text-input" data-evi-campo="data" value="${esc(form.data)}" />
+
+        ${cursosPickerHtml({ prefixo: "calinst", cursos, todos: form.cursosTodos, selecionados: form.cursosSelecionados })}
+      </div>
+
+      ${form.erro ? `<p class="teacher-error" style="color:var(--red,#C4544A);font-size:12.5px;margin-top:10px;">${esc(form.erro)}</p>` : ""}
+      <div class="cal-form-botoes">
+        <button type="button" class="teacher-primary-btn" data-action="calinst-salvar-evento" ${form.salvando ? "disabled" : ""}>${form.salvando ? "Salvando…" : "Salvar no calendário"}</button>
+        <button type="button" class="attendance-btn" data-action="calinst-fechar-form">Cancelar</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+/* ---------------- importar calendário da SEED ---------------- */
+/* form: { itens: [{ data, tipo, titulo, descricao, incluir }], enviando,
+           erro, cursosTodos, cursosSelecionados }
+   Cada item vem com "incluir" marcado; a secretaria desmarca o que não
+   quiser e confirma — nada é gravado sem esse passo de revisão.
+   cursosTodos/cursosSelecionados valem pro LOTE inteiro desta importação
+   (ex.: importar os feriados de 2026 já sem valer pra Recreação); pra
+   itens específicos com uma exceção diferente, dá pra ajustar depois
+   pelo "Novo item no calendário" ou editando manualmente.
+   cursos: lista de cursos da unidade (pra montar o seletor "Aplica-se a"). */
+export function importarSeedModalHtml({ form, cursos }){
+  if(!form) return "";
+  const selecionados = form.itens.filter(i => i.incluir).length;
+
+  const linhas = form.itens.map((it, i) => {
+    const info = TIPOS_INSTITUICAO[it.tipo] || TIPOS_INSTITUICAO.outro;
+    return `
+    <label class="cal-seed-linha">
+      <input type="checkbox" data-action="calseed-toggle" data-idx="${i}" ${it.incluir ? "checked" : ""} />
+      <span class="cal-seed-info">
+        <strong>${esc(dataExtenso(it.data))}</strong>
+        <span class="pill cal-pill-inst-${info.classe}">${esc(info.rotulo)}</span>
+        <span class="cal-seed-titulo">${esc(it.titulo)}</span>
+      </span>
+    </label>`;
+  }).join("");
+
+  return `
+  <div class="aluno-modal-backdrop" data-action="calseed-fechar">
+    <div class="aluno-modal cal-modal" role="dialog" aria-modal="true" aria-label="Importar calendário da SEED" data-action="noop">
+      <div class="aluno-modal-head">
+        <div>
+          <h2>Importar calendário da SEED</h2>
+          <p class="section-eyebrow" style="margin:2px 0 0;">Feriados, trimestres e datas do calendário oficial 2026. Confira e desmarque o que não quiser lançar antes de confirmar.</p>
+        </div>
+        <button type="button" class="secretaria-modal-close" style="color:var(--slate);" data-action="calseed-fechar" aria-label="Fechar">${SVG_FECHAR}</button>
+      </div>
+      ${cursosPickerHtml({ prefixo: "calseed", cursos, todos: form.cursosTodos, selecionados: form.cursosSelecionados })}
+      <div class="cal-seed-acoes">
+        <button type="button" class="cal-link" data-action="calseed-marcar-todos">Marcar todos</button>
+        <button type="button" class="cal-link" data-action="calseed-desmarcar-todos">Desmarcar todos</button>
+      </div>
+      <div class="cal-seed-lista">${linhas}</div>
+      ${form.erro ? `<p class="teacher-error" style="color:var(--red,#C4544A);font-size:12.5px;margin-top:10px;">${esc(form.erro)}</p>` : ""}
+      <div class="cal-form-botoes">
+        <button type="button" class="teacher-primary-btn" data-action="calseed-confirmar" ${form.enviando ? "disabled" : ""}>${form.enviando ? "Importando…" : `Importar ${selecionados} ${selecionados === 1 ? "selecionado" : "selecionados"}`}</button>
+        <button type="button" class="attendance-btn" data-action="calseed-fechar">Cancelar</button>
       </div>
     </div>
   </div>`;
