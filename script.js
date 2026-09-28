@@ -22,7 +22,17 @@
      nome, turma, foto, escolaId, contato
      notas: [] // campo antigo, não é mais usado (ver "atividades" e "notasAluno" abaixo)
      presenca: { percentual, faltasMes, registros: [{data,status}] }
-     financeiro: { status, proxima, valor, historico: [{mes,status,data}] }
+     financeiro: { mensalidades: [{ id, competencia (\"AAAA-MM\"), valor,
+                    vencimento (\"AAAA-MM-DD\"), status: \"pendente\"|\"pago\",
+                    formaPagamento: \"dinheiro\"|\"pix\"|\"cartao\"|\"\", dataPagamento,
+                    pixCopiaCola, codigoBarras, boletoPdfNome, boletoPdfDados }] }
+                  // lançado à mão pela secretaria na ficha do aluno (aba Financeiro)
+                  // ou direto pela aba "Financeiro" da instituição; status/próxima
+                  // cobrança/histórico exibidos na tela são sempre calculados em
+                  // cima dessa lista (ver resumoFinanceiroAluno). pixCopiaCola,
+                  // codigoBarras e boletoPdfDados (data URL base64, ver
+                  // BOLETO_PDF_TAMANHO_MAX) são anexos opcionais, digitados/
+                  // escolhidos à mão — ainda sem gateway/banco de verdade.
      comunicados: [{ titulo, data, urgente }]
 
    responsaveis/{id}        (cadastro na Gestão; ganha login quando criado
@@ -34,9 +44,10 @@
      nome, uf, data
      turmas: [{ nome, alunos, faltasHoje, frequencia }]
      faltantes: [{ nome, turma, faltasMes, ultima }]
-     financeiro: { previsto, recebido, recebidoPct, variacao, inadimplenciaValor, inadimplenciaPct }
-     inadimplentes: [{ nome, aluno, valor, atraso }]
      alunos: [{ nome, turma }]
+     // Não guarda mais financeiro/inadimplentes prontos: a aba "Financeiro" da
+     // instituição soma, na hora, as mensalidades de cada aluno da unidade
+     // (coleção `alunos`, ver acima) — sempre dado real, nunca texto digitado.
 
    turmas/{turmaId}      (turmas de um professor — coleção própria)
      nome, horario, sala, escola, escolaId, disciplina, professorId
@@ -98,6 +109,33 @@
        simples entre o 1º e o 2º bimestre (só calculada quando os dois
        já têm nota lançada).
 
+   boletinsIngles/{turmaId_nomeDoAluno}   (Report Card de Inglês — um por aluno por
+                                turma; preenchido pelo professor ou pela secretaria e
+                                lido pelo aluno/responsável via alunoKey)
+     alunoKey, alunoNome, escolaId, turmaId, turmaNome, professorId
+     livro, grupo, professorNome        // "Book", "Group" e "Teacher's Name" do boletim
+     sem1, sem2: { fluenciaOral, fluenciaAuditiva, fluenciaEscrita, tarefa,
+                   participacao, presenca }   // cada um: "perfect" | "good" | "try" | ""
+     extra: { extraGrades, practiceTests, total }   // number (0–100) | null
+     feedback: string
+     atualizadoEm, atualizadoPorId, atualizadoPorNome
+
+   avaliacoesInstitucionais/{periodo_uid_nomeDoAluno}   (questionário sobre o Educa+ —
+                                uma resposta por pessoa, por aluno e por semestre;
+                                periodo no formato "2026-S2")
+     periodo, escolaId, autorId, autorRole: "aluno" | "responsavel", alunoKey, curso
+     respostas: { [perguntaId]: 1..5 }   // perguntas em avaliacoes.js
+     comentario: string
+     criadoEm, atualizadoEm
+
+   avaliacaoInstConfig/{escolaId}   (configuração da avaliação institucional da
+                                unidade — a secretaria personaliza as perguntas
+                                e libera/bloqueia novas respostas quando quiser;
+                                sem documento, vale o padrão de avaliacoes.js)
+     ativo: boolean            // false = bloqueada (ninguém consegue responder)
+     perguntas: [{ id, texto }]
+     atualizadoEm, atualizadoPorId
+
    eventosCalendario/{id}   (avisos e lembretes criados pelo professor OU
                               itens do calendário da secretaria — os dois
                               tipos moram na mesma coleção, diferenciados
@@ -150,6 +188,7 @@ import {
   arrayUnion,
   arrayRemove,
   writeBatch,
+  runTransaction,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
 import { firebaseConfig } from "./firebase-config.js";
@@ -181,6 +220,30 @@ import {
   hojeISO,
   dataValida,
 } from "./calendario.js";
+import {
+  avalNovoEstado,
+  ehAlunoDeIngles,
+  CRITERIOS_BOLETIM,
+  NIVEIS_BOLETIM,
+  FEEDBACK_PADRAO,
+  boletimFormVazio,
+  boletimParaForm,
+  formParaBoletim,
+  validarBoletimForm,
+  boletimHtml,
+  abrirBoletimParaImpressao,
+  avalSubAbasHtml,
+  periodoAtual,
+  validarAvaliacaoInstitucional,
+  respostasLimpas,
+  avaliacaoInstitucionalHtml,
+  resultadosInstitucionaisHtml,
+  avalConfigPadrao,
+  avalConfigDeDocumento,
+  novoIdPergunta,
+  validarConfigPerguntas,
+  avalConfigInstitucionalHtml,
+} from "./avaliacoes.js";
 
 /* Datas do calendário oficial da SEED-PR pra 2026 (Anexo da Resolução
    6.494/2025 - GS/SEED), usadas no botão "Importar calendário da SEED" da
@@ -334,14 +397,76 @@ const ICONS = {
   calendar: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>`,
   fileText: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h6"/></svg>`,
   award: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="6"/><path d="m9 13.5-1.5 7L12 18l4.5 2.5-1.5-7"/></svg>`,
+  star: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`,
 };
 
 /* Contatos de WhatsApp da secretaria, por unidade. Ajuste os números aqui
    se eles mudarem — não precisa mexer em mais nenhum lugar do código. */
 const SECRETARIA_WHATSAPP = [
-  { id: "salto", nome: "Escola Salto do Lontra", numero: "46999318578" },
-  { id: "prata", nome: "Escola Nova Prata do Iguaçu", numero: "4699274677" },
+  { id: "salto", nome: "Escola Salto do Lontra", numero: "46999318578", foto: "imgs/secretaria-salto.jpg" },
+  { id: "prata", nome: "Escola Nova Prata do Iguaçu", numero: "4699274677", foto: "imgs/secretaria-prata.jpg" },
 ];
+
+/* ------------------------------------------------------------------
+   IDALUNO — código sequencial (0001, 0002, ...) só pra identificar o
+   aluno mais fácil (ex.: dois alunos com o mesmo nome). Não substitui
+   nada do que já existe (turmas, presença, notas etc. continuam
+   funcionando do jeito que já funcionavam, por nome) — é só um campo
+   novo, gravado em alunos/{id}.idAluno.
+
+   O número vem de um contador único em contadores/alunos (campo
+   "ultimo"), incrementado dentro de uma transação pra dois cadastros
+   feitos ao mesmo tempo não saírem com o mesmo número. Pra isso
+   funcionar, a regra de segurança do Firestore precisa liberar
+   leitura E escrita em "contadores/alunos" pra quem tem role
+   "instituicao" (do jeito que já libera escrita em "alunos").
+   ------------------------------------------------------------------ */
+async function proximoIdAluno(){
+  const ref = doc(db, "contadores", "alunos");
+  const proximo = await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    const atual = snap.exists() ? Number(snap.data().ultimo) || 0 : 0;
+    const novo = atual + 1;
+    tx.set(ref, { ultimo: novo }, { merge: true });
+    return novo;
+  });
+  return String(proximo).padStart(4, "0");
+}
+
+/* ------------------------------------------------------------------
+   Fotos por categoria: todo menino usa a mesma foto, toda menina usa
+   outra, cada professor(a) usa a foto do seu gênero, e cada secretaria
+   por unidade usa sua própria imagem. O responsável não tem foto padrão
+   na pasta atual, então cai no avatar com iniciais. */
+const FOTO_PADRAO = {
+  alunoMenino: "imgs/aluno-menino.jpg",
+  alunoMenina: "imgs/aluno-menina.jpg",
+  professor: "imgs/professor.jpg",
+  professora: "imgs/professora.jpg",
+  responsavel: "",
+};
+
+function fotoDoAluno(aluno){
+  if(aluno?.sexo === "feminino") return FOTO_PADRAO.alunoMenina;
+  if(aluno?.sexo === "masculino") return FOTO_PADRAO.alunoMenino;
+  return "";   // sexo ainda não informado — cai no avatar com iniciais
+}
+
+function fotoDoProfessor(professor){
+  if(professor?.sexo === "feminino") return FOTO_PADRAO.professora;
+  if(professor?.sexo === "masculino") return FOTO_PADRAO.professor;
+  return "";
+}
+
+/* Monta o avatar: foto de verdade quando tem uma definida pro caso, ou
+   as iniciais (como já era) quando ainda não dá pra saber a foto certa. */
+function avatarHtml(fotoUrl, iniciaisFallback, extraClasse){
+  const classeExtra = extraClasse ? ` ${extraClasse}` : "";
+  if(fotoUrl){
+    return `<img class="avatar-foto${classeExtra}" src="${escapeHtml(fotoUrl)}" alt="" />`;
+  }
+  return `<span class="student-avatar${classeExtra}">${escapeHtml(iniciaisFallback || "?")}</span>`;
+}
 
 /* Contato do suporte técnico (quem cuida do sistema), mostrado na aba
    "Meu perfil" da EQUIPE — que é a própria secretaria e portanto não
@@ -764,17 +889,19 @@ const state = {
     professorNome: "",
     professorDisciplinas: [],  // pode dar mais de uma disciplina
     professorTurmas: [],       // [{ id, nome, horario, sala, escola, disciplina, alunos:[nomes] }]
-    escolas: {},                // { [escolaId]: { nome, uf, data, turmas, faltantes, financeiro, inadimplentes, alunos } }
+    escolas: {},                // { [escolaId]: { nome, uf, data, turmas, faltantes, alunos } } — financeiro é calculado à parte, ver calcularFinanceiroDaUnidade
   },
 
   alunoTab: "calendario",
   familiaTab: "calendario",
   cal: calNovoEstado(),          // calendário (aluno / responsável / professor) — ver seção "Calendário"
   boletim: { cache: {} },        // notas do aluno/responsável — { cache: { [alunoId]: { registros, carregando, erro, carregadoEm } } }
+  aval: avalNovoEstado(),        // aba Avaliações (boletim de Inglês + avaliação institucional) — ver avaliacoes.js
   familiaStudentId: null,
   escolaSelecionadaId: null,
   instTab: "turmas",
   gestaoSubTab: "cadastro",   // cadastro | acessos — sub-abas dentro de "Gestão"
+  finSubTab: "visao",         // visao | lancar — sub-abas dentro de "Financeiro"
   alunosBusca: "",
   professorTab: "calendario",
   professorTurmaId: null,
@@ -818,6 +945,7 @@ const state = {
   instituicaoErro: "",
   novoUsuarioRole: "aluno",       // aluno | responsavel | professor | instituicao
   novoUsuarioNome: "",
+  novoUsuarioSexo: "",       // "masculino" | "feminino" — define a foto padrão (aluno/professor)
   novoUsuarioEmail: "",
   novoUsuarioSenha: "",
   novoUsuarioTurma: "",
@@ -855,6 +983,7 @@ const state = {
   editProfessorModalAberto: false,
   editProfessorId: null,
   editProfessorNome: "",
+  editProfessorSexo: "",     // "masculino" | "feminino" — foto padrão do professor
   editProfessorDisciplinas: [],
   editProfessorSalvando: false,
   editProfessorErro: "",
@@ -910,6 +1039,7 @@ const state = {
   // aba "Alunos" da instituição — lista carregada direto da coleção `alunos`
   // (com id de verdade, ao contrário do array resumido salvo em escolas/{id}.alunos)
   instAlunos: null,               // [{id,nome,turma,contato,...}] ou null se ainda não carregou
+  gerandoIdAluno: false,          // true enquanto o botão "Gerar IDALUNO" está processando os pendentes
   instAlunosEscolaId: null,        // escola a que a lista carregada pertence
   instAlunosCarregando: false,
   instAlunosErro: "",
@@ -933,11 +1063,60 @@ const state = {
   // ficha do aluno (modal aberto ao clicar num aluno da lista)
   alunoDetalheId: null,
   alunoDetalheContatoInput: "",
+  alunoDetalheSexoInput: "",   // "masculino" | "feminino" — foto padrão do aluno
   alunoDetalheSalvandoContato: false,
   alunoDetalheMensagem: "",
   alunoDetalheErro: "",
   alunoExcluirConfirmando: false,
   alunoExcluindo: false,
+
+  // financeiro da ficha do aluno (aba "Financeiro" dentro do modal) —
+  // mensalidades lançadas à mão pela secretaria, sem ligação com contrato
+  alunoFinCompetencia: "",
+  alunoFinValor: "",
+  alunoFinVencimento: "",
+  alunoFinForma: "boleto",           // boleto | pix | cartao | dinheiro — forma de pagamento esperada da cobrança sendo lançada
+  alunoFinPixTipo: "copiaCola",      // copiaCola | chaveEscola — só quando alunoFinForma === "pix"
+  alunoFinBoletoComPix: false,       // quando alunoFinForma === "boleto": também oferece Pix copia e cola?
+  alunoFinLinkCartao: "",            // link de pagamento — só quando alunoFinForma === "cartao"
+  alunoFinPix: "",                   // código Pix copia-e-cola da cobrança sendo lançada (opcional)
+  alunoFinCodigoBarras: "",          // código de barras/linha digitável do boleto (opcional)
+  alunoFinBoletoArquivo: null,       // { nome, dados } depois de ler o PDF escolhido, ou null
+  alunoFinBoletoLendo: false,
+  alunoFinSalvando: false,
+  alunoFinErro: "",
+  alunoFinMensagem: "",
+  alunoFinPagamentoAbertoId: null,   // id da mensalidade com o miniformulário "marcar como pago" aberto
+  alunoFinPagamentoForma: "dinheiro",
+  alunoFinPagamentoData: "",
+
+  // Aba "Financeiro" (visão geral da escola) > lançar cobrança direto
+  // por ali, sem precisar abrir a ficha do aluno primeiro.
+  finCobrancaAberto: false,
+  finCobrancaAlunoId: "",
+  finCobrancaCompetencia: "",
+  finCobrancaValor: "",
+  finCobrancaVencimento: "",
+  finCobrancaForma: "boleto",        // boleto | pix | cartao | dinheiro — forma de pagamento esperada da cobrança sendo lançada
+  finCobrancaPixTipo: "copiaCola",   // copiaCola | chaveEscola — só quando finCobrancaForma === "pix"
+  finCobrancaBoletoComPix: false,    // quando finCobrancaForma === "boleto": também oferece Pix copia e cola?
+  finCobrancaLinkCartao: "",         // link de pagamento — só quando finCobrancaForma === "cartao"
+  finCobrancaPix: "",
+  finCobrancaCodigoBarras: "",
+  finCobrancaBoletoArquivo: null,    // { nome, dados }
+  finCobrancaBoletoLendo: false,
+  finCobrancaSalvando: false,
+  finCobrancaErro: "",
+  finCobrancaMensagem: "",
+
+  // Aba "Financeiro" > "Cobranças dos últimos 30 dias" > dar baixa
+  // (marcar como pago) direto na lista, sem abrir a ficha do aluno.
+  finPagamentoAlunoId: null,
+  finPagamentoMensId: null,
+  finPagamentoForma: "dinheiro",
+  finPagamentoData: "",
+  finPagamentoSalvando: false,
+  finPagamentoErro: "",
 
   // responsáveis vinculados ao aluno aberto na ficha + form de novo responsável
   alunoRespVinculados: null,
@@ -1081,6 +1260,8 @@ function normalizeAluno(id, dados){
     email: dados.email || "",      // e-mail de acesso (login), quando o aluno tem
     uid: dados.uid || null,        // uid no Firebase Auth, quando o aluno tem login
     escolaId: dados.escolaId || "",
+    idAluno: dados.idAluno || "",   // código sequencial (ver proximoIdAluno) — pode não existir em cadastros antigos ainda não migrados
+    sexo: dados.sexo || "",         // "masculino" | "feminino" | "" — define qual foto padrão aparece
     contratoStatus: dados.contratoStatus || "",          // "assinado" | "pendente" | "" (sem contrato registrado)
     contratoEnviadoEm: dados.contratoEnviadoEm || "",    // "AAAA-MM-DD" do último envio pra assinatura
     foto: dados.foto || (dados.nome || "?").split(" ").map(p=>p[0]).slice(0,2).join("").toUpperCase(),
@@ -1091,10 +1272,9 @@ function normalizeAluno(id, dados){
       registros: Array.isArray(dados.presenca?.registros) ? dados.presenca.registros : [],
     },
     financeiro: {
-      status: dados.financeiro?.status || "—",
-      proxima: dados.financeiro?.proxima || "—",
-      valor: dados.financeiro?.valor || "—",
-      historico: Array.isArray(dados.financeiro?.historico) ? dados.financeiro.historico : [],
+      mensalidades: Array.isArray(dados.financeiro?.mensalidades)
+        ? dados.financeiro.mensalidades.map(normalizeMensalidade)
+        : [],
     },
     comunicados: Array.isArray(dados.comunicados) ? dados.comunicados : [],
   };
@@ -1107,9 +1287,218 @@ function normalizeEscola(dados){
     data: dados.data || "",
     turmas: Array.isArray(dados.turmas) ? dados.turmas : [],
     faltantes: Array.isArray(dados.faltantes) ? dados.faltantes : [],
-    financeiro: dados.financeiro || {},
-    inadimplentes: Array.isArray(dados.inadimplentes) ? dados.inadimplentes : [],
     alunos: Array.isArray(dados.alunos) ? dados.alunos : [],
+  };
+}
+
+/* ==================================================================
+   Financeiro — mensalidades lançadas à mão pela secretaria na ficha
+   de cada aluno (sem ligação com contrato, sem boleto/gateway). Tudo
+   que a tela mostra (status, próxima cobrança, histórico, o painel da
+   instituição) é calculado em cima dessa lista — nunca fica um número
+   "pronto" guardado no banco, pra nunca ficar desatualizado.
+   ================================================================== */
+function normalizeMensalidade(m){
+  return {
+    id: m.id || (Date.now().toString(36) + Math.random().toString(36).slice(2, 8)),
+    competencia: m.competencia || "",      // "AAAA-MM"
+    valor: Number(m.valor) || 0,
+    vencimento: m.vencimento || "",        // "AAAA-MM-DD"
+    status: m.status === "pago" ? "pago" : "pendente",
+    formaPagamento: m.formaPagamento || "",
+    dataPagamento: m.dataPagamento || "",
+    // Anexos opcionais lançados à mão pela secretaria (sem gateway/banco
+    // de verdade — ver comentário no topo do arquivo): o PDF do boleto
+    // fica embutido em base64 no próprio documento (o app não usa
+    // Storage), por isso o limite de tamanho em BOLETO_PDF_TAMANHO_MAX.
+    pixCopiaCola: m.pixCopiaCola || "",
+    pixTipo: m.pixTipo || "",                 // "copiaCola" | "chaveEscola" — só quando há Pix envolvido
+    codigoBarras: m.codigoBarras || "",
+    boletoPdfNome: m.boletoPdfNome || "",
+    boletoPdfDados: m.boletoPdfDados || "",   // data URL "data:application/pdf;base64,...."
+    linkPagamento: m.linkPagamento || "",     // link de pagamento (cartão)
+    criadoEm: m.criadoEm || "",               // "AAAA-MM-DD" do dia em que a cobrança foi lançada
+                                               // (alimenta "Cobranças dos últimos 30 dias" na aba Financeiro)
+  };
+}
+
+// Firestore recusa gravar documento com mais de 1 MiB; um PDF em base64
+// cresce uns 33% sobre o tamanho original, então trava bem antes disso
+// pra sempre sobrar espaço pro resto do documento do aluno.
+const BOLETO_PDF_TAMANHO_MAX = 600 * 1024; // 600KB
+
+/* Lê um arquivo escolhido pelo <input type="file"> e devolve como Data
+   URL (base64), pronto pra guardar direto no campo boletoPdfDados. */
+function lerArquivoComoDataUrl(file){
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error || new Error("Falha ao ler o arquivo."));
+    reader.readAsDataURL(file);
+  });
+}
+
+/* Botões de "Baixar boleto" / "Copiar Pix" / "Copiar código de barras"
+   embaixo de uma cobrança, só com o que estiver preenchido. Usado tanto
+   na ficha do aluno (secretaria) quanto na aba Financeiro da família. */
+function anexosMensalidadeHtml(m){
+  const partes = [];
+  if(m.boletoPdfDados){
+    partes.push(`<a href="${escapeHtml(m.boletoPdfDados)}" download="${escapeHtml(m.boletoPdfNome || "boleto.pdf")}" class="btn-secondary" style="text-decoration:none;">${ICONS.fileText} Boleto (PDF)</a>`);
+  }
+  if(m.pixCopiaCola){
+    partes.push(`<button type="button" class="btn-secondary" data-action="copiar-texto" data-copiar="${escapeHtml(m.pixCopiaCola)}">Copiar Pix</button>`);
+  }
+  if(m.codigoBarras){
+    partes.push(`<button type="button" class="btn-secondary" data-action="copiar-texto" data-copiar="${escapeHtml(m.codigoBarras)}">Copiar código de barras</button>`);
+  }
+  if(m.formaPagamento === "pix" && m.pixTipo === "chaveEscola" && !m.pixCopiaCola){
+    partes.push(`<span class="pill" style="pointer-events:none;">${ICONS.fileText} Pix com a chave da escola</span>`);
+  }
+  if(m.linkPagamento){
+    partes.push(`<a href="${escapeHtml(m.linkPagamento)}" target="_blank" rel="noopener" class="btn-secondary" style="text-decoration:none;">${ICONS.fileText} Link de pagamento</a>`);
+  }
+  if(!partes.length) return "";
+  return `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">${partes.join("")}</div>`;
+}
+
+function formatarMoeda(n){
+  return "R$" + (Number(n) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function formatarDataBr(iso){
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(iso || "")) return "—";
+  const [ano, mes, dia] = iso.split("-");
+  return `${dia}/${mes}/${ano}`;
+}
+
+const MESES_COMPETENCIA = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
+
+function competenciaAtual(){
+  const hoje = new Date();
+  return `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function competenciaLabel(c){
+  const m = /^(\d{4})-(\d{2})$/.exec(c || "");
+  if(!m) return c || "—";
+  const nome = MESES_COMPETENCIA[Number(m[2]) - 1];
+  return nome ? `${nome}/${m[1]}` : c;
+}
+
+function formaPagamentoLabel(f){
+  return { boleto: "Boleto", dinheiro: "Dinheiro", pix: "Pix", cartao: "Cartão" }[f] || "—";
+}
+
+/* <select> de "Forma de pagamento" usado tanto ao lançar uma cobrança
+   (forma esperada — decide se mostra o campo de Pix ou de boleto) quanto
+   ao dar baixa (forma como foi realmente paga). */
+function selectFormaPagamentoHtml(id, valorAtual){
+  const opcoes = [
+    { valor: "boleto", texto: "Boleto" },
+    { valor: "pix", texto: "Pix" },
+    { valor: "cartao", texto: "Cartão" },
+    { valor: "dinheiro", texto: "Dinheiro" },
+  ];
+  return `<select id="${id}" class="teacher-text-input" style="margin:0;flex:1 1 140px;">${opcoes
+    .map(o => `<option value="${o.valor}" ${valorAtual === o.valor ? "selected" : ""}>${o.texto}</option>`)
+    .join("")}</select>`;
+}
+
+/* Campos extras do formulário de "Lançar cobrança" que dependem da forma
+   de pagamento escolhida — mesma lógica usada tanto na sub-aba Financeiro
+   da instituição quanto na ficha do aluno, então fica num lugar só.
+     pix    → escolhe entre "Pix copia e cola" (pede o código) ou "Chave
+              Pix da escola" (nada pra preencher, é a chave fixa da unidade)
+     boleto → código de barras + PDF, com a opção de incluir também um
+              Pix copia e cola pra quem quiser pagar por ele em vez do boleto
+     cartão → link de pagamento (ex.: link da maquininha/gateway)
+   `prefix` vira o id dos campos (ex.: "fin-cobranca" ou "aluno-fin") pra
+   bater com os ids já usados nos listeners de input/change/arquivo. */
+function camposFormaPagamentoHtml(prefix, forma, v){
+  if(forma === "pix"){
+    const pixTipo = v.pixTipo || "copiaCola";
+    return `
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;align-items:center;">
+        <span style="font-size:12.5px;color:var(--slate);">Tipo de Pix</span>
+        <select id="${prefix}-pix-tipo" class="teacher-text-input" style="margin:0;flex:1 1 200px;">
+          <option value="copiaCola" ${pixTipo === "copiaCola" ? "selected" : ""}>Pix copia e cola</option>
+          <option value="chaveEscola" ${pixTipo === "chaveEscola" ? "selected" : ""}>Chave Pix da escola</option>
+        </select>
+      </div>
+      ${pixTipo === "copiaCola"
+        ? `<div style="margin-top:8px;"><input id="${prefix}-pix" type="text" class="teacher-text-input" style="width:100%;margin:0;" placeholder="Código Pix copia e cola" value="${escapeHtml(v.pix)}" /></div>`
+        : `<p style="font-size:12.5px;color:var(--slate);margin-top:8px;">A família paga com a chave Pix já cadastrada da escola — nada pra preencher aqui.</p>`}`;
+  }
+  if(forma === "boleto"){
+    const comPix = !!v.boletoComPix;
+    return `
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+        <input id="${prefix}-codigo-barras" type="text" class="teacher-text-input" style="flex:1 1 220px;margin:0;" placeholder="Código de barras do boleto (opcional)" value="${escapeHtml(v.codigoBarras)}" />
+      </div>
+      <div style="margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <label class="pendente-contrato-anexar">
+          ${ICONS.upload} <span>${v.boletoArquivo ? escapeHtml(v.boletoArquivo.nome) : "Anexar PDF do boleto (opcional)"}</span>
+          <input type="file" accept="application/pdf" data-${prefix}-boleto="1" style="display:none;" ${v.boletoLendo ? "disabled" : ""} />
+        </label>
+        ${v.boletoLendo ? `<span style="font-size:12px;color:var(--slate);">Lendo arquivo…</span>` : ""}
+      </div>
+      <label style="display:flex;align-items:center;gap:6px;margin-top:10px;font-size:13px;color:var(--ink);cursor:pointer;">
+        <input type="checkbox" data-action="toggle-${prefix}-boleto-pix" ${comPix ? "checked" : ""} />
+        Incluir também um Pix copia e cola
+      </label>
+      ${comPix ? `<div style="margin-top:8px;"><input id="${prefix}-pix" type="text" class="teacher-text-input" style="width:100%;margin:0;" placeholder="Código Pix copia e cola" value="${escapeHtml(v.pix)}" /></div>` : ""}`;
+  }
+  if(forma === "cartao"){
+    return `
+      <div style="margin-top:8px;">
+        <input id="${prefix}-link-cartao" type="url" class="teacher-text-input" style="width:100%;margin:0;" placeholder="Link para pagamento" value="${escapeHtml(v.linkCartao)}" />
+      </div>`;
+  }
+  return "";
+}
+
+function diasAtraso(vencimentoIso){
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(vencimentoIso || "")) return 0;
+  const venc = new Date(vencimentoIso + "T00:00:00");
+  const hoje = new Date(dataDeHojeISO() + "T00:00:00");
+  return Math.max(0, Math.round((hoje - venc) / 86400000));
+}
+
+/* Dias corridos desde uma data ISO ("AAAA-MM-DD") até hoje. Usado pra
+   filtrar "Cobranças dos últimos 30 dias" na aba Financeiro. */
+function diasDesde(dataIso){
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(dataIso || "")) return Infinity;
+  const data = new Date(dataIso + "T00:00:00");
+  const hoje = new Date(dataDeHojeISO() + "T00:00:00");
+  return Math.round((hoje - data) / 86400000);
+}
+
+function mensalidadeEstaAtrasada(m){
+  return m.status === "pendente" && m.vencimento && m.vencimento < dataDeHojeISO();
+}
+
+/* Resumo exibido no cartão do aluno/responsável e na ficha da secretaria —
+   sempre recalculado a partir de financeiro.mensalidades. */
+function resumoFinanceiroAluno(financeiro){
+  const mensalidades = Array.isArray(financeiro?.mensalidades) ? financeiro.mensalidades : [];
+  const pendentes = mensalidades
+    .filter(m => m.status === "pendente")
+    .sort((a, b) => (a.vencimento || "").localeCompare(b.vencimento || ""));
+  const atrasada = pendentes.find(mensalidadeEstaAtrasada);
+  const proximaM = atrasada || pendentes[0] || null;
+
+  let status = "—";
+  if(atrasada) status = `Atrasada há ${diasAtraso(atrasada.vencimento)} dia(s)`;
+  else if(proximaM) status = "Em dia";
+  else if(mensalidades.length > 0) status = "Em dia";
+
+  return {
+    status,
+    atrasada: !!atrasada,
+    proxima: proximaM ? `${competenciaLabel(proximaM.competencia)} · vence em ${formatarDataBr(proximaM.vencimento)}` : "—",
+    valor: proximaM ? formatarMoeda(proximaM.valor) : "—",
+    historico: mensalidades.slice().sort((a, b) => (b.vencimento || "").localeCompare(a.vencimento || "")),
   };
 }
 
@@ -1121,6 +1510,7 @@ onAuthStateChanged(auth, async (user) => {
     state.authUser = null;
     state.perfil = null;
     state.cal = calNovoEstado();
+    state.aval = avalNovoEstado();
     state.screen = "login";
     state.loginCarregando = false;
     render();
@@ -1128,6 +1518,7 @@ onAuthStateChanged(auth, async (user) => {
   }
   state.authUser = user;
   state.cal = calNovoEstado();
+    state.aval = avalNovoEstado();
   state.screen = "carregando";
   render();
   try {
@@ -1210,7 +1601,7 @@ function renderSecretariaModal(){
   if(!state.secretariaModalOpen) return "";
   const cards = SECRETARIA_WHATSAPP.map(escola => `
     <button type="button" class="secretaria-option" data-action="whatsapp-secretaria" data-escola="${escola.id}">
-      <span class="secretaria-option-icon">${ICONS.pin}</span>
+      <span class="secretaria-option-icon secretaria-option-icon-foto">${avatarHtml(escola.foto, "?")}</span>
       <span>
         <span class="secretaria-option-name">${escapeHtml(escola.nome)}</span>
         <span class="secretaria-option-desc">Abrir WhatsApp da secretaria</span>
@@ -1362,6 +1753,7 @@ function renderAluno(){
   const navItems = [
     { key:"calendario", label:"Calendário", icon:"calendar" },
     { key:"notas", label:"Notas", icon:"cap" },
+    { key:"aval", label:"Avaliações", icon:"star" },
     { key:"presenca", label:"Presença", icon:"clipboard" },
     ...(ehTurmaDeRecreacao(student.turma) ? [] : [{ key:"certificados", label:"Certificados", icon:"award" }]),
     { key:"comunicados", label:"Comunicados", icon:"megaphone" },
@@ -1370,6 +1762,7 @@ function renderAluno(){
   let body = "";
   if(state.alunoTab === "calendario") body = calendarioAlunoView(student, "aluno");
   else if(state.alunoTab === "notas") body = notasView(student);
+  else if(state.alunoTab === "aval") body = avaliacoesAlunoView(student, "aluno");
   else if(state.alunoTab === "presenca") body = presencaView(student);
   else if(state.alunoTab === "certificados") body = certificadosView(student, false);
   else if(state.alunoTab === "comunicados") body = comunicadosView(student);
@@ -1392,6 +1785,7 @@ function renderFamilia(){
   const navItems = [
     { key:"calendario", label:"Calendário", icon:"calendar" },
     { key:"notas", label:"Notas", icon:"cap" },
+    { key:"aval", label:"Avaliações", icon:"star" },
     { key:"presenca", label:"Presença", icon:"clipboard" },
     ...(algumFilhoTemCertificado ? [{ key:"certificados", label:"Certificados", icon:"award" }] : []),
     { key:"financeiro", label:"Financeiro", icon:"wallet" },
@@ -1402,7 +1796,7 @@ function renderFamilia(){
   if(alunos.length > 1){
     switcher = `<div class="student-switch">` + alunos.map(s => `
       <button class="student-chip ${s.id===state.familiaStudentId?'active':''}" data-action="switch-student" data-id="${s.id}">
-        <span class="student-avatar">${escapeHtml(s.foto)}</span>
+        ${avatarHtml(fotoDoAluno(s), s.foto)}
         <span class="student-chip-name">${escapeHtml(s.nome.split(" ")[0])}</span>
         <span class="student-chip-turma">· ${escapeHtml(s.turma)}</span>
       </button>`).join("") + `</div>`;
@@ -1411,6 +1805,7 @@ function renderFamilia(){
   let body = "";
   if(state.familiaTab === "calendario") body = calendarioAlunoView(student, "responsavel");
   else if(state.familiaTab === "notas") body = notasView(student);
+  else if(state.familiaTab === "aval") body = avaliacoesAlunoView(student, "responsavel");
   else if(state.familiaTab === "presenca") body = presencaView(student);
   else if(state.familiaTab === "certificados") body = certificadosView(student, true);
   else if(state.familiaTab === "financeiro") body = financeiroFamiliaView(student);
@@ -1528,7 +1923,7 @@ function certificadosView(student, ehResponsavel){
       <p class="section-eyebrow">Peça direto pra secretaria da unidade do(a) ${escapeHtml(primeiroNome(student.nome))}, pelo WhatsApp.</p>
       ${SECRETARIA_WHATSAPP.map(escola => `
         <a class="secretaria-option" style="text-decoration:none;margin-top:8px;" href="${whatsappLinkComTexto(escola.numero, MENSAGEM_CERTIFICADO.solicitar(student.nome, student.turma))}" target="_blank" rel="noopener">
-          <span class="secretaria-option-icon">${ICONS.pin}</span>
+          <span class="secretaria-option-icon secretaria-option-icon-foto">${avatarHtml(escola.foto, "?")}</span>
           <span>
             <span class="secretaria-option-name">${escapeHtml(escola.nome)}</span>
             <span class="secretaria-option-desc">Solicitar pelo WhatsApp</span>
@@ -1569,12 +1964,23 @@ function presencaView(student){
 }
 
 function financeiroFamiliaView(student){
-  const hist = student.financeiro.historico.map(h => `
-    <div class="row" style="font-size:14px;">
-      <span style="color:var(--ink);">${escapeHtml(h.mes)}</span>
-      <span style="color:var(--slate);">${escapeHtml(h.data)}</span>
-      <span class="pill pill-green">${escapeHtml(h.status)}</span>
-    </div>`).join("") || `<div style="padding:20px;font-size:14px;color:var(--slate);">Nenhum histórico disponível.</div>`;
+  const resumo = resumoFinanceiroAluno(student.financeiro);
+  const hist = resumo.historico.map(m => {
+    const atrasada = mensalidadeEstaAtrasada(m);
+    const pillClasse = m.status === "pago" ? "pill-green" : (atrasada ? "pill-red" : "pill-gold");
+    const pillTexto = m.status === "pago" ? "Pago" : (atrasada ? `Atrasada há ${diasAtraso(m.vencimento)}d` : "Pendente");
+    return `
+    <div class="row" style="font-size:14px;flex-direction:column;align-items:stretch;gap:4px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+        <span style="color:var(--ink);">${escapeHtml(competenciaLabel(m.competencia))}</span>
+        <span style="color:var(--slate);">${escapeHtml(formatarMoeda(m.valor))} · vence ${escapeHtml(formatarDataBr(m.vencimento))}</span>
+        <span class="pill ${pillClasse}">${escapeHtml(pillTexto)}</span>
+      </div>
+      ${anexosMensalidadeHtml(m)}
+    </div>`;
+  }).join("") || `<div style="padding:20px;font-size:14px;color:var(--slate);">Nenhum histórico disponível.</div>`;
+  const pillSituacao = resumo.atrasada ? "pill-red" : "pill-green";
+  const iconeSituacao = resumo.atrasada ? ICONS.clock : ICONS.check;
   return `
     <h2 class="section-title">Financeiro</h2>
     <p class="section-eyebrow">Mensalidades da matrícula</p>
@@ -1582,15 +1988,15 @@ function financeiroFamiliaView(student){
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:16px;">
         <div>
           <div style="font-size:13px;color:var(--slate);">Situação atual</div>
-          <div style="margin-top:4px;"><span class="pill pill-green">${ICONS.check} ${escapeHtml(student.financeiro.status)}</span></div>
+          <div style="margin-top:4px;"><span class="pill ${pillSituacao}">${iconeSituacao} ${escapeHtml(resumo.status)}</span></div>
         </div>
         <div>
-          <div style="font-size:13px;color:var(--slate);">Próximo vencimento</div>
-          <div style="font-size:15px;font-weight:600;color:var(--ink);margin-top:4px;">${escapeHtml(student.financeiro.proxima)}</div>
+          <div style="font-size:13px;color:var(--slate);">Próxima cobrança</div>
+          <div style="font-size:15px;font-weight:600;color:var(--ink);margin-top:4px;">${escapeHtml(resumo.proxima)}</div>
         </div>
         <div>
           <div style="font-size:13px;color:var(--slate);">Valor</div>
-          <div style="font-size:15px;font-weight:600;color:var(--ink);margin-top:4px;">${escapeHtml(student.financeiro.valor)}</div>
+          <div style="font-size:15px;font-weight:600;color:var(--ink);margin-top:4px;">${escapeHtml(resumo.valor)}</div>
         </div>
       </div>
     </div>
@@ -2025,11 +2431,13 @@ function renderProfessor(){
     { key:"aulas", label:"Aulas & chamada", icon:"clipboard" },
     { key:"conteudos", label:"Conteúdos", icon:"book" },
     { key:"avaliacoes", label:"Notas & atividades", icon:"cap" },
+    { key:"aval", label:"Avaliações", icon:"star" },
     { key:"certificados", label:"Certificados", icon:"award" },
   ];
   const body = state.professorTab === "calendario" ? calendarioProfessorView()
     : state.professorTab === "aulas" ? professorAulasView()
     : state.professorTab === "conteudos" ? professorConteudosView()
+    : state.professorTab === "aval" ? avaliacoesProfessorView()
     : state.professorTab === "certificados" ? certificadosGestaoView(state.data.professorTurmas)
     : professorAvaliacoesView();
 
@@ -2321,6 +2729,7 @@ function renderInstituicao(){
     { key:"professores", label:"Professores", icon:"users2" },
     { key:"responsaveis", label:"Responsáveis", icon:"users2" },
     { key:"contratos", label:"Contratos", icon:"fileText" },
+    { key:"aval", label:"Avaliações", icon:"star" },
     { key:"certificados", label:"Certificados", icon:"award" },
     { key:"gestao", label:"Gestão", icon:"building" },
     { key:"perfil", label:"Meu perfil", icon:"user" },
@@ -2336,6 +2745,7 @@ function renderInstituicao(){
   else if(state.instTab === "professores") body = professoresView(school);
   else if(state.instTab === "responsaveis") body = responsaveisView(school);
   else if(state.instTab === "contratos") body = contratosView(school);
+  else if(state.instTab === "aval") body = avaliacoesInstituicaoView(school);
   else if(state.instTab === "certificados") body = certificadosGestaoView(state.instTurmas || []);
   else if(state.instTab === "gestao") body = gestaoInstituicaoView(school);
   else if(state.instTab === "perfil") body = perfilInstituicaoView(school);
@@ -2450,6 +2860,18 @@ function gestaoCadastroView(school){
   const campoContato = (role === "aluno" || role === "responsavel") ? `
         <input id="new-user-contato" class="teacher-text-input" placeholder="Contato (telefone ou e-mail) — opcional" value="${escapeHtml(state.novoUsuarioContato || "")}" />` : "";
 
+  // Define qual foto padrão a pessoa vai ter (ver FOTO_PADRAO). Só existe
+  // pra aluno e professor — responsável tem uma foto única e a secretaria
+  // é por unidade, nenhuma das duas depende do que a instituição escolhe aqui.
+  const campoSexo = (role === "aluno" || role === "professor") ? `
+        <label class="teacher-label" for="new-user-sexo" style="margin-top:2px;">${role === "aluno" ? "Aluno(a) é" : "Professor(a) é"}</label>
+        <select id="new-user-sexo" class="teacher-text-input">
+          <option value="" ${!state.novoUsuarioSexo ? "selected" : ""} disabled>Selecione</option>
+          <option value="masculino" ${state.novoUsuarioSexo === "masculino" ? "selected" : ""}>${role === "aluno" ? "Menino" : "Homem"}</option>
+          <option value="feminino" ${state.novoUsuarioSexo === "feminino" ? "selected" : ""}>${role === "aluno" ? "Menina" : "Mulher"}</option>
+        </select>
+        <p class="section-eyebrow" style="margin:4px 0 0;">Define a foto padrão que aparece na ficha e nas listas.</p>` : "";
+
   let campoVinculo = "";
   if(role === "responsavel"){
     if(state.gestaoAlunosCarregando){
@@ -2492,6 +2914,7 @@ function gestaoCadastroView(school){
         <option value="instituicao" ${role === "instituicao" ? "selected" : ""}>Equipe administrativa</option>
       </select>
       ${campoTurma}
+      ${campoSexo}
       ${campoEscolasProfessor}
       ${campoDisciplina}
       ${campoVinculo}
@@ -2731,9 +3154,12 @@ function professoresSection(){
   const professores = state.gestaoProfessores || [];
   const linhasProfessores = professores.map(p => `
     <div class="row aluno-row" style="cursor:default;">
-      <button type="button" data-action="abrir-professor-turmas" data-id="${escapeHtml(p.id)}" data-nome="${escapeHtml(p.nome)}" style="flex:1;display:flex;flex-direction:column;align-items:flex-start;gap:2px;background:none;border:none;text-align:left;cursor:pointer;padding:0;">
-        <span style="font-size:14.5px;color:var(--ink);font-weight:500;">${escapeHtml(p.nome)}</span>
-        <span style="font-size:12.5px;color:var(--slate);">${escapeHtml(p.disciplinas.join(", ") || "Sem disciplina definida")}</span>
+      <button type="button" data-action="abrir-professor-turmas" data-id="${escapeHtml(p.id)}" data-nome="${escapeHtml(p.nome)}" style="flex:1;display:flex;align-items:center;gap:12px;background:none;border:none;text-align:left;cursor:pointer;padding:0;">
+        ${avatarHtml(fotoDoProfessor(p), (p.nome || "?").split(" ").map(x=>x[0]).slice(0,2).join("").toUpperCase())}
+        <span style="display:flex;flex-direction:column;align-items:flex-end;text-align:right;gap:2px;flex:1;">
+          <span style="font-size:14.5px;color:var(--ink);font-weight:500;">${escapeHtml(p.nome)}</span>
+          <span style="font-size:12.5px;color:var(--slate);">${escapeHtml(p.disciplinas.join(", ") || "Sem disciplina definida")}</span>
+        </span>
       </button>
       <span style="display:flex;align-items:center;gap:6px;">
         <button type="button" class="attendance-btn" data-action="abrir-acesso-usuario" data-tipo="professor" data-id="${escapeHtml(p.id)}" data-uid="${escapeHtml(p.id)}" data-nome="${escapeHtml(p.nome)}" data-email="${escapeHtml(p.email || "")}" aria-label="Senha e acesso">${ICONS.key}</button>
@@ -2913,6 +3339,16 @@ function editarProfessorModal(){
       <div class="aluno-modal-section">
         <h3 class="teacher-label">Nome</h3>
         <input id="edit-professor-nome" class="teacher-text-input" placeholder="Nome completo" value="${escapeHtml(state.editProfessorNome)}" />
+      </div>
+
+      <div class="aluno-modal-section">
+        <h3 class="teacher-label">Professor(a) é</h3>
+        <select id="edit-professor-sexo" class="teacher-text-input">
+          <option value="" ${!state.editProfessorSexo ? "selected" : ""} disabled>Selecione</option>
+          <option value="masculino" ${state.editProfessorSexo === "masculino" ? "selected" : ""}>Homem</option>
+          <option value="feminino" ${state.editProfessorSexo === "feminino" ? "selected" : ""}>Mulher</option>
+        </select>
+        <p class="section-eyebrow" style="margin:4px 0 0;">Define a foto que aparece na lista de professores.</p>
       </div>
 
       <div class="aluno-modal-section">
@@ -3184,6 +3620,7 @@ async function carregarEquipeDaEscola(escolaId){
           id: dados.professorId,
           nome: dados.nome || "Professor(a)",
           email: dados.email || "",
+          sexo: dados.sexo || "",
           disciplinas: Array.isArray(dados.disciplinas) ? dados.disciplinas : [],
         });
       });
@@ -3194,6 +3631,7 @@ async function carregarEquipeDaEscola(escolaId){
           id: d.id,
           nome: d.data().nome || "Professor(a)",
           email: d.data().email || "",
+          sexo: d.data().sexo || "",
           disciplinas: Array.isArray(d.data().disciplinas) ? d.data().disciplinas : [],
         });
       });
@@ -3854,7 +4292,7 @@ async function criarLoginComAlternativas(emails, senha){
   throw ultimoErro || new Error("Nenhum e-mail disponível para criar o login.");
 }
 
-async function criarUsuarioNaInstituicao({ role, nome, email, senha, escolaId, escolasIds, turma, disciplinas, contato, alunosIds, nascimento, emailsAlternativos }){
+async function criarUsuarioNaInstituicao({ role, nome, email, senha, escolaId, escolasIds, turma, disciplinas, contato, alunosIds, nascimento, emailsAlternativos, sexo }){
   if(role === "responsavel"){
     const novoResponsavelRef = doc(collection(db, "responsaveis"));
     await setDoc(novoResponsavelRef, {
@@ -3892,15 +4330,17 @@ async function criarUsuarioNaInstituicao({ role, nome, email, senha, escolaId, e
 
   if(role === "aluno"){
     // 1. grava o cadastro do aluno primeiro (é o que alimenta o dashboard dele)
+    const idAluno = await proximoIdAluno();
     const novoAlunoRef = doc(collection(db, "alunos"));
     await setDoc(novoAlunoRef, {
       nome, turma: turma || "", escolaId, contato: contato || "",
+      idAluno, sexo: sexo || "",
       nascimento: nascimento || "",   // usado pela aba "Aniversários"
       email: email || "",   // e-mail de acesso, pra Gestão poder redefinir a senha depois
       foto: "",
       notas: [],
       presenca: { percentual: 0, faltasMes: 0, registros: [] },
-      financeiro: { status: "", proxima: "", valor: "", historico: [] },
+      financeiro: { mensalidades: [] },
       comunicados: [],
     });
     await updateDoc(doc(db, "escolas", escolaId), {
@@ -3909,7 +4349,7 @@ async function criarUsuarioNaInstituicao({ role, nome, email, senha, escolaId, e
 
     // Aluno sem e-mail/senha fica só como cadastro, sem login — é o caso
     // da Recreação, em que quem acompanha pelo app é o responsável.
-    if(!email || !senha) return { alunoId: novoAlunoRef.id };
+    if(!email || !senha) return { alunoId: novoAlunoRef.id, idAluno };
 
     // 2. cria o login do aluno (Firebase Auth) no app secundário, pra não
     //    deslogar a instituição que está fazendo o cadastro.
@@ -3923,7 +4363,7 @@ async function criarUsuarioNaInstituicao({ role, nome, email, senha, escolaId, e
       // Gestão trocar a senha / excluir o login dele depois sem precisar
       // varrer a coleção "usuarios" atrás de quem tem esse alunoId.
       await updateDoc(novoAlunoRef, { uid, email: emailFinal });
-      return { alunoId: novoAlunoRef.id, uid, email: emailFinal };
+      return { alunoId: novoAlunoRef.id, idAluno, uid, email: emailFinal };
     } catch(err){
       // A gravação em "usuarios" falhou depois do login já ter sido criado.
       // Desfaz o login pra não deixar uma conta "fantasma" presa no e-mail
@@ -3945,6 +4385,7 @@ async function criarUsuarioNaInstituicao({ role, nome, email, senha, escolaId, e
     let listaEscolas = [];
     if(role === "professor"){
       usuarioDoc.disciplinas = disciplinas || [];
+      usuarioDoc.sexo = sexo || "";
       // Guarda a(s) escola(s) do professor pra podermos listá-lo na tela de
       // aba "Professores" e vincular turmas a ele — um
       // professor pode dar aula em mais de uma unidade. "escolaId" (a
@@ -3968,7 +4409,7 @@ async function criarUsuarioNaInstituicao({ role, nome, email, senha, escolaId, e
       // Um professor em 2 escolas gera 2 documentos aqui, um pra cada.
       await Promise.all(listaEscolas.map(id => setDoc(
         doc(db, "escolaProfessores", `${id}_${uid}`),
-        { escolaId: id, professorId: uid, nome, email, disciplinas: disciplinas || [] },
+        { escolaId: id, professorId: uid, nome, email, disciplinas: disciplinas || [], sexo: sexo || "" },
       )));
     }
 
@@ -4192,11 +4633,11 @@ function mensagemErroAcessosContrato(err){
    por unidade em que ele dá aula, já que a lista da Gestão lê daí (ver
    carregarEquipeDaEscola). Sem atualizar os dois, o nome ficaria
    desatualizado ora no dashboard do professor, ora na lista da Gestão. */
-async function salvarEdicaoProfessor(uid, nome, disciplinas){
-  await updateDoc(doc(db, "usuarios", uid), { nome, disciplinas });
+async function salvarEdicaoProfessor(uid, nome, disciplinas, sexo){
+  await updateDoc(doc(db, "usuarios", uid), { nome, disciplinas, sexo: sexo || "" });
   const qVinculos = query(collection(db, "escolaProfessores"), where("professorId", "==", uid));
   const snaps = await getDocs(qVinculos);
-  await Promise.all(snaps.docs.map(d => updateDoc(d.ref, { nome, disciplinas })));
+  await Promise.all(snaps.docs.map(d => updateDoc(d.ref, { nome, disciplinas, sexo: sexo || "" })));
 }
 
 /* Remove um professor de UMA unidade: apaga o vínculo dele em
@@ -4373,43 +4814,267 @@ function estatisticasView(school){
     <div class="card flush">${faltantes}</div>`;
 }
 
+/* Soma, na hora, as mensalidades de todos os alunos da unidade (nenhum
+   número fica pronto/guardado — sempre calculado em cima de instAlunos). */
+function calcularFinanceiroDaUnidade(alunos){
+  const competencia = competenciaAtual();
+  let previsto = 0, recebido = 0, inadimplenciaValor = 0;
+  const inadimplentesPorAluno = new Map();
+
+  alunos.forEach(aluno => {
+    (aluno.financeiro?.mensalidades || []).forEach(m => {
+      if(m.competencia === competencia){
+        previsto += m.valor;
+        if(m.status === "pago") recebido += m.valor;
+      }
+      if(mensalidadeEstaAtrasada(m)){
+        inadimplenciaValor += m.valor;
+        const atual = inadimplentesPorAluno.get(aluno.id) || { nome: aluno.nome, valor: 0, atraso: 0 };
+        atual.valor += m.valor;
+        atual.atraso = Math.max(atual.atraso, diasAtraso(m.vencimento));
+        inadimplentesPorAluno.set(aluno.id, atual);
+      }
+    });
+  });
+
+  const inadimplentes = Array.from(inadimplentesPorAluno.values()).sort((a, b) => b.atraso - a.atraso);
+  return {
+    previsto, recebido, inadimplenciaValor,
+    recebidoPct: previsto > 0 ? Math.round((recebido / previsto) * 100) : null,
+    inadimplenciaPct: previsto > 0 ? Math.round((inadimplenciaValor / previsto) * 100) : null,
+    inadimplentes,
+  };
+}
+
+/* Todas as mensalidades de todos os alunos da unidade lançadas (campo
+   criadoEm) nos últimos 30 dias, já com o aluno dono anexado — pra
+   listar e dar baixa direto na aba Financeiro, sem abrir a ficha.
+   Cobranças antigas, gravadas antes de existir o campo criadoEm, não
+   entram aqui (não tem como saber quando foram lançadas). */
+function cobrancasRecentes(alunos){
+  const lista = [];
+  alunos.forEach(aluno => {
+    (aluno.financeiro?.mensalidades || []).forEach(m => {
+      if(m.criadoEm && diasDesde(m.criadoEm) <= 30){
+        lista.push({ aluno, mensalidade: m });
+      }
+    });
+  });
+  return lista.sort((a, b) => (b.mensalidade.criadoEm || "").localeCompare(a.mensalidade.criadoEm || ""));
+}
+
+/* Gráfico simples (SVG, sem biblioteca externa) comparando previsto x
+   recebido nos últimos 6 meses, pra dar uma visão rápida da evolução —
+   calculado na hora em cima das mensalidades de todos os alunos. */
+function graficoReceitaSvg(alunos){
+  const hoje = new Date();
+  const meses = [];
+  for(let i = 5; i >= 0; i--){
+    const d = new Date(hoje.getFullYear(), hoje.getMonth() - i, 1);
+    meses.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+  }
+  const porMes = new Map(meses.map(c => [c, { previsto: 0, recebido: 0 }]));
+  alunos.forEach(aluno => {
+    (aluno.financeiro?.mensalidades || []).forEach(m => {
+      const bucket = porMes.get(m.competencia);
+      if(!bucket) return;
+      bucket.previsto += m.valor;
+      if(m.status === "pago") bucket.recebido += m.valor;
+    });
+  });
+
+  const valores = meses.map(c => porMes.get(c));
+  const maiorValor = Math.max(1, ...valores.map(v => v.previsto));
+  const largura = 560, altura = 190, margemBaixo = 26, margemTopo = 10;
+  const alturaUtil = altura - margemBaixo - margemTopo;
+  const larguraGrupo = largura / meses.length;
+  const larguraBarra = Math.min(26, larguraGrupo / 4);
+
+  const barras = meses.map((c, i) => {
+    const v = valores[i];
+    const centroX = larguraGrupo * i + larguraGrupo / 2;
+    const hPrevisto = (v.previsto / maiorValor) * alturaUtil;
+    const hRecebido = (v.recebido / maiorValor) * alturaUtil;
+    const yBase = altura - margemBaixo;
+    return `
+      <rect x="${(centroX - larguraBarra - 2).toFixed(1)}" y="${(yBase - hPrevisto).toFixed(1)}" width="${larguraBarra}" height="${hPrevisto.toFixed(1)}" fill="#d8c9a3" rx="2"></rect>
+      <rect x="${(centroX + 2).toFixed(1)}" y="${(yBase - hRecebido).toFixed(1)}" width="${larguraBarra}" height="${hRecebido.toFixed(1)}" fill="#2f6b4f" rx="2"></rect>
+      <text x="${centroX.toFixed(1)}" y="${altura - 8}" text-anchor="middle" font-size="10.5" fill="#6b7280" font-family="Arial, sans-serif">${escapeHtml(competenciaLabel(c).split("/")[0].slice(0, 3))}</text>`;
+  }).join("");
+
+  return `
+    <div class="card" style="overflow-x:auto;">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:6px;">
+        <span style="font-size:13px;color:var(--slate);">Previsto x recebido · últimos 6 meses</span>
+        <div style="display:flex;gap:14px;font-size:12px;color:var(--slate);">
+          <span><span style="display:inline-block;width:10px;height:10px;background:#d8c9a3;border-radius:2px;margin-right:5px;"></span>Previsto</span>
+          <span><span style="display:inline-block;width:10px;height:10px;background:#2f6b4f;border-radius:2px;margin-right:5px;"></span>Recebido</span>
+        </div>
+      </div>
+      <svg viewBox="0 0 ${largura} ${altura}" style="width:100%;height:auto;min-width:420px;" role="img" aria-label="Gráfico de receita prevista e recebida dos últimos 6 meses">
+        <line x1="0" y1="${altura - margemBaixo}" x2="${largura}" y2="${altura - margemBaixo}" stroke="#e5e0d3" stroke-width="1"></line>
+        ${barras}
+      </svg>
+    </div>`;
+}
+
 function financeiroInstituicaoView(school){
-  const f = school.financeiro;
-  const inad = school.inadimplentes.map(x => `
+  if(state.instAlunosCarregando && state.instAlunos === null){
+    return `<h2 class="section-title">Financeiro</h2><div style="padding:20px;font-size:14px;color:var(--slate);">Carregando financeiro…</div>`;
+  }
+  if(state.instAlunosErro){
+    return `<h2 class="section-title">Financeiro</h2><div style="padding:20px;font-size:14px;color:var(--red);">${escapeHtml(state.instAlunosErro)}</div>`;
+  }
+
+  const subTabs = [
+    { key: "visao", label: "Visão geral", icon: ICONS.wallet },
+    { key: "lancar", label: "Lançar cobrança", icon: ICONS.fileText },
+  ];
+  const subNav = `<div class="subtab-bar">${subTabs.map(t => `
+    <button type="button" class="subtab-btn ${state.finSubTab === t.key ? "active" : ""}" data-action="set-fin-subtab" data-key="${t.key}">
+      ${t.icon}<span>${t.label}</span>
+    </button>`).join("")}</div>`;
+
+  const corpo = state.finSubTab === "lancar"
+    ? financeiroLancarCobrancaView()
+    : financeiroVisaoGeralView();
+
+  return `
+    <h2 class="section-title">Financeiro</h2>
+    ${subNav}
+    ${corpo}
+    ${state.instituicaoMensagem ? `<p class="teacher-success institution-success">${escapeHtml(state.instituicaoMensagem)}</p>` : ""}`;
+}
+
+/* Sub-aba "Lançar cobrança" dentro de Financeiro: mesmo lançamento da
+   ficha do aluno, só que escolhendo o aluno por um <select>, pra não
+   precisar abrir a ficha primeiro. A forma de pagamento aqui é a
+   ESPERADA (decide se mostra o campo de Pix ou o de boleto); a forma
+   como a cobrança foi de fato paga continua sendo registrada só na
+   hora de "dar baixa". */
+function financeiroLancarCobrancaView(){
+  const alunosOrdenados = (state.instAlunos || []).slice().sort((a, b) => a.nome.localeCompare(b.nome));
+  const opcoesAlunos = `<option value="">— escolha o aluno —</option>` + alunosOrdenados
+    .map(a => `<option value="${escapeHtml(a.id)}" ${state.finCobrancaAlunoId === a.id ? "selected" : ""}>${escapeHtml(a.nome)}${a.turma ? ` (${escapeHtml(a.turma)})` : ""}</option>`)
+    .join("");
+
+  const forma = state.finCobrancaForma || "boleto";
+  const camposForma = camposFormaPagamentoHtml("fin-cobranca", forma, {
+    pix: state.finCobrancaPix,
+    pixTipo: state.finCobrancaPixTipo,
+    codigoBarras: state.finCobrancaCodigoBarras,
+    boletoArquivo: state.finCobrancaBoletoArquivo,
+    boletoLendo: state.finCobrancaBoletoLendo,
+    boletoComPix: state.finCobrancaBoletoComPix,
+    linkCartao: state.finCobrancaLinkCartao,
+  });
+
+  return `
+    <p class="section-eyebrow">Lance aqui mesmo, sem abrir a ficha do aluno — ou pela ficha (aba "Alunos" → toque no aluno → "Financeiro"), como já era.</p>
+    <div class="card" style="margin-top:10px;">
+      <p class="teacher-label" style="margin-bottom:6px;">Nova cobrança</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <select id="fin-cobranca-aluno" class="teacher-text-input" style="flex:1 1 220px;margin:0;">${opcoesAlunos}</select>
+        <input id="fin-cobranca-competencia" type="month" class="teacher-text-input" style="flex:1 1 140px;margin:0;" value="${escapeHtml(state.finCobrancaCompetencia)}" title="Mês de referência" />
+        <input id="fin-cobranca-valor" type="number" min="0" step="0.01" class="teacher-text-input" style="flex:1 1 120px;margin:0;" placeholder="Valor (R$)" value="${escapeHtml(state.finCobrancaValor)}" />
+        <input id="fin-cobranca-vencimento" type="date" class="teacher-text-input" style="flex:1 1 140px;margin:0;" value="${escapeHtml(state.finCobrancaVencimento)}" title="Vencimento" />
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;align-items:center;">
+        <span style="font-size:12.5px;color:var(--slate);">Forma de pagamento</span>
+        ${selectFormaPagamentoHtml("fin-cobranca-forma", forma)}
+      </div>
+      ${camposForma}
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
+        <button type="button" class="teacher-primary-btn" style="margin:0;" data-action="lancar-fin-cobranca" ${state.finCobrancaSalvando ? "disabled" : ""}>${state.finCobrancaSalvando ? "Salvando…" : "Lançar cobrança"}</button>
+      </div>
+      ${state.finCobrancaErro ? `<p class="teacher-error" style="color:var(--red);font-size:12.5px;margin-top:8px;">${escapeHtml(state.finCobrancaErro)}</p>` : ""}
+      ${state.finCobrancaMensagem ? `<p class="teacher-success" style="margin-top:8px;">${escapeHtml(state.finCobrancaMensagem)}</p>` : ""}
+    </div>`;
+}
+
+function financeiroVisaoGeralView(){
+  const f = calcularFinanceiroDaUnidade(state.instAlunos || []);
+
+  const inad = f.inadimplentes.map(x => `
     <div class="row">
       <div>
         <div style="font-size:14.5px;font-weight:600;color:var(--ink);">${escapeHtml(x.nome)}</div>
-        <div style="font-size:12.5px;color:var(--slate);">${escapeHtml(x.aluno)} · ${escapeHtml(x.valor)}</div>
+        <div style="font-size:12.5px;color:var(--slate);">${escapeHtml(formatarMoeda(x.valor))} em aberto</div>
       </div>
-      <span class="pill pill-red">${ICONS.clock} ${escapeHtml(x.atraso)}</span>
+      <span class="pill pill-red">${ICONS.clock} ${x.atraso}d de atraso</span>
     </div>`).join("") || `<div style="padding:20px;font-size:14px;color:var(--slate);">Nenhuma família em atraso.</div>`;
 
+  const grafico = graficoReceitaSvg(state.instAlunos || []);
+
+  const recentes = cobrancasRecentes(state.instAlunos || []);
+  const recentesHtml = recentes.map(({ aluno, mensalidade: m }) => {
+    const atrasada = mensalidadeEstaAtrasada(m);
+    const pillClasse = m.status === "pago" ? "pill-green" : (atrasada ? "pill-red" : "pill-gold");
+    const pillTexto = m.status === "pago"
+      ? `${ICONS.check} Pago`
+      : (atrasada ? `${ICONS.clock} Atrasada há ${diasAtraso(m.vencimento)}d` : `${ICONS.clock} Pendente`);
+    const detalhePagamento = m.status === "pago"
+      ? `<div style="font-size:12px;color:var(--slate);margin-top:2px;">${escapeHtml(formaPagamentoLabel(m.formaPagamento))}${m.dataPagamento ? ` · pago em ${escapeHtml(formatarDataBr(m.dataPagamento))}` : ""}</div>`
+      : "";
+    const formAberto = state.finPagamentoAlunoId === aluno.id && state.finPagamentoMensId === m.id;
+    const formPagamento = formAberto ? `
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px;">
+        <select id="fin-pagamento-forma" class="teacher-text-input" style="margin:0;flex:1 1 160px;">
+          <option value="dinheiro" ${state.finPagamentoForma === "dinheiro" ? "selected" : ""}>Dinheiro</option>
+          <option value="pix" ${state.finPagamentoForma === "pix" ? "selected" : ""}>Pix (chave da escola)</option>
+          <option value="cartao" ${state.finPagamentoForma === "cartao" ? "selected" : ""}>Cartão</option>
+        </select>
+        <input id="fin-pagamento-data" type="date" class="teacher-text-input" style="margin:0;flex:1 1 140px;" value="${escapeHtml(state.finPagamentoData)}" />
+        <button type="button" class="teacher-primary-btn" style="margin:0;" data-action="confirmar-fin-pagamento" data-aluno-id="${escapeHtml(aluno.id)}" data-mens-id="${escapeHtml(m.id)}" ${state.finPagamentoSalvando ? "disabled" : ""}>${state.finPagamentoSalvando ? "Salvando…" : "Confirmar"}</button>
+        <button type="button" class="btn-secondary" style="margin:0;" data-action="cancelar-fin-pagamento">Cancelar</button>
+      </div>
+      ${state.finPagamentoErro ? `<p class="teacher-error" style="color:var(--red);font-size:12.5px;margin-top:8px;">${escapeHtml(state.finPagamentoErro)}</p>` : ""}` : "";
+
+    return `
+      <div class="row" style="flex-direction:column;align-items:stretch;">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+          <div>
+            <div style="font-size:14.5px;font-weight:600;color:var(--ink);">${escapeHtml(aluno.nome)} · ${escapeHtml(competenciaLabel(m.competencia))}</div>
+            <div style="font-size:12.5px;color:var(--slate);">${escapeHtml(formatarMoeda(m.valor))} · vence em ${escapeHtml(formatarDataBr(m.vencimento))} · lançada em ${escapeHtml(formatarDataBr(m.criadoEm))}</div>
+            ${detalhePagamento}
+            ${anexosMensalidadeHtml(m)}
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            <span class="pill ${pillClasse}">${pillTexto}</span>
+            ${m.status !== "pago"
+              ? `<button type="button" class="btn-secondary" data-action="abrir-fin-pagamento" data-aluno-id="${escapeHtml(aluno.id)}" data-mens-id="${escapeHtml(m.id)}">Dar baixa</button>`
+              : `<button type="button" class="btn-secondary" data-action="desfazer-fin-pagamento" data-aluno-id="${escapeHtml(aluno.id)}" data-mens-id="${escapeHtml(m.id)}" ${state.finPagamentoSalvando ? "disabled" : ""}>Desfazer</button>`}
+          </div>
+        </div>
+        ${formPagamento}
+      </div>`;
+  }).join("") || `<div style="padding:20px;font-size:14px;color:var(--slate);">Nenhuma cobrança lançada nos últimos 30 dias.</div>`;
+
   return `
-    <h2 class="section-title">Visão geral</h2>
+    <p class="section-eyebrow">Competência de ${escapeHtml(competenciaLabel(competenciaAtual()))}, somando as cobranças lançadas na ficha de cada aluno.</p>
     <div class="grid-cards">
       <div class="card">
-        <div style="font-size:13px;color:var(--slate);margin-bottom:6px;">Receita prevista</div>
-        <div style="font-family:var(--font-display);font-size:26px;color:var(--ink);">${escapeHtml(f.previsto || "—")}</div>
-        <div style="display:flex;align-items:center;gap:4px;margin-top:6px;color:var(--green);font-size:12.5px;">${ICONS.trendUp} ${escapeHtml(f.variacao || "")}</div>
+        <div style="font-size:13px;color:var(--slate);margin-bottom:6px;">Receita prevista no mês</div>
+        <div style="font-family:var(--font-display);font-size:26px;color:var(--ink);">${escapeHtml(formatarMoeda(f.previsto))}</div>
       </div>
       <div class="card">
-        <div style="font-size:13px;color:var(--slate);margin-bottom:6px;">Recebido</div>
-        <div style="font-family:var(--font-display);font-size:26px;color:var(--ink);">${escapeHtml(f.recebido || "—")}</div>
-        <div style="font-size:12.5px;color:var(--slate);margin-top:6px;">${escapeHtml(f.recebidoPct || "")}</div>
+        <div style="font-size:13px;color:var(--slate);margin-bottom:6px;">Recebido no mês</div>
+        <div style="font-family:var(--font-display);font-size:26px;color:var(--ink);">${escapeHtml(formatarMoeda(f.recebido))}</div>
+        <div style="font-size:12.5px;color:var(--slate);margin-top:6px;">${f.recebidoPct === null ? "Sem cobranças lançadas ainda" : `${f.recebidoPct}% do previsto`}</div>
       </div>
       <div class="card">
-        <div style="font-size:13px;color:var(--slate);margin-bottom:6px;">Inadimplência</div>
-        <div style="font-family:var(--font-display);font-size:26px;color:var(--red);">${escapeHtml(f.inadimplenciaValor || "—")}</div>
-        <div style="display:flex;align-items:center;gap:4px;margin-top:6px;color:var(--red);font-size:12.5px;">${ICONS.trendDown} ${escapeHtml(f.inadimplenciaPct || "")}</div>
+        <div style="font-size:13px;color:var(--slate);margin-bottom:6px;">Inadimplência (total em aberto)</div>
+        <div style="font-family:var(--font-display);font-size:26px;color:var(--red);">${escapeHtml(formatarMoeda(f.inadimplenciaValor))}</div>
+        <div style="font-size:12.5px;color:var(--red);margin-top:6px;">${f.inadimplentes.length} família(s) em atraso</div>
       </div>
     </div>
-    <h2 class="section-title">Famílias em atraso</h2>
+    ${grafico}
+    <h2 class="section-title" style="margin-top:18px;">Cobranças dos últimos 30 dias</h2>
+    <p class="section-eyebrow">Todos os alunos, ordenado da cobrança lançada mais recente pra mais antiga · dê baixa direto por aqui.</p>
+    <div class="card flush">${recentesHtml}</div>
+    <h2 class="section-title" style="margin-top:18px;">Famílias em atraso</h2>
     <p class="section-eyebrow">Ordenado por dias de atraso</p>
-    <div class="card flush">${inad}</div>
-    <div class="finance-tools">
-      <div class="finance-actions"><h3>Cobranças</h3><p>Gere um boleto para uma matrícula ou envie uma segunda via.</p><button class="teacher-primary-btn" data-action="generate-boleto">Gerar boleto</button></div>
-    </div>
-    ${state.instituicaoMensagem ? `<p class="teacher-success institution-success">${escapeHtml(state.instituicaoMensagem)}</p>` : ""}`;
+    <div class="card flush">${inad}</div>`;
 }
 
 function alunosView(school){
@@ -4428,11 +5093,24 @@ function alunosView(school){
     const filtrados = (lista || []).filter(s => s.nome.toLowerCase().includes(busca));
     rows = filtrados.map(s => `
       <button type="button" class="row aluno-row" data-action="abrir-aluno" data-id="${escapeHtml(s.id)}">
-        <span style="font-size:14.5px;color:var(--ink);font-weight:500;">${escapeHtml(s.nome)}</span>
-        <span style="font-size:12.5px;color:var(--slate);display:flex;align-items:center;gap:8px;">${escapeHtml(s.turma)} ${ICONS.chevronRight}</span>
+        <span class="linha-com-foto">
+          ${avatarHtml(fotoDoAluno(s), s.foto)}
+          <span class="linha-com-foto-info">
+            <span class="linha-nome">${escapeHtml(s.nome)}</span>
+            <span class="linha-sub" style="display:flex;align-items:center;gap:8px;">${escapeHtml(s.turma)} ${ICONS.chevronRight}</span>
+            ${s.idAluno ? `<span class="id-aluno-tag">ID ${escapeHtml(s.idAluno)}</span>` : ""}
+          </span>
+        </span>
       </button>`).join("") || `<div style="padding:20px;font-size:14px;color:var(--slate);">Nenhum aluno encontrado.</div>`;
     total = (lista || []).length;
   }
+
+  const semId = (lista || []).filter(a => !a.idAluno).length;
+  const avisoSemId = semId > 0 ? `
+    <div class="card" style="padding:14px 16px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+      <p class="section-eyebrow" style="margin:0;">${semId} ${semId === 1 ? "aluno ainda não tem" : "alunos ainda não têm"} IDALUNO.</p>
+      <button type="button" class="btn-secondary" data-action="gerar-idaluno-pendentes" ${state.gerandoIdAluno ? "disabled" : ""}>${state.gerandoIdAluno ? "Gerando…" : "Gerar IDALUNO"}</button>
+    </div>` : "";
 
   return `
     <h2 class="section-title">Alunos matriculados</h2>
@@ -4441,6 +5119,7 @@ function alunosView(school){
       ${ICONS.search}
       <input class="search-input" id="alunos-busca" placeholder="Buscar aluno pelo nome" value="${escapeHtml(state.alunosBusca)}" />
     </div>
+    ${avisoSemId}
     <div class="card flush">${rows}</div>
     ${state.instituicaoMensagem ? `<p class="teacher-success institution-success">${escapeHtml(state.instituicaoMensagem)}</p>` : ""}`;
 }
@@ -4554,6 +5233,89 @@ function aniversariosView(school){
     ${semData ? `<p class="section-eyebrow" style="margin-top:10px;">${semData} aluno(s) ainda sem data de nascimento no cadastro. Dá pra preencher na ficha do aluno, na aba "Alunos" — os contratos novos já gravam a data sozinhos.</p>` : ""}`;
 }
 
+/* Bloco "Financeiro" dentro da ficha do aluno: lista as mensalidades já
+   lançadas (com o pill de status calculado na hora) e o formulário pra
+   lançar uma nova cobrança. Marcar como pago abre um miniformulário
+   (forma + data) por linha; nada disso mexe em contrato nem em boleto. */
+function financeiroAlunoSection(aluno){
+  const mensalidades = (aluno.financeiro.mensalidades || [])
+    .slice()
+    .sort((a, b) => (b.vencimento || "").localeCompare(a.vencimento || ""));
+
+  const linhas = mensalidades.map(m => {
+    const atrasada = mensalidadeEstaAtrasada(m);
+    const pillClasse = m.status === "pago" ? "pill-green" : (atrasada ? "pill-red" : "pill-gold");
+    const pillTexto = m.status === "pago"
+      ? `${ICONS.check} Pago`
+      : (atrasada ? `${ICONS.clock} Atrasada há ${diasAtraso(m.vencimento)}d` : `${ICONS.clock} Pendente`);
+    const detalhePagamento = m.status === "pago"
+      ? `<div style="font-size:12px;color:var(--slate);margin-top:2px;">${escapeHtml(formaPagamentoLabel(m.formaPagamento))}${m.dataPagamento ? ` · pago em ${escapeHtml(formatarDataBr(m.dataPagamento))}` : ""}</div>`
+      : "";
+    const formPagamento = state.alunoFinPagamentoAbertoId === m.id ? `
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px;">
+        <select id="aluno-fin-pagamento-forma" class="teacher-text-input" style="margin:0;flex:1 1 130px;">
+          <option value="dinheiro" ${state.alunoFinPagamentoForma === "dinheiro" ? "selected" : ""}>Dinheiro</option>
+          <option value="pix" ${state.alunoFinPagamentoForma === "pix" ? "selected" : ""}>Pix</option>
+          <option value="cartao" ${state.alunoFinPagamentoForma === "cartao" ? "selected" : ""}>Cartão</option>
+        </select>
+        <input id="aluno-fin-pagamento-data" type="date" class="teacher-text-input" style="margin:0;flex:1 1 140px;" value="${escapeHtml(state.alunoFinPagamentoData)}" />
+        <button type="button" class="teacher-primary-btn" style="margin:0;" data-action="confirmar-pagamento-mensalidade" data-mens-id="${escapeHtml(m.id)}" ${state.alunoFinSalvando ? "disabled" : ""}>${state.alunoFinSalvando ? "Salvando…" : "Confirmar"}</button>
+        <button type="button" class="btn-secondary" style="margin:0;" data-action="cancelar-pagamento-mensalidade">Cancelar</button>
+      </div>` : "";
+
+    return `
+      <div class="row" style="flex-direction:column;align-items:stretch;">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+          <div>
+            <div style="font-size:14.5px;font-weight:600;color:var(--ink);">${escapeHtml(competenciaLabel(m.competencia))}</div>
+            <div style="font-size:12.5px;color:var(--slate);">${escapeHtml(formatarMoeda(m.valor))} · vence em ${escapeHtml(formatarDataBr(m.vencimento))}</div>
+            ${detalhePagamento}
+            ${anexosMensalidadeHtml(m)}
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            <span class="pill ${pillClasse}">${pillTexto}</span>
+            ${m.status !== "pago"
+              ? `<button type="button" class="btn-secondary" data-action="abrir-pagamento-mensalidade" data-mens-id="${escapeHtml(m.id)}">Marcar como pago</button>`
+              : `<button type="button" class="btn-secondary" data-action="desfazer-pagamento-mensalidade" data-mens-id="${escapeHtml(m.id)}" ${state.alunoFinSalvando ? "disabled" : ""}>Desfazer</button>`}
+            <button type="button" class="attendance-btn" data-action="excluir-mensalidade" data-mens-id="${escapeHtml(m.id)}" aria-label="Excluir cobrança" title="Excluir cobrança">${ICONS.trash}</button>
+          </div>
+        </div>
+        ${formPagamento}
+      </div>`;
+  }).join("") || `<div style="padding:20px;font-size:14px;color:var(--slate);">Nenhuma cobrança lançada ainda.</div>`;
+
+  const formaAluno = state.alunoFinForma || "boleto";
+  const alunoCamposForma = camposFormaPagamentoHtml("aluno-fin", formaAluno, {
+    pix: state.alunoFinPix,
+    pixTipo: state.alunoFinPixTipo,
+    codigoBarras: state.alunoFinCodigoBarras,
+    boletoArquivo: state.alunoFinBoletoArquivo,
+    boletoLendo: state.alunoFinBoletoLendo,
+    boletoComPix: state.alunoFinBoletoComPix,
+    linkCartao: state.alunoFinLinkCartao,
+  });
+
+  return `
+    <div class="aluno-modal-section">
+      <h3 class="teacher-label">Financeiro</h3>
+      <div class="card flush" style="margin-bottom:14px;">${linhas}</div>
+      <p class="teacher-label" style="margin-bottom:6px;">Lançar nova cobrança</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <input id="aluno-fin-competencia" type="month" class="teacher-text-input" style="flex:1 1 140px;margin:0;" value="${escapeHtml(state.alunoFinCompetencia)}" title="Mês de referência" />
+        <input id="aluno-fin-valor" type="number" min="0" step="0.01" class="teacher-text-input" style="flex:1 1 120px;margin:0;" placeholder="Valor (R$)" value="${escapeHtml(state.alunoFinValor)}" />
+        <input id="aluno-fin-vencimento" type="date" class="teacher-text-input" style="flex:1 1 140px;margin:0;" value="${escapeHtml(state.alunoFinVencimento)}" title="Vencimento" />
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;align-items:center;">
+        <span style="font-size:12.5px;color:var(--slate);">Forma de pagamento</span>
+        ${selectFormaPagamentoHtml("aluno-fin-forma", formaAluno)}
+      </div>
+      ${alunoCamposForma}
+      <button type="button" class="teacher-primary-btn" style="margin-top:10px;" data-action="lancar-mensalidade" ${state.alunoFinSalvando ? "disabled" : ""}>${state.alunoFinSalvando ? "Salvando…" : "Lançar cobrança"}</button>
+      ${state.alunoFinErro ? `<p class="teacher-error" style="color:var(--red);font-size:12.5px;margin-top:8px;">${escapeHtml(state.alunoFinErro)}</p>` : ""}
+      ${state.alunoFinMensagem ? `<p class="teacher-success" style="margin-top:8px;">${escapeHtml(state.alunoFinMensagem)}</p>` : ""}
+    </div>`;
+}
+
 /* Ficha do aluno — modal aberto ao clicar num aluno na aba "Alunos". Mostra
    contato editável, resumo de frequência/financeiro, responsáveis já
    vinculados, um formulário pra cadastrar um novo responsável e o botão
@@ -4626,9 +5388,13 @@ function alunoDetalheModal(){
   <div class="aluno-modal-backdrop" data-action="fechar-aluno-modal">
     <div class="aluno-modal" role="dialog" aria-modal="true" aria-label="Ficha do aluno" data-action="noop">
       <div class="aluno-modal-head">
-        <div>
-          <h2>${escapeHtml(aluno.nome)}</h2>
-          <p class="section-eyebrow" style="margin:2px 0 0;">${escapeHtml(aluno.turma)}</p>
+        <div class="ficha-cabecalho-com-foto">
+          ${avatarHtml(fotoDoAluno(aluno), aluno.foto, "avatar-foto-grande")}
+          <div>
+            <h2>${escapeHtml(aluno.nome)}</h2>
+            <p class="section-eyebrow" style="margin:2px 0 0;">${escapeHtml(aluno.turma)}</p>
+            ${aluno.idAluno ? `<span class="id-aluno-tag">ID ${escapeHtml(aluno.idAluno)}</span>` : ""}
+          </div>
         </div>
         <button type="button" class="secretaria-modal-close" style="color:var(--slate);" data-action="fechar-aluno-modal" aria-label="Fechar">${ICONS.close}</button>
       </div>
@@ -4639,6 +5405,13 @@ function alunoDetalheModal(){
         <label class="teacher-label" for="aluno-detalhe-nascimento" style="display:block;margin-top:10px;">Data de nascimento</label>
         <input id="aluno-detalhe-nascimento" type="date" class="teacher-text-input" value="${escapeHtml(state.alunoDetalheNascimentoInput)}" />
         <p class="section-eyebrow" style="margin:6px 0 0;">Com a data preenchida o aluno passa a aparecer na aba "Aniversários".</p>
+        <label class="teacher-label" for="aluno-detalhe-sexo" style="display:block;margin-top:10px;">Aluno(a) é</label>
+        <select id="aluno-detalhe-sexo" class="teacher-text-input">
+          <option value="" ${!state.alunoDetalheSexoInput ? "selected" : ""} disabled>Selecione</option>
+          <option value="masculino" ${state.alunoDetalheSexoInput === "masculino" ? "selected" : ""}>Menino</option>
+          <option value="feminino" ${state.alunoDetalheSexoInput === "feminino" ? "selected" : ""}>Menina</option>
+        </select>
+        <p class="section-eyebrow" style="margin:4px 0 0;">Define a foto padrão que aparece na lista e na ficha.</p>
         <button type="button" class="teacher-primary-btn" data-action="salvar-aluno-contato" ${state.alunoDetalheSalvandoContato ? "disabled" : ""}>${state.alunoDetalheSalvandoContato ? "Salvando…" : "Salvar contato e data"}</button>
       </div>
 
@@ -4658,8 +5431,10 @@ function alunoDetalheModal(){
       <div class="aluno-modal-section">
         <h3 class="teacher-label">Resumo</h3>
         <p class="section-eyebrow" style="margin:0;">Frequência: ${aluno.presenca.percentual}% · ${aluno.presenca.faltasMes} faltas no mês</p>
-        <p class="section-eyebrow" style="margin:4px 0 0;">Financeiro: ${escapeHtml(aluno.financeiro.status || "—")}</p>
+        <p class="section-eyebrow" style="margin:4px 0 0;">Financeiro: ${escapeHtml(resumoFinanceiroAluno(aluno.financeiro).status)}</p>
       </div>
+
+      ${financeiroAlunoSection(aluno)}
 
       <div class="aluno-modal-section">
         <h3 class="teacher-label">Responsáveis vinculados</h3>
@@ -4688,6 +5463,619 @@ function alunoDetalheModal(){
 /* ================================================================== */
 /* Eventos — delegação, ligados uma única vez em #app                  */
 /* ================================================================== */
+/* ================================================================== */
+/* Avaliações — boletim de Inglês (Report Card) + avaliação institucional */
+/* ------------------------------------------------------------------
+   Toda a parte visual e de cálculo está em avaliacoes.js; aqui ficam só
+   as leituras/gravações no Firestore e as telas que dependem do state.
+
+   Quem vê o quê:
+     aluno / responsável  -> Boletim (só se o aluno é de Inglês) e
+                             Avaliação institucional (todos)
+     secretaria           -> Boletim (preenche/edita) e resultado da
+                             Avaliação institucional
+     professor            -> só o Boletim das turmas de Inglês dele
+   ------------------------------------------------------------------ */
+function mensagemErroAvaliacoes(err){
+  console.error("Erro nas avaliações:", err?.code, err);
+  const codigo = err?.code ? ` (${err.code})` : "";
+  if(err?.code === "permission-denied"){
+    return `O servidor não liberou o acesso às avaliações${codigo}. Avise o suporte técnico: as regras do Firestore precisam liberar as coleções novas (veja AVALIACOES.md).`;
+  }
+  if(err?.code === "failed-precondition"){
+    return `O Firestore pediu um índice para montar as avaliações${codigo}. Avise o suporte técnico (o link para criar aparece no console do navegador, F12).`;
+  }
+  return `Não foi possível carregar as avaliações agora${codigo}. Tente de novo.`;
+}
+
+/* Aluno que não é de Inglês não tem boletim: cai direto na avaliação institucional. */
+function avalSubEfetiva(student){
+  if(!student || !ehAlunoDeIngles(student.turma)) return "institucional";
+  return state.aval.sub === "institucional" ? "institucional" : "boletim";
+}
+
+/* ---------------- lado do aluno / responsável ---------------- */
+async function carregarAvaliacoesDoAluno(student, forcar = false){
+  if(!student) return;
+  if(avalSubEfetiva(student) === "boletim") return carregarBoletinsDoAluno(student, forcar);
+  return carregarAvaliacaoInstitucionalDoAluno(student, forcar);
+}
+
+/* Boletins do aluno (coleção boletinsIngles) — mesmo padrão de cache do
+   carregarBoletimDoAluno: uma leitura filtrando por escolaId + alunoKey. */
+async function carregarBoletinsDoAluno(student, forcar = false){
+  const a = state.aval;
+  const cache = a.boletimCache[student.id] || (a.boletimCache[student.id] = { registros: [], carregando: false, erro: "", carregadoEm: 0 });
+  if(cache.carregando) return;
+  if(!forcar && cache.carregadoEm && Date.now() - cache.carregadoEm < CALENDARIO_ATUALIZA_APOS_MS) return;
+
+  cache.carregando = true;
+  cache.erro = "";
+  render();
+  try {
+    const chave = chaveAluno(student.escolaId, student.nome);
+    const snap = await getDocs(query(collection(db, "boletinsIngles"), where("escolaId", "==", student.escolaId), where("alunoKey", "==", chave)));
+    cache.registros = snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .sort((x, y) => (y.atualizadoEm || "").localeCompare(x.atualizadoEm || ""));
+    cache.carregadoEm = Date.now();
+  } catch(err){
+    cache.erro = mensagemErroAvaliacoes(err);
+  } finally {
+    cache.carregando = false;
+    render();
+  }
+}
+
+/* Uma resposta por pessoa, por aluno e por semestre: o id é fixo, então
+   responder de novo atualiza em vez de duplicar. */
+function avalInstDocId(periodo, uid, alunoNome){
+  return `${periodo}_${uid}_${slugNome(alunoNome, "aluno")}`;
+}
+
+async function carregarAvaliacaoInstitucionalDoAluno(student, forcar = false){
+  const a = state.aval;
+  carregarConfigAvaliacaoInstitucional(student.escolaId, forcar);
+  const cache = a.instCache[student.id] || (a.instCache[student.id] = { registro: null, carregando: false, erro: "", carregadoEm: 0 });
+  if(cache.carregando) return;
+  if(!forcar && cache.carregadoEm && Date.now() - cache.carregadoEm < CALENDARIO_ATUALIZA_APOS_MS) return;
+
+  cache.carregando = true;
+  cache.erro = "";
+  render();
+  try {
+    const id = avalInstDocId(periodoAtual(), state.authUser.uid, student.nome);
+    const snap = await getDoc(doc(db, "avaliacoesInstitucionais", id));
+    cache.registro = snap.exists() ? { id: snap.id, ...snap.data() } : null;
+    cache.carregadoEm = Date.now();
+    // refaz o formulário em cima da resposta carregada, se a pessoa ainda não digitou nada
+    const f = a.instForm;
+    const vazio = !f || (Object.keys(f.respostas || {}).length === 0 && !(f.comentario || "").trim());
+    if(a.instFormAlunoId !== student.id || vazio) a.instFormAlunoId = null;
+  } catch(err){
+    cache.erro = mensagemErroAvaliacoes(err);
+  } finally {
+    cache.carregando = false;
+    render();
+  }
+}
+
+/* Formulário em edição do aluno atual (nasce da resposta já enviada, se houver). */
+function avalInstFormDe(student){
+  const a = state.aval;
+  if(a.instFormAlunoId !== student.id || !a.instForm){
+    const reg = a.instCache[student.id]?.registro;
+    a.instForm = { respostas: { ...(reg?.respostas || {}) }, comentario: reg?.comentario || "" };
+    a.instFormAlunoId = student.id;
+  }
+  return a.instForm;
+}
+
+async function enviarAvaliacaoInstitucional(student){
+  const a = state.aval;
+  const config = avalConfigAtual(student.escolaId);
+  if(!config.ativo){
+    a.instErro = "A secretaria bloqueou novas respostas no momento. Tente de novo mais tarde.";
+    a.instOk = false;
+    render();
+    return;
+  }
+  const form = avalInstFormDe(student);
+  const erro = validarAvaliacaoInstitucional(form, config.perguntas);
+  if(erro){
+    a.instErro = erro;
+    a.instOk = false;
+    render();
+    return;
+  }
+  a.instErro = "";
+  a.instOk = false;
+  a.instSalvando = true;
+  render();
+  try {
+    const periodo = periodoAtual();
+    const uid = state.authUser.uid;
+    const id = avalInstDocId(periodo, uid, student.nome);
+    const cache = a.instCache[student.id] || (a.instCache[student.id] = { registro: null, carregando: false, erro: "", carregadoEm: 0 });
+    const agora = new Date().toISOString();
+    const payload = {
+      periodo,
+      escolaId: student.escolaId,
+      autorId: uid,
+      autorRole: state.perfil?.role === "responsavel" ? "responsavel" : "aluno",
+      alunoKey: chaveAluno(student.escolaId, student.nome),
+      curso: student.turma || "",
+      respostas: respostasLimpas(form, config.perguntas),
+      comentario: (form.comentario || "").trim(),
+      criadoEm: cache.registro?.criadoEm || agora,
+      atualizadoEm: agora,
+    };
+    await setDoc(doc(db, "avaliacoesInstitucionais", id), payload);
+    cache.registro = { id, ...payload };
+    cache.carregadoEm = Date.now();
+    a.instOk = true;
+  } catch(err){
+    console.error("Erro ao enviar a avaliação institucional:", err?.code, err);
+    a.instErro = "Não foi possível enviar sua avaliação. Tente de novo.";
+  } finally {
+    a.instSalvando = false;
+    render();
+  }
+}
+
+/* ---------------- lado de quem preenche o boletim (professor / secretaria) ---------------- */
+function avalTurmasDeIngles(){
+  const lista = state.screen === "instituicao" ? (state.instTurmas || []) : (state.data.professorTurmas || []);
+  return lista.filter(t => ehAlunoDeIngles(t.disciplina || t.nome));
+}
+
+function avalTurmaAtual(){
+  return avalTurmasDeIngles().find(t => t.id === state.aval.turmaId) || null;
+}
+
+/* Nome pré-preenchido em "Teacher’s Name": o próprio professor logado, ou
+   o professor vinculado à turma (quando quem preenche é a secretaria). */
+function avalNomeDoProfessor(turma){
+  if(state.screen === "professor") return state.data.professorNome || "";
+  const prof = (state.gestaoProfessores || []).find(p => p.id === turma.professorId);
+  return prof?.nome || "";
+}
+
+async function carregarBoletinsDaTurma(turma){
+  const a = state.aval;
+  a.carregando = true;
+  a.erro = "";
+  render();
+  try {
+    const snap = await getDocs(query(collection(db, "boletinsIngles"), where("turmaId", "==", turma.id)));
+    if(a.turmaId !== turma.id) return;   // a pessoa já trocou de turma
+    a.lista = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    a.listaTurmaId = turma.id;
+  } catch(err){
+    if(a.turmaId === turma.id){
+      a.lista = [];
+      a.listaTurmaId = turma.id;
+      a.erro = mensagemErroAvaliacoes(err);
+    }
+  } finally {
+    a.carregando = false;
+    render();
+  }
+}
+
+function avalAbrirAluno(alunoNome){
+  const a = state.aval;
+  const turma = avalTurmaAtual();
+  if(!turma) return;
+  const existente = (a.lista || []).find(b => b.alunoNome === alunoNome);
+  if(existente){
+    a.form = boletimParaForm(existente);
+  } else {
+    const ref = (a.lista || [])[0];   // repete livro/grupo/professor já usados na turma
+    a.form = boletimFormVazio({
+      livro: ref?.livro || "",
+      grupo: ref?.grupo || turma.nome || "",
+      professor: ref?.professorNome || avalNomeDoProfessor(turma),
+    });
+  }
+  a.alunoNome = alunoNome;
+  a.formErro = "";
+  a.formOk = false;
+  a.impressaoErro = "";
+  render();
+}
+
+/* Campos de texto do editor guardam o valor sem re-renderizar (o cursor não pula). */
+function avalAtualizarCampo(campo, valor){
+  const f = state.aval.form;
+  if(!f) return;
+  if(campo.startsWith("extra.")){
+    const k = campo.slice(6);
+    if(Object.prototype.hasOwnProperty.call(f.extra, k)) f.extra[k] = valor;
+    return;
+  }
+  if(["livro", "grupo", "professor", "feedback"].includes(campo)) f[campo] = valor;
+}
+
+/* Um documento por aluno por turma: reabrir e salvar de novo atualiza. */
+async function salvarBoletimIngles(turma, alunoNome, form){
+  const dados = formParaBoletim(form);
+  const id = `${turma.id}_${slugNome(alunoNome, "aluno")}`;
+  const payload = {
+    alunoKey: chaveAluno(turma.escolaId, alunoNome),
+    alunoNome,
+    escolaId: turma.escolaId,
+    turmaId: turma.id,
+    turmaNome: turma.nome || "",
+    livro: dados.livro,
+    grupo: dados.grupo,
+    professorNome: dados.professorNome,
+    professorId: turma.professorId || (state.screen === "professor" ? state.authUser.uid : ""),
+    sem1: dados.sem1,
+    sem2: dados.sem2,
+    extra: dados.extra,
+    feedback: dados.feedback,
+    atualizadoEm: new Date().toISOString(),
+    atualizadoPorId: state.authUser.uid,
+    atualizadoPorNome: state.screen === "professor" ? (state.data.professorNome || "") : (state.perfil?.nome || "Secretaria"),
+  };
+  await setDoc(doc(db, "boletinsIngles", id), payload);
+  return { id, ...payload };
+}
+
+/* Ao abrir a aba: o professor com uma turma de Inglês só já cai nela. */
+function avalAbrirNoProfessor(){
+  const turmas = avalTurmasDeIngles();
+  if(turmas.length === 1 && !state.aval.turmaId){
+    state.aval.turmaId = turmas[0].id;
+    carregarBoletinsDaTurma(turmas[0]);
+  }
+}
+
+/* Secretaria: precisa das turmas (seletor), dos professores (nome no
+   boletim) e, se estiver na sub-aba institucional, do resultado. */
+function avalAbrirNaInstituicao(){
+  const escolaId = state.escolaSelecionadaId;
+  if(!escolaId) return;
+  if((state.instTurmas === null || state.instTurmasEscolaId !== escolaId) && !state.instTurmasCarregando){
+    carregarTurmasDaInstituicao(escolaId);
+  }
+  if((state.gestaoProfessores === null || state.gestaoEquipeEscolaId !== escolaId) && !state.gestaoEquipeCarregando){
+    carregarEquipeDaEscola(escolaId);
+  }
+  if(state.aval.sub === "institucional"){
+    carregarResultadosInstitucionais(escolaId);
+    carregarConfigAvaliacaoInstitucional(escolaId);
+  }
+}
+
+async function carregarResultadosInstitucionais(escolaId, forcar = false){
+  const a = state.aval;
+  if(a.resultadosCarregando) return;
+  const r = a.resultados;
+  if(!forcar && r && r.escolaId === escolaId && r.periodo === a.periodo && Date.now() - r.carregadoEm < CALENDARIO_ATUALIZA_APOS_MS) return;
+
+  a.resultadosCarregando = true;
+  a.resultadosErro = "";
+  render();
+  try {
+    const periodo = a.periodo;
+    const snap = await getDocs(query(collection(db, "avaliacoesInstitucionais"), where("escolaId", "==", escolaId), where("periodo", "==", periodo)));
+    a.resultados = { escolaId, periodo, registros: snap.docs.map(d => ({ id: d.id, ...d.data() })), carregadoEm: Date.now() };
+  } catch(err){
+    a.resultadosErro = mensagemErroAvaliacoes(err);
+  } finally {
+    a.resultadosCarregando = false;
+    render();
+  }
+}
+
+/* ---------------- configuração (perguntas + liga/desliga) ---------------- */
+/* Um só cache por escola: serve tanto pra secretaria (que edita) quanto
+   pro aluno/responsável (que só lê, pra saber se está aberta e quais são
+   as perguntas de hoje). Sem documento salvo ainda, vale o padrão. */
+async function carregarConfigAvaliacaoInstitucional(escolaId, forcar = false){
+  if(!escolaId) return;
+  const a = state.aval;
+  const cache = a.instConfigCache[escolaId] || (a.instConfigCache[escolaId] = { config: null, carregando: false, erro: "", carregadoEm: 0 });
+  if(cache.carregando) return;
+  if(!forcar && cache.carregadoEm && Date.now() - cache.carregadoEm < CALENDARIO_ATUALIZA_APOS_MS) return;
+
+  cache.carregando = true;
+  cache.erro = "";
+  render();
+  try {
+    const snap = await getDoc(doc(db, "avaliacaoInstConfig", escolaId));
+    cache.config = avalConfigDeDocumento(snap.exists() ? snap.data() : null);
+    cache.carregadoEm = Date.now();
+  } catch(err){
+    cache.erro = mensagemErroAvaliacoes(err);
+  } finally {
+    cache.carregando = false;
+    render();
+  }
+}
+
+/* Configuração efetiva já carregada pra uma escola (ou o padrão, se
+   ainda não chegou/não existe documento). */
+function avalConfigAtual(escolaId){
+  return state.aval.instConfigCache[escolaId]?.config || avalConfigPadrao();
+}
+
+/* Rascunho em edição da secretaria — nasce de uma cópia da configuração
+   carregada, pra dar pra mexer (adicionar/remover/editar pergunta, ligar
+   e desligar) sem afetar o que já está salvo até clicar em "Salvar". */
+function avalConfigFormDe(escolaId){
+  const a = state.aval;
+  const cache = a.instConfigCache[escolaId];
+  const carregado = !!(cache && cache.carregadoEm);
+  // Nasce do padrão provisório antes da leitura terminar; assim que o
+  // documento de verdade chega, o rascunho é refeito em cima dele UMA
+  // vez só — depois disso, as edições da secretaria são preservadas
+  // mesmo que o cache seja atualizado de novo em segundo plano.
+  if(a.configEscolaId !== escolaId || !a.configForm || (carregado && !a.configFormCarregado)){
+    const atual = avalConfigAtual(escolaId);
+    a.configForm = { ativo: atual.ativo, perguntas: atual.perguntas.map(p => ({ ...p })) };
+    a.configEscolaId = escolaId;
+    a.configFormCarregado = carregado;
+    a.configErro = "";
+    a.configOk = false;
+  }
+  return a.configForm;
+}
+
+function avalConfigToggleAtivo(escolaId){
+  const f = avalConfigFormDe(escolaId);
+  f.ativo = !f.ativo;
+  state.aval.configOk = false;
+}
+
+function avalConfigAtualizarPergunta(escolaId, idx, texto){
+  const f = avalConfigFormDe(escolaId);
+  if(f.perguntas[idx]) f.perguntas[idx].texto = texto;
+  state.aval.configOk = false;
+}
+
+function avalConfigAdicionarPergunta(escolaId){
+  const f = avalConfigFormDe(escolaId);
+  f.perguntas.push({ id: novoIdPergunta("nova pergunta", f.perguntas), texto: "" });
+  state.aval.configOk = false;
+}
+
+function avalConfigRemoverPergunta(escolaId, idx){
+  const f = avalConfigFormDe(escolaId);
+  if(f.perguntas.length <= 1) return;
+  f.perguntas.splice(idx, 1);
+  state.aval.configOk = false;
+}
+
+function avalConfigRestaurarPadrao(escolaId){
+  const a = state.aval;
+  const padrao = avalConfigPadrao();
+  a.configForm = { ativo: a.configForm ? a.configForm.ativo : padrao.ativo, perguntas: padrao.perguntas };
+  a.configEscolaId = escolaId;
+  a.configOk = false;
+}
+
+async function salvarConfigAvaliacaoInstitucional(escolaId){
+  const a = state.aval;
+  const form = avalConfigFormDe(escolaId);
+  const erro = validarConfigPerguntas(form.perguntas);
+  if(erro){
+    a.configErro = erro;
+    a.configOk = false;
+    render();
+    return;
+  }
+  a.configErro = "";
+  a.configOk = false;
+  a.configSalvando = true;
+  render();
+  try {
+    const payload = {
+      ativo: !!form.ativo,
+      perguntas: form.perguntas.map(p => ({ id: p.id, texto: p.texto.trim() })),
+      atualizadoEm: new Date().toISOString(),
+      atualizadoPorId: state.authUser.uid,
+    };
+    await setDoc(doc(db, "avaliacaoInstConfig", escolaId), payload);
+    const cache = a.instConfigCache[escolaId] || (a.instConfigCache[escolaId] = { config: null, carregando: false, erro: "", carregadoEm: 0 });
+    cache.config = avalConfigDeDocumento(payload);
+    cache.carregadoEm = Date.now();
+    a.configOk = true;
+  } catch(err){
+    console.error("Erro ao salvar a configuração da avaliação institucional:", err?.code, err);
+    a.configErro = "Não foi possível salvar a configuração. Tente de novo.";
+  } finally {
+    a.configSalvando = false;
+    render();
+  }
+}
+
+/* ---------------- telas ---------------- */
+const AVAL_SUBS = [
+  { key: "boletim", label: "Boletim", desc: "Report Card de Inglês" },
+  { key: "institucional", label: "Avaliação institucional", desc: "Sua opinião sobre o Educa+" },
+];
+
+/* Aluno e responsável (papel só muda o texto). */
+function avaliacoesAlunoView(student, papel){
+  if(!student){
+    return `<h2 class="section-title">Avaliações</h2><p class="section-eyebrow">Nenhum aluno vinculado.</p>`;
+  }
+  const ingles = ehAlunoDeIngles(student.turma);
+  const sub = avalSubEfetiva(student);
+  const subs = ingles ? avalSubAbasHtml(AVAL_SUBS, sub) : "";
+  const corpo = sub === "boletim" ? avalBoletimAlunoView(student) : avalInstitucionalAlunoView(student);
+  return `
+    <h2 class="section-title">Avaliações</h2>
+    <p class="section-eyebrow">${escapeHtml(student.nome)} · ${escapeHtml(student.turma)}</p>
+    ${subs}
+    ${corpo}`;
+}
+
+function avalBoletimAlunoView(student){
+  const a = state.aval;
+  const cache = a.boletimCache[student.id] || { registros: [], carregando: false, erro: "" };
+  const erroMsg = msg => `<p class="teacher-error" style="color:var(--red,#C4544A);font-size:13px;">${escapeHtml(msg)}</p>`;
+
+  if(cache.erro) return erroMsg(cache.erro);
+  if(cache.carregando && cache.registros.length === 0) return `<p class="section-eyebrow">Carregando boletim…</p>`;
+  if(cache.registros.length === 0){
+    return `<div class="card flush"><div style="padding:20px;font-size:14px;color:var(--slate);">O boletim ainda não foi lançado pelo professor.</div></div>`;
+  }
+  return cache.registros.map(b => `
+    <div class="teacher-panel aval-boletim">
+      ${boletimHtml({ alunoNome: b.alunoNome || student.nome, form: boletimParaForm(b), editavel: false })}
+      <div class="aval-acoes">
+        <button type="button" class="attendance-btn" data-action="aval-imprimir" data-src="registro" data-id="${escapeHtml(b.id)}">Imprimir / salvar PDF</button>
+        <span class="aval-atualizado">Atualizado em ${escapeHtml((b.atualizadoEm || "").slice(0, 10).split("-").reverse().join("/"))}</span>
+      </div>
+    </div>`).join("") + (a.impressaoErro ? erroMsg(a.impressaoErro) : "");
+}
+
+function avalInstitucionalAlunoView(student){
+  const a = state.aval;
+  const cache = a.instCache[student.id] || { registro: null, carregando: false, erro: "" };
+  if(cache.erro){
+    return `<p class="teacher-error" style="color:var(--red,#C4544A);font-size:13px;">${escapeHtml(cache.erro)}</p>`;
+  }
+  if(cache.carregando && !cache.registro){
+    return `<p class="section-eyebrow">Carregando avaliação…</p>`;
+  }
+  const config = avalConfigAtual(student.escolaId);
+  return avaliacaoInstitucionalHtml({
+    periodo: periodoAtual(),
+    perguntas: config.perguntas,
+    bloqueada: !config.ativo,
+    form: avalInstFormDe(student),
+    jaRespondeu: !!cache.registro,
+    salvando: a.instSalvando,
+    erro: a.instErro,
+    ok: a.instOk,
+  });
+}
+
+/* Professor: só o boletim das turmas de Inglês dele. */
+function avaliacoesProfessorView(){
+  return `
+    <h2 class="section-title">Avaliações</h2>
+    <p class="section-eyebrow">Boletim (Report Card) dos alunos de Inglês.</p>
+    ${avalGestaoBoletimView(avalTurmasDeIngles())}`;
+}
+
+/* Secretaria: preenche o boletim e acompanha a avaliação institucional. */
+function avaliacoesInstituicaoView(school){
+  const sub = state.aval.sub === "institucional" ? "institucional" : "boletim";
+  const subs = avalSubAbasHtml([
+    { key: "boletim", label: "Boletim", desc: "Report Card dos alunos de Inglês" },
+    { key: "institucional", label: "Avaliação institucional", desc: "Respostas de alunos e responsáveis" },
+  ], sub);
+
+  let corpo;
+  if(sub === "boletim"){
+    corpo = avalGestaoBoletimView(avalTurmasDeIngles());
+  } else {
+    const escolaId = state.escolaSelecionadaId;
+    const configCache = state.aval.instConfigCache[escolaId] || { config: null, carregando: false };
+    const config = avalConfigFormDe(escolaId);
+    const painelConfig = avalConfigInstitucionalHtml({
+      form: config,
+      carregando: configCache.carregando && !configCache.config,
+      salvando: state.aval.configSalvando,
+      erro: state.aval.configErro,
+      ok: state.aval.configOk,
+    });
+
+    const r = state.aval.resultados;
+    const resultados = (r && r.escolaId === escolaId && r.periodo === state.aval.periodo) ? r : null;
+    const painelResultados = resultadosInstitucionaisHtml({
+      periodo: state.aval.periodo,
+      perguntas: avalConfigAtual(escolaId).perguntas,
+      resultados,
+      carregando: state.aval.resultadosCarregando,
+      erro: state.aval.resultadosErro,
+    });
+    corpo = `${painelConfig}<div style="height:24px;"></div>${painelResultados}`;
+  }
+  return `
+    <h2 class="section-title">Avaliações</h2>
+    <p class="section-eyebrow">${escapeHtml(school?.nome || "")}</p>
+    ${subs}
+    ${corpo}`;
+}
+
+/* Lista de turmas -> lista de alunos -> editor do Report Card.
+   Compartilhada pelo professor e pela secretaria. */
+function avalGestaoBoletimView(turmas){
+  const a = state.aval;
+  const erroMsg = msg => `<p class="teacher-error" style="color:var(--red,#C4544A);font-size:12.5px;margin:8px 0;">${escapeHtml(msg)}</p>`;
+
+  if(state.screen === "instituicao" && state.instTurmasCarregando && turmas.length === 0){
+    return `<p class="section-eyebrow">Carregando turmas…</p>`;
+  }
+  if(turmas.length === 0){
+    return `<p class="section-eyebrow">Nenhuma turma de Inglês disponível ainda.</p>`;
+  }
+
+  const turma = turmas.find(t => t.id === a.turmaId) || null;
+  const seletor = `<div class="teacher-class-list">${turmas.map(t => `
+    <button type="button" class="teacher-class-card ${turma && t.id === turma.id ? "active" : ""}" data-action="aval-turma" data-id="${escapeHtml(t.id)}">
+      <span>${escapeHtml(t.horario || "")}</span><strong>${escapeHtml(t.nome)}</strong><small>${escapeHtml(t.escola || "")} · ${(t.alunos || []).length} aluno(s)</small>
+    </button>`).join("")}</div>`;
+
+  if(!turma) return `<p class="section-eyebrow">Escolha a turma para preencher os boletins.</p>${seletor}`;
+  if(a.carregando && a.listaTurmaId !== turma.id){
+    return `${seletor}<p class="section-eyebrow">Carregando boletins desta turma…</p>`;
+  }
+
+  // ---- editor de um aluno ----
+  if(a.alunoNome && a.form){
+    return `
+      ${seletor}
+      <div class="teacher-panel">
+        <div class="teacher-panel-head">
+          <div><h2>${escapeHtml(a.alunoNome)}</h2><p>${escapeHtml(turma.nome)} · Report Card</p></div>
+          <button type="button" class="attendance-btn" data-action="aval-voltar">${ICONS.chevronLeft} Voltar à lista</button>
+        </div>
+        ${boletimHtml({ alunoNome: a.alunoNome, form: a.form, editavel: true })}
+        <div class="aval-acoes">
+          <button type="button" class="teacher-primary-btn" data-action="aval-salvar" ${a.salvando ? "disabled" : ""}>${a.salvando ? "Salvando…" : "Salvar boletim"}</button>
+          <button type="button" class="attendance-btn" data-action="aval-imprimir" data-src="form">Imprimir / salvar PDF</button>
+        </div>
+        ${a.formErro ? erroMsg(a.formErro) : ""}
+        ${a.impressaoErro ? erroMsg(a.impressaoErro) : ""}
+        ${a.formOk ? `<p class="teacher-success">Boletim salvo — já aparece para o aluno e o responsável.</p>` : ""}
+      </div>`;
+  }
+
+  // ---- lista de alunos da turma ----
+  const lista = state.aval.listaTurmaId === turma.id ? (a.lista || []) : [];
+  const alunos = turma.alunos || [];
+  const linhas = alunos.length ? alunos.map(nome => {
+    const b = lista.find(x => x.alunoNome === nome);
+    return `
+      <div class="row">
+        <div>
+          <strong style="display:block;font-size:14px;color:var(--ink);">${escapeHtml(nome)}</strong>
+          <span style="font-size:12px;color:var(--slate);">${b ? "Atualizado em " + escapeHtml((b.atualizadoEm || "").slice(0, 10).split("-").reverse().join("/")) : "Ainda não preenchido"}</span>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <span class="pill ${b ? "pill-green" : "pill-gold"}">${b ? "Preenchido" : "Pendente"}</span>
+          <button type="button" class="attendance-btn" data-action="aval-abrir-aluno" data-aluno="${escapeHtml(nome)}">${b ? `${ICONS.pencil} Editar` : "Preencher"}</button>
+        </div>
+      </div>`;
+  }).join("") : `<div style="padding:20px;font-size:14px;color:var(--slate);">Esta turma ainda não tem alunos.</div>`;
+
+  return `
+    ${seletor}
+    <div class="teacher-panel">
+      <div class="teacher-panel-head"><div><h2>${escapeHtml(turma.nome)}</h2><p>${escapeHtml(turma.escola || "")} · ${escapeHtml(turma.disciplina || "")}</p></div></div>
+      ${a.erro ? erroMsg(a.erro) : ""}
+      <div class="card flush">${linhas}</div>
+    </div>`;
+}
+
 function bindEvents(){
   app.addEventListener("submit", async (e) => {
     if(e.target && e.target.id === "login-form"){
@@ -4716,6 +6104,21 @@ function bindEvents(){
 
   app.addEventListener("input", (e) => {
     const t = e.target;
+    // Aba Avaliações: campos do boletim e comentário da avaliação institucional
+    // guardam o valor sem re-renderizar, pro cursor não pular.
+    if(t.dataset && t.dataset.avalCampo){
+      avalAtualizarCampo(t.dataset.avalCampo, t.value);
+      return;
+    }
+    if(t.dataset && t.dataset.avalInst){
+      const alunoAval = calAlunoAtual();
+      if(alunoAval && t.dataset.avalInst === "comentario") avalInstFormDe(alunoAval).comentario = t.value;
+      return;
+    }
+    if(t.dataset && t.dataset.action === "aval-config-pergunta-texto"){
+      avalConfigAtualizarPergunta(state.escolaSelecionadaId, Number(t.dataset.idx), t.value);
+      return;
+    }
     // Formulário de novo aviso (professor): guarda sem re-renderizar, pro cursor não pular.
     if(t.dataset && t.dataset.evCampo){
       if(state.cal.form) state.cal.form[t.dataset.evCampo] = t.value;
@@ -4776,6 +6179,20 @@ function bindEvents(){
     if(t.id === "aluno-detalhe-contato"){ state.alunoDetalheContatoInput = t.value; return; }
     if(t.id === "aluno-resp-nome"){ state.alunoRespNome = t.value; return; }
     if(t.id === "aluno-resp-contato"){ state.alunoRespContato = t.value; return; }
+    if(t.id === "aluno-fin-competencia"){ state.alunoFinCompetencia = t.value; return; }
+    if(t.id === "aluno-fin-valor"){ state.alunoFinValor = t.value; return; }
+    if(t.id === "aluno-fin-vencimento"){ state.alunoFinVencimento = t.value; return; }
+    if(t.id === "aluno-fin-pix"){ state.alunoFinPix = t.value; return; }
+    if(t.id === "aluno-fin-codigo-barras"){ state.alunoFinCodigoBarras = t.value; return; }
+    if(t.id === "aluno-fin-link-cartao"){ state.alunoFinLinkCartao = t.value; return; }
+    if(t.id === "aluno-fin-pagamento-data"){ state.alunoFinPagamentoData = t.value; return; }
+    if(t.id === "fin-pagamento-data"){ state.finPagamentoData = t.value; return; }
+    if(t.id === "fin-cobranca-competencia"){ state.finCobrancaCompetencia = t.value; return; }
+    if(t.id === "fin-cobranca-valor"){ state.finCobrancaValor = t.value; return; }
+    if(t.id === "fin-cobranca-vencimento"){ state.finCobrancaVencimento = t.value; return; }
+    if(t.id === "fin-cobranca-pix"){ state.finCobrancaPix = t.value; return; }
+    if(t.id === "fin-cobranca-codigo-barras"){ state.finCobrancaCodigoBarras = t.value; return; }
+    if(t.id === "fin-cobranca-link-cartao"){ state.finCobrancaLinkCartao = t.value; return; }
     // Campos do contrato: guardam o valor sem re-renderizar, senão o
     // cursor pula pra fora do input a cada tecla. O recálculo (parcelas,
     // término) acontece no "change", quando a pessoa sai do campo.
@@ -4798,6 +6215,12 @@ function bindEvents(){
 
   app.addEventListener("change", async (e) => {
     const t = e.target;
+    if(t.id === "aval-inst-periodo"){
+      state.aval.periodo = t.value;
+      render();
+      carregarResultadosInstitucionais(state.escolaSelecionadaId, true);
+      return;
+    }
     if(t.dataset && t.dataset.evCampo){
       const f = state.cal.form;
       if(!f) return;
@@ -4825,6 +6248,34 @@ function bindEvents(){
       state.alunoTurmaSelecionada = t.value;
       return;
     }
+    if(t.id === "aluno-fin-pagamento-forma"){
+      state.alunoFinPagamentoForma = t.value;
+      return;
+    }
+    if(t.id === "fin-pagamento-forma"){
+      state.finPagamentoForma = t.value;
+      return;
+    }
+    if(t.id === "aluno-fin-forma"){
+      state.alunoFinForma = t.value;
+      render();
+      return;
+    }
+    if(t.id === "fin-cobranca-forma"){
+      state.finCobrancaForma = t.value;
+      render();
+      return;
+    }
+    if(t.id === "aluno-fin-pix-tipo"){
+      state.alunoFinPixTipo = t.value;
+      render();
+      return;
+    }
+    if(t.id === "fin-cobranca-pix-tipo"){
+      state.finCobrancaPixTipo = t.value;
+      render();
+      return;
+    }
     if(t.id === "conteudo-disciplina-select"){
       state.professorConteudosDisciplinaSelecionada = t.value;
       render();
@@ -4842,6 +6293,56 @@ function bindEvents(){
       state.professorRegistroSalvo = false;
       state.professorRegistroErro = "";
       render();
+      return;
+    }
+    if(t.dataset && t.dataset.alunoFinBoleto){
+      const arq = t.files && t.files[0];
+      t.value = "";
+      if(!arq) return;
+      if(arq.size > BOLETO_PDF_TAMANHO_MAX){
+        state.alunoFinErro = `Esse PDF tem mais de ${Math.round(BOLETO_PDF_TAMANHO_MAX / 1024)}KB. Comprima o arquivo e tente de novo.`;
+        render();
+        return;
+      }
+      state.alunoFinErro = "";
+      state.alunoFinBoletoLendo = true;
+      render();
+      try {
+        const dados = await lerArquivoComoDataUrl(arq);
+        state.alunoFinBoletoArquivo = { nome: arq.name, dados };
+      } catch(err){
+        state.alunoFinErro = "Não consegui ler esse PDF. Tente outro arquivo.";
+      } finally {
+        state.alunoFinBoletoLendo = false;
+        render();
+      }
+      return;
+    }
+    if(t.id === "fin-cobranca-aluno"){
+      state.finCobrancaAlunoId = t.value;
+      return;
+    }
+    if(t.dataset && t.dataset.finCobrancaBoleto){
+      const arq = t.files && t.files[0];
+      t.value = "";
+      if(!arq) return;
+      if(arq.size > BOLETO_PDF_TAMANHO_MAX){
+        state.finCobrancaErro = `Esse PDF tem mais de ${Math.round(BOLETO_PDF_TAMANHO_MAX / 1024)}KB. Comprima o arquivo e tente de novo.`;
+        render();
+        return;
+      }
+      state.finCobrancaErro = "";
+      state.finCobrancaBoletoLendo = true;
+      render();
+      try {
+        const dados = await lerArquivoComoDataUrl(arq);
+        state.finCobrancaBoletoArquivo = { nome: arq.name, dados };
+      } catch(err){
+        state.finCobrancaErro = "Não consegui ler esse PDF. Tente outro arquivo.";
+      } finally {
+        state.finCobrancaBoletoLendo = false;
+        render();
+      }
       return;
     }
     if(t.dataset && t.dataset.contratoEnvio){
@@ -5006,6 +6507,8 @@ function bindEvents(){
       return;
     }
     if(t.id === "new-user-turma"){ state.novoUsuarioTurma = t.value; return; }
+    if(t.id === "new-user-sexo"){ state.novoUsuarioSexo = t.value; return; }
+    if(t.id === "edit-professor-sexo"){ state.editProfessorSexo = t.value; return; }
     if(t.id === "new-user-role"){
       state.novoUsuarioRole = t.value;
       state.instituicaoErro = "";
@@ -5041,6 +6544,7 @@ function bindEvents(){
         state.instTurmasEscolaId = null;
         state.instFrequencia = null;
         state.instFrequenciaEscolaId = null;
+        state.aval = avalNovoEstado();
         state.screen = "instituicao";
         render();
         carregarTurmasDaInstituicao(state.escolaSelecionadaId);
@@ -5063,6 +6567,7 @@ function bindEvents(){
         if(state.alunoTab === "calendario") carregarCalendarioDoAluno(state.data.aluno);
         else if(state.alunoTab === "notas") carregarBoletimDoAluno(state.data.aluno);
         else if(state.alunoTab === "certificados") carregarCertificadosDoAluno(state.data.aluno);
+        else if(state.alunoTab === "aval"){ state.aval.instOk = false; state.aval.instErro = ""; carregarAvaliacoesDoAluno(state.data.aluno); }
         break;
       case "set-familia-tab":
         state.familiaTab = el.dataset.key;
@@ -5071,6 +6576,7 @@ function bindEvents(){
         if(state.familiaTab === "calendario") carregarCalendarioDoAluno(calAlunoAtual());
         else if(state.familiaTab === "notas") carregarBoletimDoAluno(calAlunoAtual());
         else if(state.familiaTab === "certificados") carregarCertificadosDoAluno(calAlunoAtual());
+        else if(state.familiaTab === "aval"){ state.aval.instOk = false; state.aval.instErro = ""; carregarAvaliacoesDoAluno(calAlunoAtual()); }
         break;
       case "switch-student":
         state.familiaStudentId = el.dataset.id;
@@ -5079,11 +6585,13 @@ function bindEvents(){
         if(state.familiaTab === "calendario") carregarCalendarioDoAluno(calAlunoAtual());
         else if(state.familiaTab === "notas") carregarBoletimDoAluno(calAlunoAtual());
         else if(state.familiaTab === "certificados") carregarCertificadosDoAluno(calAlunoAtual());
+        else if(state.familiaTab === "aval"){ state.aval.instOk = false; state.aval.instErro = ""; carregarAvaliacoesDoAluno(calAlunoAtual()); }
         break;
       case "set-inst-tab":
         state.instTab = el.dataset.key;
         state.cal.diaAberto = null;
         render();
+        if(state.instTab === "aval") avalAbrirNaInstituicao();
         if(state.instTab === "turmas" && state.escolaSelecionadaId
           && (state.instTurmas === null || state.instTurmasEscolaId !== state.escolaSelecionadaId)
           && !state.instTurmasCarregando){
@@ -5097,7 +6605,7 @@ function bindEvents(){
             carregarFrequenciaDaInstituicao(state.escolaSelecionadaId);
           }
         }
-        if(state.instTab === "alunos" && state.escolaSelecionadaId
+        if((state.instTab === "alunos" || state.instTab === "financeiro") && state.escolaSelecionadaId
           && (state.instAlunos === null || state.instAlunosEscolaId !== state.escolaSelecionadaId)
           && !state.instAlunosCarregando){
           carregarAlunosDaInstituicao(state.escolaSelecionadaId);
@@ -5136,6 +6644,38 @@ function bindEvents(){
         state.gestaoSubTab = el.dataset.key;
         render();
         if(state.gestaoSubTab === "acessos") garantirPessoasDaUnidade();
+        break;
+
+      case "set-fin-subtab":
+        state.finSubTab = el.dataset.key;
+        if(state.finSubTab === "lancar"){
+          // limpa o formulário toda vez que entra na sub-aba, como fazia
+          // o antigo botão "Lançar cobrança" ao abrir.
+          state.finCobrancaAlunoId = "";
+          state.finCobrancaCompetencia = competenciaAtual();
+          state.finCobrancaValor = "";
+          state.finCobrancaVencimento = "";
+          state.finCobrancaForma = "boleto";
+          state.finCobrancaPixTipo = "copiaCola";
+          state.finCobrancaBoletoComPix = false;
+          state.finCobrancaLinkCartao = "";
+          state.finCobrancaPix = "";
+          state.finCobrancaCodigoBarras = "";
+          state.finCobrancaBoletoArquivo = null;
+          state.finCobrancaErro = "";
+          state.finCobrancaMensagem = "";
+        }
+        render();
+        break;
+
+      case "toggle-fin-cobranca-boleto-pix":
+        state.finCobrancaBoletoComPix = !state.finCobrancaBoletoComPix;
+        render();
+        break;
+
+      case "toggle-aluno-fin-boleto-pix":
+        state.alunoFinBoletoComPix = !state.alunoFinBoletoComPix;
+        render();
         break;
 
       case "set-acessos-grupo":
@@ -5237,11 +6777,173 @@ function bindEvents(){
         }
         break;
       }
+      /* ---------------- Avaliações ---------------- */
+      case "aval-sub": {
+        const a = state.aval;
+        a.sub = el.dataset.sub === "institucional" ? "institucional" : "boletim";
+        a.instOk = false;
+        a.instErro = "";
+        a.impressaoErro = "";
+        render();
+        if(state.screen === "instituicao"){
+          if(a.sub === "institucional"){
+            carregarResultadosInstitucionais(state.escolaSelecionadaId);
+            carregarConfigAvaliacaoInstitucional(state.escolaSelecionadaId);
+          }
+        } else {
+          carregarAvaliacoesDoAluno(calAlunoAtual());
+        }
+        break;
+      }
+      case "aval-turma": {
+        const a = state.aval;
+        a.turmaId = el.dataset.id;
+        a.alunoNome = null;
+        a.form = null;
+        a.formErro = "";
+        a.formOk = false;
+        a.impressaoErro = "";
+        render();
+        const turmaAval = avalTurmaAtual();
+        if(turmaAval) carregarBoletinsDaTurma(turmaAval);
+        break;
+      }
+      case "aval-abrir-aluno":
+        avalAbrirAluno(el.dataset.aluno);
+        break;
+      case "aval-voltar":
+        state.aval.alunoNome = null;
+        state.aval.form = null;
+        state.aval.formErro = "";
+        state.aval.formOk = false;
+        state.aval.impressaoErro = "";
+        render();
+        break;
+      case "aval-marcar": {
+        const f = state.aval.form;
+        const crit = el.dataset.crit;
+        const nivel = el.dataset.nivel;
+        if(!f || !CRITERIOS_BOLETIM.some(c => c.id === crit) || !NIVEIS_BOLETIM.some(n => n.id === nivel)) break;
+        const sem = el.dataset.sem === "2" ? "sem2" : "sem1";
+        f[sem][crit] = f[sem][crit] === nivel ? "" : nivel;   // clicar de novo no X limpa a marcação
+        state.aval.formOk = false;
+        render();
+        break;
+      }
+      case "aval-feedback-padrao":
+        if(state.aval.form){
+          state.aval.form.feedback = FEEDBACK_PADRAO;
+          state.aval.formOk = false;
+          render();
+        }
+        break;
+      case "aval-salvar": {
+        const a = state.aval;
+        const turmaAval = avalTurmaAtual();
+        if(!turmaAval || !a.form || !a.alunoNome || a.salvando) break;
+        const erroForm = validarBoletimForm(a.form);
+        if(erroForm){
+          a.formErro = erroForm;
+          a.formOk = false;
+          render();
+          break;
+        }
+        a.formErro = "";
+        a.formOk = false;
+        a.salvando = true;
+        render();
+        try {
+          const salvo = await salvarBoletimIngles(turmaAval, a.alunoNome, a.form);
+          a.lista = [...(a.lista || []).filter(b => b.id !== salvo.id), salvo];
+          a.listaTurmaId = turmaAval.id;
+          a.form = boletimParaForm(salvo);   // reflete a formatação final (ex.: 9 -> 9,0)
+          a.formOk = true;
+        } catch(err){
+          console.error("Erro ao salvar o boletim:", err?.code, err);
+          a.formErro = "Não foi possível salvar o boletim. Tente de novo.";
+        } finally {
+          a.salvando = false;
+          render();
+        }
+        break;
+      }
+      case "aval-imprimir": {
+        const a = state.aval;
+        let dados = null;
+        if(el.dataset.src === "form"){
+          if(a.form && a.alunoNome){
+            const erroForm = validarBoletimForm(a.form);
+            if(erroForm){
+              a.formErro = erroForm;
+              render();
+              break;
+            }
+            dados = { alunoNome: a.alunoNome, form: boletimParaForm(formParaBoletim(a.form)) };
+          }
+        } else {
+          const registro = Object.values(a.boletimCache).flatMap(c => c.registros).find(r => r.id === el.dataset.id);
+          if(registro) dados = { alunoNome: registro.alunoNome, form: boletimParaForm(registro) };
+        }
+        if(!dados) break;
+        const abriu = abrirBoletimParaImpressao(dados);
+        a.impressaoErro = abriu ? "" : "O navegador bloqueou a nova aba. Libere os pop-ups deste site e tente de novo.";
+        if(!abriu) render();
+        break;
+      }
+      case "aval-inst-nota": {
+        const alunoAval = calAlunoAtual();
+        if(!alunoAval) break;
+        const config = avalConfigAtual(alunoAval.escolaId);
+        const q = el.dataset.q;
+        const nota = Number(el.dataset.nota);
+        if(!config.ativo || !config.perguntas.some(p => p.id === q) || !(nota >= 1 && nota <= 5)) break;
+        avalInstFormDe(alunoAval).respostas[q] = nota;
+        state.aval.instOk = false;
+        state.aval.instErro = "";
+        render();
+        break;
+      }
+      case "aval-inst-enviar": {
+        const alunoAval = calAlunoAtual();
+        if(alunoAval && !state.aval.instSalvando) await enviarAvaliacaoInstitucional(alunoAval);
+        break;
+      }
+      case "aval-config-toggle":
+        if(state.escolaSelecionadaId){
+          avalConfigToggleAtivo(state.escolaSelecionadaId);
+          render();
+        }
+        break;
+      case "aval-config-pergunta-add":
+        if(state.escolaSelecionadaId){
+          avalConfigAdicionarPergunta(state.escolaSelecionadaId);
+          render();
+        }
+        break;
+      case "aval-config-pergunta-remover":
+        if(state.escolaSelecionadaId){
+          avalConfigRemoverPergunta(state.escolaSelecionadaId, Number(el.dataset.idx));
+          render();
+        }
+        break;
+      case "aval-config-restaurar":
+        if(state.escolaSelecionadaId){
+          avalConfigRestaurarPadrao(state.escolaSelecionadaId);
+          render();
+        }
+        break;
+      case "aval-config-salvar":
+        if(state.escolaSelecionadaId && !state.aval.configSalvando){
+          await salvarConfigAvaliacaoInstitucional(state.escolaSelecionadaId);
+        }
+        break;
+
       case "set-professor-tab":
         state.professorTab = el.dataset.key;
         state.cal.diaAberto = null;
         render();
         if(state.professorTab === "calendario") carregarEventosDoProfessor();
+        else if(state.professorTab === "aval") avalAbrirNoProfessor();
         break;
       case "set-professor-class": {
         state.professorTurmaId = el.dataset.id;
@@ -5581,6 +7283,7 @@ function bindEvents(){
             disciplinas: state.novoUsuarioDisciplinas,
             contato: state.novoUsuarioContato,
             alunosIds: state.novoUsuarioAlunosVinculados,
+            sexo: state.novoUsuarioSexo,
           });
           state.instituicaoMensagem = precisaLogin
             ? `Usuário "${nome}" criado com sucesso. Passe o e-mail e a senha provisória para a pessoa.`
@@ -5593,6 +7296,7 @@ function bindEvents(){
           state.novoUsuarioDisciplinas = [];
           state.novoUsuarioEscolasIds = [];
           state.novoUsuarioContato = "";
+          state.novoUsuarioSexo = "";
           state.novoUsuarioAlunosVinculados = [];
           if(role === "aluno" && state.data.escolas[escolaId]){
             // reflete o novo aluno na lista local sem precisar recarregar
@@ -6200,15 +7904,63 @@ function bindEvents(){
         break;
       }
 
+      case "gerar-idaluno-pendentes": {
+        if(state.gerandoIdAluno) break;
+        const pendentes = (state.instAlunos || []).filter(a => !a.idAluno);
+        if(pendentes.length === 0) break;
+        state.gerandoIdAluno = true;
+        state.instituicaoErro = "";
+        state.instituicaoMensagem = "";
+        render();
+        let feitos = 0;
+        try {
+          // Um de cada vez (não em paralelo) pra não gerar dois alunos
+          // brigando pelo mesmo número no contador.
+          for(const aluno of pendentes){
+            const idAluno = await proximoIdAluno();
+            await updateDoc(doc(db, "alunos", aluno.id), { idAluno });
+            aluno.idAluno = idAluno;   // reflete na lista já carregada, sem precisar recarregar
+            feitos++;
+          }
+          state.instituicaoMensagem = `IDALUNO gerado para ${feitos} ${feitos === 1 ? "aluno" : "alunos"}.`;
+        } catch(err){
+          console.error("Erro ao gerar IDALUNO:", err);
+          state.instituicaoErro = feitos > 0
+            ? `Gerei o IDALUNO de ${feitos} aluno(s) antes de dar erro. Toque em "Gerar IDALUNO" de novo pra continuar os que faltam.`
+            : "Não consegui gerar o IDALUNO agora. Tente de novo.";
+        } finally {
+          state.gerandoIdAluno = false;
+          render();
+        }
+        break;
+      }
+
       case "abrir-aluno": {
         const id = el.dataset.id;
         const aluno = (state.instAlunos || []).find(a => a.id === id);
         state.alunoDetalheId = id;
         state.alunoDetalheContatoInput = aluno ? (aluno.contato || "") : "";
         state.alunoDetalheNascimentoInput = aluno ? (aluno.nascimento || "") : "";
+        state.alunoDetalheSexoInput = aluno ? (aluno.sexo || "") : "";
         state.alunoDetalheErro = "";
         state.alunoDetalheMensagem = "";
         state.alunoExcluirConfirmando = false;
+        state.alunoFinCompetencia = "";
+        state.alunoFinValor = "";
+        state.alunoFinVencimento = "";
+        state.alunoFinForma = "boleto";
+        state.alunoFinPixTipo = "copiaCola";
+        state.alunoFinBoletoComPix = false;
+        state.alunoFinLinkCartao = "";
+        state.alunoFinPix = "";
+        state.alunoFinCodigoBarras = "";
+        state.alunoFinBoletoArquivo = null;
+        state.alunoFinBoletoLendo = false;
+        state.alunoFinErro = "";
+        state.alunoFinMensagem = "";
+        state.alunoFinPagamentoAbertoId = null;
+        state.alunoFinPagamentoForma = "dinheiro";
+        state.alunoFinPagamentoData = "";
         state.alunoRespVinculados = null;
         state.alunoRespNome = "";
         state.alunoRespContato = "";
@@ -6234,21 +7986,339 @@ function bindEvents(){
         if(!aluno) break;
         const contato = (document.getElementById("aluno-detalhe-contato")?.value || "").trim();
         const nascimento = (document.getElementById("aluno-detalhe-nascimento")?.value || "").trim();
+        const sexo = document.getElementById("aluno-detalhe-sexo")?.value || "";
         state.alunoDetalheSalvandoContato = true;
         state.alunoDetalheErro = "";
         state.alunoDetalheMensagem = "";
         render();
         try {
-          await updateDoc(doc(db, "alunos", aluno.id), { contato, nascimento });
+          await updateDoc(doc(db, "alunos", aluno.id), { contato, nascimento, sexo });
           aluno.contato = contato;
           aluno.nascimento = nascimento;
+          aluno.sexo = sexo;
           state.alunoDetalheContatoInput = contato;
           state.alunoDetalheNascimentoInput = nascimento;
+          state.alunoDetalheSexoInput = sexo;
           state.alunoDetalheMensagem = "Cadastro atualizado.";
         } catch(err){
           state.alunoDetalheErro = "Não foi possível salvar agora. Tente de novo.";
         } finally {
           state.alunoDetalheSalvandoContato = false;
+          render();
+        }
+        break;
+      }
+
+      case "copiar-texto": {
+        const texto = el.dataset.copiar || "";
+        if(!texto) break;
+        try {
+          if(navigator.clipboard && navigator.clipboard.writeText){
+            await navigator.clipboard.writeText(texto);
+          } else {
+            const area = document.createElement("textarea");
+            area.value = texto;
+            area.style.position = "fixed";
+            area.style.opacity = "0";
+            document.body.appendChild(area);
+            area.select();
+            document.execCommand("copy");
+            document.body.removeChild(area);
+          }
+          const original = el.textContent;
+          el.textContent = "Copiado!";
+          setTimeout(() => { el.textContent = original; }, 1500);
+        } catch(err){
+          console.error("Não consegui copiar:", err);
+        }
+        break;
+      }
+
+      /* ---------- Financeiro (sub-aba "Lançar cobrança") ----------
+         Mesmo lançamento de cobrança da ficha do aluno, só que escolhendo
+         o aluno por um <select>, pra não precisar abrir a ficha primeiro. */
+      case "lancar-fin-cobranca": {
+        const alunoId = state.finCobrancaAlunoId;
+        const aluno = (state.instAlunos || []).find(a => a.id === alunoId);
+        const competencia = (document.getElementById("fin-cobranca-competencia")?.value || "").trim();
+        const valorTexto = (document.getElementById("fin-cobranca-valor")?.value || "").trim();
+        const vencimento = (document.getElementById("fin-cobranca-vencimento")?.value || "").trim();
+        const valor = Number(valorTexto.replace(",", "."));
+        const forma = state.finCobrancaForma || "boleto";
+        const pixTipoEscolhido = state.finCobrancaPixTipo || "copiaCola";
+        state.finCobrancaErro = "";
+        state.finCobrancaMensagem = "";
+        if(!aluno){
+          state.finCobrancaErro = "Escolha o aluno.";
+          render();
+          break;
+        }
+        if(!competencia || !vencimento || !valorTexto || !(valor > 0)){
+          state.finCobrancaErro = "Preencha mês, valor e vencimento da cobrança.";
+          render();
+          break;
+        }
+        state.finCobrancaSalvando = true;
+        render();
+        try {
+          // só guarda o Pix/boleto/link do jeito que combina com a forma
+          // escolhida, pra não carregar algo digitado antes de trocar de
+          // forma e esquecido no campo.
+          //   pix    → copia-e-cola só se o tipo escolhido for esse (na
+          //            "chave da escola" não há código pra guardar)
+          //   boleto → o Pix copia-e-cola só entra se a secretaria marcou
+          //            "incluir também"
+          const incluiPix = forma === "pix" || (forma === "boleto" && state.finCobrancaBoletoComPix);
+          const pixTipo = forma === "pix" ? pixTipoEscolhido : (incluiPix ? "copiaCola" : "");
+          const pixCopiaCola = incluiPix && pixTipo === "copiaCola" ? state.finCobrancaPix.trim() : "";
+          const nova = normalizeMensalidade({
+            competencia, valor, vencimento, status: "pendente",
+            criadoEm: dataDeHojeISO(),
+            formaPagamento: forma,
+            pixTipo,
+            pixCopiaCola,
+            codigoBarras: forma === "boleto" ? state.finCobrancaCodigoBarras.trim() : "",
+            boletoPdfNome: forma === "boleto" ? (state.finCobrancaBoletoArquivo?.nome || "") : "",
+            boletoPdfDados: forma === "boleto" ? (state.finCobrancaBoletoArquivo?.dados || "") : "",
+            linkPagamento: forma === "cartao" ? state.finCobrancaLinkCartao.trim() : "",
+          });
+          const mensalidades = [...(aluno.financeiro.mensalidades || []), nova];
+          await updateDoc(doc(db, "alunos", aluno.id), { "financeiro.mensalidades": mensalidades });
+          aluno.financeiro.mensalidades = mensalidades;
+          state.finCobrancaMensagem = `Cobrança lançada para ${aluno.nome}.`;
+          state.finCobrancaAlunoId = "";
+          state.finCobrancaCompetencia = competenciaAtual();
+          state.finCobrancaValor = "";
+          state.finCobrancaVencimento = "";
+          state.finCobrancaForma = "boleto";
+          state.finCobrancaPixTipo = "copiaCola";
+          state.finCobrancaBoletoComPix = false;
+          state.finCobrancaLinkCartao = "";
+          state.finCobrancaPix = "";
+          state.finCobrancaCodigoBarras = "";
+          state.finCobrancaBoletoArquivo = null;
+        } catch(err){
+          state.finCobrancaErro = "Não foi possível lançar a cobrança agora. Tente de novo.";
+        } finally {
+          state.finCobrancaSalvando = false;
+          render();
+        }
+        break;
+      }
+
+      case "lancar-mensalidade": {
+        const aluno = (state.instAlunos || []).find(a => a.id === state.alunoDetalheId);
+        if(!aluno) break;
+        const competencia = (document.getElementById("aluno-fin-competencia")?.value || "").trim();
+        const valorTexto = (document.getElementById("aluno-fin-valor")?.value || "").trim();
+        const vencimento = (document.getElementById("aluno-fin-vencimento")?.value || "").trim();
+        const valor = Number(valorTexto.replace(",", "."));
+        const forma = state.alunoFinForma || "boleto";
+        const pixTipoEscolhido = state.alunoFinPixTipo || "copiaCola";
+        state.alunoFinErro = "";
+        state.alunoFinMensagem = "";
+        if(!competencia || !vencimento || !valorTexto || !(valor > 0)){
+          state.alunoFinErro = "Preencha mês, valor e vencimento da cobrança.";
+          render();
+          break;
+        }
+        state.alunoFinSalvando = true;
+        render();
+        try {
+          const incluiPix = forma === "pix" || (forma === "boleto" && state.alunoFinBoletoComPix);
+          const pixTipo = forma === "pix" ? pixTipoEscolhido : (incluiPix ? "copiaCola" : "");
+          const pixCopiaCola = incluiPix && pixTipo === "copiaCola" ? state.alunoFinPix.trim() : "";
+          const nova = normalizeMensalidade({
+            competencia, valor, vencimento, status: "pendente",
+            criadoEm: dataDeHojeISO(),
+            formaPagamento: forma,
+            pixTipo,
+            pixCopiaCola,
+            codigoBarras: forma === "boleto" ? state.alunoFinCodigoBarras.trim() : "",
+            boletoPdfNome: forma === "boleto" ? (state.alunoFinBoletoArquivo?.nome || "") : "",
+            boletoPdfDados: forma === "boleto" ? (state.alunoFinBoletoArquivo?.dados || "") : "",
+            linkPagamento: forma === "cartao" ? state.alunoFinLinkCartao.trim() : "",
+          });
+          const mensalidades = [...(aluno.financeiro.mensalidades || []), nova];
+          await updateDoc(doc(db, "alunos", aluno.id), { "financeiro.mensalidades": mensalidades });
+          aluno.financeiro.mensalidades = mensalidades;
+          state.alunoFinCompetencia = "";
+          state.alunoFinValor = "";
+          state.alunoFinVencimento = "";
+          state.alunoFinForma = "boleto";
+          state.alunoFinPixTipo = "copiaCola";
+          state.alunoFinBoletoComPix = false;
+          state.alunoFinLinkCartao = "";
+          state.alunoFinPix = "";
+          state.alunoFinCodigoBarras = "";
+          state.alunoFinBoletoArquivo = null;
+          state.alunoFinMensagem = "Cobrança lançada.";
+        } catch(err){
+          state.alunoFinErro = "Não foi possível lançar a cobrança agora. Tente de novo.";
+        } finally {
+          state.alunoFinSalvando = false;
+          render();
+        }
+        break;
+      }
+
+      case "abrir-pagamento-mensalidade": {
+        const aluno = (state.instAlunos || []).find(a => a.id === state.alunoDetalheId);
+        const m = aluno && (aluno.financeiro.mensalidades || []).find(x => x.id === el.dataset.mensId);
+        const formaEsperada = m && ["dinheiro", "pix", "cartao"].includes(m.formaPagamento) ? m.formaPagamento : "dinheiro";
+        state.alunoFinPagamentoAbertoId = el.dataset.mensId;
+        state.alunoFinPagamentoForma = formaEsperada;
+        state.alunoFinPagamentoData = dataDeHojeISO();
+        state.alunoFinErro = "";
+        state.alunoFinMensagem = "";
+        render();
+        break;
+      }
+
+      case "cancelar-pagamento-mensalidade":
+        state.alunoFinPagamentoAbertoId = null;
+        render();
+        break;
+
+      case "confirmar-pagamento-mensalidade": {
+        const aluno = (state.instAlunos || []).find(a => a.id === state.alunoDetalheId);
+        if(!aluno) break;
+        const mensId = el.dataset.mensId;
+        const formaPagamento = document.getElementById("aluno-fin-pagamento-forma")?.value || "dinheiro";
+        const dataPagamento = (document.getElementById("aluno-fin-pagamento-data")?.value || "").trim() || dataDeHojeISO();
+        state.alunoFinSalvando = true;
+        state.alunoFinErro = "";
+        render();
+        try {
+          const mensalidades = (aluno.financeiro.mensalidades || []).map(m =>
+            m.id === mensId ? { ...m, status: "pago", formaPagamento, dataPagamento } : m);
+          await updateDoc(doc(db, "alunos", aluno.id), { "financeiro.mensalidades": mensalidades });
+          aluno.financeiro.mensalidades = mensalidades;
+          state.alunoFinPagamentoAbertoId = null;
+          state.alunoFinMensagem = "Pagamento registrado.";
+        } catch(err){
+          state.alunoFinErro = "Não foi possível registrar o pagamento agora. Tente de novo.";
+        } finally {
+          state.alunoFinSalvando = false;
+          render();
+        }
+        break;
+      }
+
+      case "desfazer-pagamento-mensalidade": {
+        const aluno = (state.instAlunos || []).find(a => a.id === state.alunoDetalheId);
+        if(!aluno) break;
+        const mensId = el.dataset.mensId;
+        state.alunoFinSalvando = true;
+        state.alunoFinErro = "";
+        render();
+        try {
+          const mensalidades = (aluno.financeiro.mensalidades || []).map(m =>
+            m.id === mensId ? { ...m, status: "pendente", formaPagamento: "", dataPagamento: "" } : m);
+          await updateDoc(doc(db, "alunos", aluno.id), { "financeiro.mensalidades": mensalidades });
+          aluno.financeiro.mensalidades = mensalidades;
+          state.alunoFinMensagem = "Pagamento desfeito.";
+        } catch(err){
+          state.alunoFinErro = "Não foi possível desfazer o pagamento agora. Tente de novo.";
+        } finally {
+          state.alunoFinSalvando = false;
+          render();
+        }
+        break;
+      }
+
+      /* Mesma dar-baixa acima, só que a partir da lista "Cobranças dos
+         últimos 30 dias" na aba Financeiro — aqui o aluno vem do
+         data-aluno-id da linha, não da ficha aberta (state.alunoDetalheId). */
+      case "abrir-fin-pagamento": {
+        const aluno = (state.instAlunos || []).find(a => a.id === el.dataset.alunoId);
+        const m = aluno && (aluno.financeiro.mensalidades || []).find(x => x.id === el.dataset.mensId);
+        const formaEsperada = m && ["dinheiro", "pix", "cartao"].includes(m.formaPagamento) ? m.formaPagamento : "dinheiro";
+        state.finPagamentoAlunoId = el.dataset.alunoId;
+        state.finPagamentoMensId = el.dataset.mensId;
+        state.finPagamentoForma = formaEsperada;
+        state.finPagamentoData = dataDeHojeISO();
+        state.finPagamentoErro = "";
+        render();
+        break;
+      }
+
+      case "cancelar-fin-pagamento":
+        state.finPagamentoAlunoId = null;
+        state.finPagamentoMensId = null;
+        render();
+        break;
+
+      case "confirmar-fin-pagamento": {
+        const alunoId = el.dataset.alunoId;
+        const mensId = el.dataset.mensId;
+        const aluno = (state.instAlunos || []).find(a => a.id === alunoId);
+        if(!aluno) break;
+        const formaPagamento = document.getElementById("fin-pagamento-forma")?.value || "dinheiro";
+        const dataPagamento = (document.getElementById("fin-pagamento-data")?.value || "").trim() || dataDeHojeISO();
+        state.finPagamentoSalvando = true;
+        state.finPagamentoErro = "";
+        render();
+        try {
+          const mensalidades = (aluno.financeiro.mensalidades || []).map(m =>
+            m.id === mensId ? { ...m, status: "pago", formaPagamento, dataPagamento } : m);
+          await updateDoc(doc(db, "alunos", aluno.id), { "financeiro.mensalidades": mensalidades });
+          aluno.financeiro.mensalidades = mensalidades;
+          state.finPagamentoAlunoId = null;
+          state.finPagamentoMensId = null;
+          state.finCobrancaMensagem = "Pagamento registrado.";
+        } catch(err){
+          state.finPagamentoErro = "Não foi possível registrar o pagamento agora. Tente de novo.";
+        } finally {
+          state.finPagamentoSalvando = false;
+          render();
+        }
+        break;
+      }
+
+      case "desfazer-fin-pagamento": {
+        const alunoId = el.dataset.alunoId;
+        const mensId = el.dataset.mensId;
+        const aluno = (state.instAlunos || []).find(a => a.id === alunoId);
+        if(!aluno) break;
+        state.finPagamentoSalvando = true;
+        state.finPagamentoErro = "";
+        render();
+        try {
+          const mensalidades = (aluno.financeiro.mensalidades || []).map(m =>
+            m.id === mensId ? { ...m, status: "pendente", formaPagamento: "", dataPagamento: "" } : m);
+          await updateDoc(doc(db, "alunos", aluno.id), { "financeiro.mensalidades": mensalidades });
+          aluno.financeiro.mensalidades = mensalidades;
+          state.finCobrancaMensagem = "Pagamento desfeito.";
+        } catch(err){
+          state.finPagamentoErro = "Não foi possível desfazer o pagamento agora. Tente de novo.";
+        } finally {
+          state.finPagamentoSalvando = false;
+          render();
+        }
+        break;
+      }
+
+      case "excluir-mensalidade": {
+        const aluno = (state.instAlunos || []).find(a => a.id === state.alunoDetalheId);
+        if(!aluno) break;
+        const mensId = el.dataset.mensId;
+        const alvo = (aluno.financeiro.mensalidades || []).find(m => m.id === mensId);
+        if(!alvo) break;
+        const ok = window.confirm(`Excluir a cobrança de ${competenciaLabel(alvo.competencia)} (${formatarMoeda(alvo.valor)})? Essa ação não pode ser desfeita.`);
+        if(!ok) break;
+        state.alunoFinSalvando = true;
+        state.alunoFinErro = "";
+        render();
+        try {
+          const mensalidades = (aluno.financeiro.mensalidades || []).filter(m => m.id !== mensId);
+          await updateDoc(doc(db, "alunos", aluno.id), { "financeiro.mensalidades": mensalidades });
+          aluno.financeiro.mensalidades = mensalidades;
+          state.alunoFinMensagem = "Cobrança excluída.";
+        } catch(err){
+          state.alunoFinErro = "Não foi possível excluir a cobrança agora. Tente de novo.";
+        } finally {
+          state.alunoFinSalvando = false;
           render();
         }
         break;
@@ -6498,6 +8568,7 @@ function bindEvents(){
         state.editProfessorModalAberto = true;
         state.editProfessorId = id;
         state.editProfessorNome = professor?.nome || el.dataset.nome || "";
+        state.editProfessorSexo = professor?.sexo || "";
         state.editProfessorDisciplinas = professor ? [...professor.disciplinas] : [];
         state.editProfessorErro = "";
         render();
@@ -6536,7 +8607,7 @@ function bindEvents(){
         state.editProfessorSalvando = true;
         render();
         try {
-          await salvarEdicaoProfessor(uid, nome, state.editProfessorDisciplinas);
+          await salvarEdicaoProfessor(uid, nome, state.editProfessorDisciplinas, state.editProfessorSexo);
           state.editProfessorModalAberto = false;
           state.editProfessorId = null;
           await carregarEquipeDaEscola(state.escolaSelecionadaId);

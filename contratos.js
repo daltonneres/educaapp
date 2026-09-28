@@ -341,6 +341,12 @@ export function contratoEstadoInicial(){
     primeiroVencimento: "",
     descontoVista: "",
     paragrafoSexto: "",
+    // Dados de pagamento pra sair já impressos no contrato (opcional —
+    // lançados à mão, sem integração bancária de verdade). O PDF do
+    // boleto em si não entra aqui: fica só na aba Financeiro, anexado a
+    // cada cobrança já lançada para o aluno.
+    pixCopiaCola: "",
+    codigoBarras: "",
     // fechamento
     foro: "", cidadeAssinatura: "", dataAssinatura: "",
     // acessos ao app criados junto com o contrato
@@ -463,6 +469,18 @@ function clausulaPagamento(c, empresa){
   return `O valor total do contrato, incluídos todos os cursos vinculados descritos na prévia cláusula 1, é de <b><u>${moeda(total)}</u></b>, importância que será dividida em ${n} parcelas de <b><u>${moeda(numeroLimpo(c.valorParcelaDemais))}</u></b> cada, no <b><u>${esc(forma)}</u></b> com o primeiro pagamento em <b><u>${venc}</u></b>. As demais prestações vencer-se-ão nos mesmos dias dos meses subsequentes.`;
 }
 
+/* Parágrafo extra com Pix copia-e-cola e/ou código de barras do boleto,
+   só aparece no contrato se a secretaria preencheu algum dos dois. */
+function blocoDadosPagamento(c){
+  const pix = (c.pixCopiaCola || "").trim();
+  const codBarras = (c.codigoBarras || "").trim();
+  if(!pix && !codBarras) return "";
+  const linhas = [];
+  if(pix) linhas.push(`<b>Pix (copia e cola):</b> ${esc(pix)}`);
+  if(codBarras) linhas.push(`<b>Código de barras do boleto:</b> ${esc(codBarras)}`);
+  return `<p class="solta"><b>DADOS PARA PAGAMENTO:</b> ${linhas.join(" &nbsp;·&nbsp; ")}</p>`;
+}
+
 function duracaoInstrumento(meses){
   if(meses === 12) return "1 (um) ano";
   if(meses === 24) return "2 (dois) anos";
@@ -570,6 +588,7 @@ export function contratoHtml(c, logoUrl){
 
   <p class="solta">2. <b>PREÇO E FORMA DE PAGAMENTO</b>. O contratante não pagará taxa de matrícula.</p>
   <p class="solta">§1º. ${clausulaPagamento(c, empresa)}</p>
+  ${blocoDadosPagamento(c)}
   <p class="solta"><b>PARAGRAFO PRIMEIRO:</b> O pagamento das parcelas deve ser feito até a data fixada no parágrafo anterior, inclusive em tempo de recesso (férias de aula).</p>
   <p class="solta"><b>PARAGRAFO SEGUNDO:</b> O pagamento do valor total do curso á vista na ocasião da assinatura do presente contrato proporcionará desconto de ${esc(c.descontoVista || "5")}%. Se o pagamento for efetuado com ${esc(c.numParcelas)} cheques pré-datados, no valor de cada parcela será concedido desconto de 5% no valor de cada mensalidade.</p>
   <p class="solta"><b>PARAGRAFO TERCEIRO:</b> Nos casos de renovações as partes pactuam que, salvo mudança significativa nos custos da contratada, as parcelas serão reajustadas anualmente pelo índice de inflação IGP-M/FGV.</p>
@@ -1165,6 +1184,11 @@ export function contratoModal(c, { cursos = [], alunos = [], turmas = [] } = {})
           ${campo("No ato da matrícula paga-se (§ sexto)", "paragrafoSexto", c.paragrafoSexto, { largura: "260px" })}
         </div>
         ${total ? `<p class="contrato-resumo" style="margin-top:6px;">Total do contrato: <b>${moeda(total)}</b>${Number(c.numParcelas) ? ` em ${esc(c.numParcelas)}x` : ""}${meses ? ` · pacote de ${meses} ${meses === 1 ? "mês" : "meses"}` : ""}</p>` : ""}
+        <p class="section-eyebrow" style="margin:10px 0 6px;">Dados para pagamento (opcional — sai impresso no contrato, logo abaixo do § 1º)</p>
+        <div class="contrato-linha">
+          ${campo("Pix copia e cola", "pixCopiaCola", c.pixCopiaCola, { largura: "320px" })}
+          ${campo("Código de barras do boleto", "codigoBarras", c.codigoBarras, { largura: "320px" })}
+        </div>
       </div>
 
       <div class="aluno-modal-section">

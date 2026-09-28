@@ -721,6 +721,85 @@ button {
     display: flex;
     align-items: center;
     justify-content: center;
+    flex-shrink: 0;
+}
+
+/* Foto de verdade (menino/menina, professor/professora, responsável,
+   secretaria) — mesmo espaço redondo do .student-avatar de iniciais,
+   só que com <img>. */
+.avatar-foto {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    object-fit: cover;
+    flex-shrink: 0;
+    border: 1px solid rgba(18, 32, 50, 0.12);
+}
+
+/* Linha de lista com foto à esquerda e as informações (nome/turma) à
+   direita, alinhadas à direita — usado em Alunos e Professores. */
+.linha-com-foto {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+}
+
+.linha-com-foto .avatar-foto,
+.linha-com-foto .student-avatar {
+    width: 40px;
+    height: 40px;
+    font-size: 14px;
+}
+
+.linha-com-foto-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    text-align: right;
+    gap: 2px;
+    min-width: 0;
+}
+
+.linha-com-foto-info .linha-nome {
+    font-size: 14.5px;
+    color: var(--ink);
+    font-weight: 600;
+}
+
+.linha-com-foto-info .linha-sub {
+    font-size: 12.5px;
+    color: var(--slate);
+}
+
+.id-aluno-tag {
+    display: inline-block;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: .02em;
+    color: var(--navy-deep);
+    background: rgba(201, 162, 74, 0.18);
+    border-radius: 999px;
+    padding: 2px 8px;
+    margin-top: 2px;
+    white-space: nowrap;
+}
+
+/* Foto grande usada no topo da ficha do aluno e nos cabeçalhos de perfil. */
+.avatar-foto-grande {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    object-fit: cover;
+    flex-shrink: 0;
+    border: 2px solid rgba(201, 162, 74, 0.35);
+}
+
+.ficha-cabecalho-com-foto {
+    display: flex;
+    align-items: center;
+    gap: 14px;
 }
 
 .student-chip-name {
@@ -1190,6 +1269,17 @@ button {
     border-radius: 10px;
     background: rgba(201, 162, 74, 0.14);
     color: var(--gold-light);
+}
+
+.secretaria-option-icon-foto {
+    border-radius: 50%;
+    overflow: hidden;
+    padding: 0;
+}
+.secretaria-option-icon-foto .avatar-foto,
+.secretaria-option-icon-foto .student-avatar {
+    width: 34px;
+    height: 34px;
 }
 
 .secretaria-option > span:nth-child(2) {
@@ -1771,4 +1861,91 @@ button {
     .cal-alerta { top: 1px; right: 1px; }
     .cal-alerta svg { width: 11px; height: 11px; }
     .cal-legenda { gap: 6px 12px; font-size: 12px; }
+}
+
+/* ==================================================================
+   Aba "Avaliações" — Report Card (boletim de Inglês) e avaliação
+   institucional. Markup em avaliacoes.js.
+   ================================================================== */
+.aval-subabas { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; max-width: 560px; margin: 14px 0 18px; }
+.aval-subabas .teacher-class-card small { color: var(--slate); font-size: 12px; }
+.aval-boletim { margin-top: 16px; }
+.aval-acoes { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 16px; }
+.aval-acoes .teacher-primary-btn { margin-top: 0; }
+.aval-atualizado { font-size: 12px; color: var(--slate); }
+h3.aval-h3 { font-family: var(--font-display); font-size: 17px; color: var(--ink); font-weight: 500; margin: 26px 0 10px; }
+.aval-filtro { margin: 4px 0 16px; }
+
+/* ---------- Report Card ---------- */
+.rc { color: var(--ink); }
+.rc-titulo { text-align: center; font-family: var(--font-display); font-size: 22px; letter-spacing: .4px; color: var(--navy); margin: 0 0 16px; padding-bottom: 10px; border-bottom: 2px solid var(--gold); }
+.rc-ident { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 22px; margin-bottom: 18px; }
+.rc-ident-item { display: flex; flex-direction: column; gap: 3px; font-size: 14px; }
+.rc-ident-item > span { color: var(--slate); font-size: 12px; font-weight: 600; }
+.rc-ident-item > strong { font-weight: 600; }
+.rc-scroll { overflow-x: auto; margin-bottom: 16px; }
+.rc-tabela { width: 100%; min-width: 560px; border-collapse: collapse; font-size: 13px; }
+.rc-tabela th, .rc-tabela td { border: 1px solid rgba(18, 32, 50, .22); padding: 8px 6px; text-align: center; }
+.rc-tabela .rc-sem { background: var(--navy); color: #fff; font-weight: 600; letter-spacing: .3px; }
+.rc-tabela .rc-nivel { background: var(--navy-soft); color: #fff; font-weight: 500; font-size: 12px; }
+.rc-tabela .rc-vazio { background: transparent; border-top-color: transparent; border-left-color: transparent; }
+.rc-tabela .rc-crit { text-align: left; background: var(--cream); font-weight: 600; white-space: nowrap; padding-left: 10px; }
+.rc-cel { width: 12%; }
+.rc-x { color: var(--gold-deep); font-weight: 800; font-size: 16px; }
+.rc-nota { font-weight: 700; font-size: 15px; }
+.rc-marca { width: 34px; height: 30px; border: 1px solid rgba(18, 32, 50, .18); border-radius: 7px; background: #fff; color: var(--gold-deep); font: inherit; font-weight: 800; cursor: pointer; }
+.rc-marca:hover { border-color: var(--gold); background: rgba(201, 162, 74, .1); }
+.rc-marca.on { border-color: var(--gold); background: rgba(201, 162, 74, .2); }
+.rc-nota-input { width: 92px; border: 1px solid rgba(18, 32, 50, .15); border-radius: 8px; padding: 7px 8px; text-align: center; font: inherit; font-size: 14px; }
+.rc-feedback-bloco { border: 1px solid rgba(18, 32, 50, .15); border-radius: 10px; padding: 12px 14px; background: #fff; }
+.rc-feedback-rotulo { font-size: 13px; font-weight: 700; margin-bottom: 6px; }
+.rc-feedback { margin: 0; font-size: 14px; line-height: 1.55; white-space: pre-wrap; }
+.rc-feedback-input { width: 100%; border: 1px solid rgba(18, 32, 50, .15); border-radius: 8px; padding: 9px 10px; font: inherit; font-size: 14px; line-height: 1.5; resize: vertical; min-height: 96px; }
+
+/* ---------- Avaliação institucional ---------- */
+.aval-intro { margin: 0 0 10px; font-size: 13.5px; color: var(--slate); line-height: 1.5; }
+.aval-legenda { margin: 4px 0 14px; font-size: 12.5px; color: var(--slate); }
+.aval-pergunta { padding: 12px 0; border-top: 1px solid rgba(18, 32, 50, .08); }
+.aval-pergunta p { margin: 0 0 8px; font-size: 14px; color: var(--ink); display: flex; gap: 10px; align-items: baseline; }
+.aval-n { flex: none; width: 22px; height: 22px; border-radius: 50%; background: rgba(201, 162, 74, .18); color: var(--gold-deep); font-size: 12px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
+.aval-escala { display: flex; gap: 8px; padding-left: 32px; }
+.aval-nota { width: 42px; height: 38px; border: 1px solid rgba(18, 32, 50, .16); border-radius: 9px; background: #fff; color: var(--slate); font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; }
+.aval-nota:hover { border-color: var(--gold); }
+.aval-nota.on { background: var(--navy); border-color: var(--navy); color: #fff; }
+
+/* ---------- Resultado (secretaria) ---------- */
+.aval-barra-linha { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) 44px; align-items: center; gap: 14px; padding: 12px 16px; border-top: 1px solid rgba(18, 32, 50, .07); }
+.aval-barra-linha:first-child { border-top: 0; }
+.aval-barra-texto { font-size: 13.5px; color: var(--ink); }
+.aval-barra { height: 10px; border-radius: 999px; background: rgba(18, 32, 50, .08); overflow: hidden; }
+.aval-barra-cheia { height: 100%; border-radius: 999px; background: var(--gold); }
+.aval-barra-cheia.alta { background: var(--green); }
+.aval-barra-cheia.baixa { background: var(--red); }
+.aval-barra-valor { font-size: 14px; text-align: right; color: var(--ink); }
+.aval-comentario { padding: 12px 16px; border-top: 1px solid rgba(18, 32, 50, .07); }
+.aval-comentario:first-child { border-top: 0; }
+.aval-comentario-meta { font-size: 11.5px; font-weight: 700; letter-spacing: .3px; text-transform: uppercase; color: var(--gold-deep); margin-bottom: 4px; }
+.aval-comentario p { margin: 0; font-size: 14px; line-height: 1.5; color: var(--ink); white-space: pre-wrap; }
+
+/* ---------- Configuração da avaliação institucional (secretaria) ---------- */
+.aval-config .teacher-panel-head { align-items: center; }
+.aval-config-toggle { flex: none; width: 52px; height: 30px; border-radius: 999px; border: 1px solid rgba(18, 32, 50, .16); background: rgba(18, 32, 50, .12); padding: 3px; cursor: pointer; display: inline-flex; align-items: center; transition: background .15s ease, border-color .15s ease; }
+.aval-config-toggle-bolinha { width: 22px; height: 22px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(18, 32, 50, .3); transition: transform .15s ease; }
+.aval-config-toggle.on { background: var(--green); border-color: var(--green); }
+.aval-config-toggle.on .aval-config-toggle-bolinha { transform: translateX(22px); }
+.aval-config-toggle.off { background: rgba(196, 84, 74, .25); border-color: rgba(196, 84, 74, .4); }
+.aval-config-lista { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+.aval-config-pergunta { display: flex; align-items: center; gap: 10px; }
+.aval-config-pergunta .teacher-text-input { flex: 1; }
+.aval-config-remover { flex: none; color: var(--red, #C4544A); border-color: rgba(196, 84, 74, .3); }
+.aval-config-remover:disabled { opacity: .35; cursor: not-allowed; }
+.aval-config-acoes { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+
+@media (max-width: 640px) {
+  .aval-subabas { grid-template-columns: 1fr; }
+  .rc-ident { grid-template-columns: 1fr; }
+  .aval-barra-linha { grid-template-columns: 1fr 40px; }
+  .aval-barra-linha .aval-barra { grid-column: 1 / -1; grid-row: 2; }
+  .aval-escala { padding-left: 0; }
+  .aval-nota { flex: 1; }
 }
