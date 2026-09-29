@@ -411,13 +411,37 @@ button {
     overflow-y: auto;
 }
 
+/* Cabeçalho: nome no canto direito e, logo à esquerda dele, a foto.
+   Em row-reverse o 1º item (foto) fica à esquerda do 2º (texto). */
 .main-head {
     display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
+    flex-direction: row;
+    justify-content: flex-end;
+    align-items: center;
     margin-bottom: 26px;
-    flex-wrap: wrap;
-    gap: 10px;
+    gap: 14px;
+}
+
+.main-head-texto {
+    text-align: right;
+    min-width: 0;
+}
+
+.main-head-foto {
+    flex-shrink: 0;
+    display: flex;
+}
+
+/* Seletor com 2 classes de propósito: a regra genérica .avatar-foto (26px),
+   definida mais abaixo neste arquivo, não pode sobrescrever o tamanho aqui.
+   64px ≈ altura das duas linhas de texto juntas (subtítulo + saudação). */
+.main-head-foto .avatar-foto-cabecalho {
+    width: 64px;
+    height: 64px;
+    font-size: 22px;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 2px solid rgba(201, 162, 74, 0.45);
 }
 
 .main-head-sub {
@@ -872,6 +896,7 @@ button {
 
     .main-head { margin-bottom: 20px; }
     .main-head-title { font-size: 24px; }
+    .main-head-foto .avatar-foto-cabecalho { width: 54px; height: 54px; font-size: 19px; }
     .section-title { font-size: 23px; }
     .grid-cards { grid-template-columns: 1fr; margin-bottom: 24px; }
     .row { padding: 13px 15px; }
@@ -1435,57 +1460,7 @@ button {
     .aluno-modal-backdrop { padding: 16px; }
 }
 
-/* ---------- manuais e ajuda (aba Meu perfil) ---------- */
-.manual-item {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 14px 20px;
-    border-top: 1px solid rgba(18, 32, 50, 0.07);
-    color: inherit;
-    text-decoration: none;
-    transition: background .15s ease;
-}
-
-.manual-item:first-child { border-top: none; }
-.manual-item:hover { background: rgba(18, 32, 50, 0.03); }
-
-.manual-item-icon {
-    display: grid;
-    place-items: center;
-    width: 36px;
-    height: 36px;
-    flex-shrink: 0;
-    border-radius: 10px;
-    background: rgba(201, 162, 74, 0.12);
-    color: var(--gold-deep);
-}
-
-.manual-item-text {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    min-width: 0;
-}
-
-.manual-item-title {
-    font-size: 14.5px;
-    font-weight: 600;
-    color: var(--ink);
-}
-
-.manual-item-desc {
-    font-size: 12.5px;
-    color: var(--slate);
-}
-
-.manual-item svg:last-child {
-    color: var(--slate);
-    flex-shrink: 0;
-}
-
-
+/* ---------- manuais e ajuda (aba Meu perfil): ver bloco "Meu perfil e Gestão" no fim do arquivo ---------- */
 
 @media (max-width: 430px) {
     .sign-in-screen { padding: 20px 14px; }
@@ -1948,4 +1923,311 @@ h3.aval-h3 { font-family: var(--font-display); font-size: 17px; color: var(--ink
   .aval-barra-linha .aval-barra { grid-column: 1 / -1; grid-row: 2; }
   .aval-escala { padding-left: 0; }
   .aval-nota { flex: 1; }
+}
+
+
+/* ==================================================================
+   Meu perfil e Gestão (visual renovado)
+   ================================================================== */
+
+/* ---------- Meu perfil: cartão de identificação ---------- */
+.perfil-hero {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    padding: 22px 24px;
+    margin: 6px 0 18px;
+    border-radius: 16px;
+    color: #fff;
+    background: linear-gradient(135deg, var(--navy) 0%, var(--navy-soft) 100%);
+    border: 1px solid rgba(201, 162, 74, 0.35);
+}
+.perfil-hero-foto { flex-shrink: 0; display: flex; }
+.perfil-hero-foto .avatar-foto-perfil,
+.perfil-hero-foto .avatar-foto,
+.perfil-hero-foto .student-avatar {
+    width: 84px;
+    height: 84px;
+    font-size: 28px;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 3px solid var(--gold);
+}
+.perfil-hero-info { min-width: 0; }
+.perfil-hero-badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 999px;
+    background: rgba(201, 162, 74, 0.2);
+    color: var(--gold-light);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+}
+.perfil-hero-info h2 {
+    margin: 8px 0 2px;
+    font-family: var(--font-display);
+    font-size: 26px;
+    font-weight: 500;
+    color: #fff;
+    overflow-wrap: anywhere;
+}
+.perfil-hero-info p { margin: 0 0 10px; font-size: 13.5px; color: rgba(255, 255, 255, 0.72); overflow-wrap: anywhere; }
+.perfil-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.perfil-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 600;
+}
+.perfil-chip svg { width: 13px; height: 13px; color: var(--gold-light); }
+
+.perfil-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+    align-items: start;
+}
+.teacher-label { display: block; }
+.perfil-dados { margin: 16px 0 0; padding-top: 12px; border-top: 1px solid rgba(18, 32, 50, 0.08); display: grid; gap: 8px; }
+.perfil-dados div { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; }
+.perfil-dados dt { color: var(--slate); }
+.perfil-dados dd { margin: 0; color: var(--ink); font-weight: 600; text-align: right; overflow-wrap: anywhere; }
+
+.perfil-atalhos { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 14px; }
+.perfil-atalho {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 16px 18px;
+    border: 1px solid rgba(18, 32, 50, 0.09);
+    border-radius: 14px;
+    background: #fff;
+}
+.perfil-atalho-icon {
+    display: grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    flex-shrink: 0;
+    border-radius: 11px;
+    background: rgba(201, 162, 74, 0.14);
+    color: var(--gold-deep);
+}
+.perfil-atalho-texto { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.perfil-atalho-texto strong { font-size: 14.5px; color: var(--ink); }
+.perfil-atalho-texto span { font-size: 12.5px; color: var(--slate); line-height: 1.4; overflow-wrap: anywhere; }
+.perfil-atalho .teacher-primary-btn { margin-top: 0; flex-shrink: 0; }
+
+/* ---------- Manuais agrupados ---------- */
+.manuais-cabecalho { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-top: 32px; }
+.manuais-progresso {
+    padding: 4px 11px;
+    border-radius: 999px;
+    background: rgba(201, 162, 74, 0.14);
+    color: var(--gold-deep);
+    font-size: 12px;
+    font-weight: 700;
+}
+.manual-grupo { margin-top: 22px; }
+.manual-grupo-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.manual-grupo-icon {
+    display: grid;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    flex-shrink: 0;
+    border-radius: 10px;
+    background: var(--navy);
+    color: var(--gold-light);
+}
+.manual-grupo-head h3 { margin: 0; font-family: var(--font-display); font-size: 19px; font-weight: 500; color: var(--ink); }
+.manual-grupo-head p { margin: 2px 0 0; font-size: 12.5px; color: var(--slate); }
+.manual-grupo-count {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 8px;
+    border-radius: 999px;
+    background: rgba(18, 32, 50, 0.07);
+    color: var(--slate);
+    font-family: var(--font-body);
+    font-size: 11.5px;
+    font-weight: 700;
+    vertical-align: middle;
+}
+
+.manual-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 14px 20px;
+    border-top: 1px solid rgba(18, 32, 50, 0.07);
+    color: inherit;
+    text-decoration: none;
+    transition: background .15s ease;
+}
+.manual-item:first-child { border-top: none; }
+a.manual-item:hover { background: rgba(18, 32, 50, 0.03); }
+.manual-item-breve { cursor: default; }
+.manual-item-icon {
+    display: grid;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    flex-shrink: 0;
+    border-radius: 10px;
+    background: rgba(201, 162, 74, 0.12);
+    color: var(--gold-deep);
+}
+.manual-item-text { flex: 1; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.manual-item-title { font-size: 14.5px; font-weight: 600; color: var(--ink); }
+.manual-item-desc { font-size: 12.5px; color: var(--slate); line-height: 1.45; }
+.manual-item-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.manual-item svg:last-child { color: var(--slate); flex-shrink: 0; align-self: center; }
+.manual-item-icon svg:last-child { align-self: auto; }
+
+.manual-tag {
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: .02em;
+    background: rgba(18, 32, 50, 0.07);
+    color: var(--slate);
+}
+.manual-tag-visual { background: rgba(62, 122, 87, 0.13); color: var(--green); }
+.manual-tag-passo { background: rgba(14, 32, 56, 0.09); color: var(--navy-soft); }
+.manual-tag-automatico { background: rgba(201, 162, 74, 0.2); color: var(--gold-deep); }
+.manual-tag-referencia { background: rgba(91, 107, 126, 0.13); color: var(--slate); }
+.manual-tag-breve { background: transparent; border: 1px dashed rgba(18, 32, 50, 0.25); color: var(--slate); }
+
+/* ---------- Gestão: resumo da unidade ---------- */
+.gestao-resumo { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 6px 0 20px; }
+.gestao-tile {
+    display: grid;
+    grid-template-columns: 34px 1fr;
+    grid-template-areas: "icon valor" "icon rotulo";
+    column-gap: 12px;
+    align-items: center;
+    padding: 14px 16px;
+    border: 1px solid rgba(18, 32, 50, 0.09);
+    border-radius: 14px;
+    background: #fff;
+    font: inherit;
+    text-align: left;
+}
+button.gestao-tile { cursor: pointer; transition: border-color .15s, transform .15s; }
+button.gestao-tile:hover { border-color: var(--gold); transform: translateY(-1px); }
+.gestao-tile-icon {
+    grid-area: icon;
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+    background: rgba(201, 162, 74, 0.14);
+    color: var(--gold-deep);
+}
+.gestao-tile-valor { grid-area: valor; font-family: var(--font-display); font-size: 24px; line-height: 1.1; color: var(--ink); }
+.gestao-tile-rotulo { grid-area: rotulo; font-size: 12px; color: var(--slate); font-weight: 600; }
+.gestao-tile-alerta .gestao-tile-icon { background: rgba(177, 74, 61, 0.12); color: var(--red); }
+.gestao-tile-alerta .gestao-tile-valor { color: var(--red); }
+
+/* ---------- Gestão: criar cadastro ---------- */
+.gestao-cadastro-layout { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.gestao-cadastro-layout .management-card-wide { max-width: none; margin-bottom: 0; }
+.form-secao {
+    margin: 18px 0 2px !important;
+    font-size: 11.5px !important;
+    font-weight: 700;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--gold-deep) !important;
+}
+.gestao-form .teacher-text-input { margin-top: 8px; }
+.papel-chips { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 8px; }
+.papel-chip {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 5px;
+    padding: 12px 6px;
+    border: 1px solid rgba(18, 32, 50, 0.12);
+    border-radius: 12px;
+    background: #fff;
+    color: var(--slate);
+    font: inherit;
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: border-color .15s, background .15s, color .15s;
+}
+.papel-chip svg { width: 20px; height: 20px; }
+.papel-chip:hover { border-color: var(--gold); color: var(--ink); }
+.papel-chip.active { background: rgba(201, 162, 74, 0.14); border-color: var(--gold); color: var(--gold-deep); }
+
+.gestao-ajuda {
+    padding: 18px;
+    border-radius: 14px;
+    background: var(--cream);
+    border: 1px solid var(--line);
+    position: sticky;
+    top: 16px;
+}
+.gestao-ajuda h4 { margin: 0; font-family: var(--font-display); font-size: 18px; font-weight: 500; color: var(--ink); }
+.gestao-ajuda p { margin: 2px 0 10px; font-size: 12px; color: var(--gold-deep); font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
+.gestao-ajuda ul { margin: 0; padding-left: 18px; display: grid; gap: 8px; }
+.gestao-ajuda li { font-size: 13px; line-height: 1.45; color: var(--ink); }
+
+.acesso-filtro-count {
+    display: inline-block;
+    margin-left: 4px;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: rgba(18, 32, 50, 0.08);
+    font-size: 11px;
+}
+.acesso-filtro.active .acesso-filtro-count { background: rgba(156, 122, 46, 0.2); }
+
+@media (max-width: 900px) {
+    .gestao-resumo { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .gestao-cadastro-layout { grid-template-columns: 1fr; }
+    .gestao-ajuda { position: static; order: -1; }
+}
+@media (max-width: 760px) {
+    .perfil-grid, .perfil-atalhos { grid-template-columns: 1fr; }
+}
+@media (max-width: 640px) {
+    .perfil-hero { flex-direction: column; text-align: center; padding: 20px 16px; }
+    .perfil-chips { justify-content: center; }
+    .perfil-hero-info h2 { font-size: 22px; }
+    .perfil-atalho { flex-wrap: wrap; }
+    .perfil-atalho .teacher-primary-btn { width: 100%; justify-content: center; }
+    .manual-item { padding: 12px 14px; }
+    .papel-chips { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+
+/* ---- Professor: aba Turmas / Meu perfil (ficha pessoal) ---- */
+.professor-turma-wrap { display: flex; flex-direction: column; min-width: 0; }
+.professor-turma-detalhe { margin-top: 10px; }
+.turma-card.active { border-color: var(--gold-deep, #B8892B); }
+.turma-card-chevron { transition: transform .15s ease; display: inline-flex; }
+
+.ficha-secao { margin: 20px 0 8px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--slate); font-weight: 700; }
+.ficha-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.ficha-campo, .ficha-campo-cheio { min-width: 0; }
+.ficha-campo-cheio { grid-column: 1 / -1; }
+.ficha-campo .teacher-text-input { margin-top: 4px; width: 100%; box-sizing: border-box; }
+.ficha-textarea { font: inherit; min-height: 64px; resize: vertical; }
+.ficha-leitura dd { max-width: 60%; }
+@media (max-width: 640px) {
+    .ficha-grid { grid-template-columns: 1fr; }
+    .ficha-leitura dd { max-width: 55%; }
 }

@@ -177,7 +177,7 @@ const MESES = ["janeiro","fevereiro","março","abril","maio","junho","julho",
 
 function dataExtenso(iso){
   if(!iso) return "____ de ______________ de ______";
-  const [a, m, d] = String(iso).split("-").map(Number);
+  const [a, m, d] = String(iso).split("-").map(Number)
   if(!a || !m || !d) return iso;
   return `${d} de ${MESES[m - 1]} de ${a}`;
 }

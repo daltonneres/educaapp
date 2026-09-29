@@ -615,12 +615,88 @@ function destinoDoContratoDoAluno(aluno){
 }
 
 /* Manuais e materiais de apoio mostrados na página "Meu perfil" da equipe
-   administrativa. Ajuste título/descrição/link aqui — não precisa mexer em
-   mais nenhum lugar do código. Pode ser um PDF, um vídeo, uma página, etc. */
+   administrativa. É o CATÁLOGO do que deve ser produzido: cada item tem
+   categoria, tipo, título e descrição. Enquanto o manual não existe, deixe
+   url vazia ("") — o cartão aparece como "Em breve". Quando o material
+   ficar pronto (PDF, vídeo, página...), é só colar o link em url e o
+   cartão vira clicável. Não precisa mexer em mais nenhum lugar do código.
+
+   tipo: "visual" (guia com imagens/prints) | "passo" (passo a passo) |
+         "automatico" (o que o sistema faz sozinho) | "referencia" (consulta rápida) */
+const MANUAIS_TIPOS = {
+  visual: "Guia visual",
+  passo: "Passo a passo",
+  automatico: "Função automática",
+  referencia: "Consulta rápida",
+};
+
+const MANUAIS_CATEGORIAS = [
+  { key: "inicio", icon: "building", titulo: "Primeiros passos", descricao: "Para quem está começando a usar o Educa+." },
+  { key: "cadastros", icon: "user", titulo: "Cadastros e acessos", descricao: "Criar pessoas, dar login, trocar senha e importar turmas." },
+  { key: "rotina", icon: "calendar", titulo: "Turmas, alunos e calendário", descricao: "O dia a dia da secretaria com turmas, fichas e avisos." },
+  { key: "financeiro", icon: "wallet", titulo: "Financeiro", descricao: "Mensalidades, baixas, boletos e inadimplência." },
+  { key: "contratos", icon: "fileText", titulo: "Contratos", descricao: "Gerar, importar e acompanhar a assinatura." },
+  { key: "pedagogico", icon: "cap", titulo: "Acompanhamento pedagógico", descricao: "Faltas, boletim, avaliações, certificados e aniversários." },
+  { key: "automatico", icon: "clock", titulo: "O que o sistema faz sozinho", descricao: "Funções que rodam sem ninguém pedir — saber disso evita retrabalho." },
+  { key: "ajuda", icon: "lifebuoy", titulo: "Quando algo dá errado", descricao: "Erros comuns e o que fazer em cada um." },
+];
+
 const MANUAIS_INSTITUICAO = [
-  { titulo: "Manual da instituição", descricao: "Passo a passo de cadastro de alunos, turmas e responsáveis.", url: "#" },
-  { titulo: "Como lançar frequência e notas", descricao: "Guia rápido para a equipe orientar os professores.", url: "#" },
-  { titulo: "Perguntas frequentes", descricao: "Dúvidas comuns sobre financeiro, acessos e comunicados.", url: "#" },
+  // ---- Primeiros passos
+  { categoria: "inicio", tipo: "visual", titulo: "Tour pelo menu da equipe", descricao: "Mapa ilustrado de cada aba (Turmas, Calendário, Estatísticas, Financeiro, Alunos, Aniversários, Professores, Responsáveis, Contratos, Avaliações, Certificados, Gestão e Meu perfil) e para que cada uma serve.", url: "" },
+  { categoria: "inicio", tipo: "passo", titulo: "Entrar, trocar de unidade e sair", descricao: "Como fazer login, alternar entre Salto do Lontra e Nova Prata pelo selo da unidade no menu e sair da conta com segurança.", url: "" },
+  { categoria: "inicio", tipo: "visual", titulo: "Como cada perfil enxerga o app", descricao: "Telas de aluno, responsável e professor ao lado da sua, para você saber exatamente o que a pessoa vê quando pede ajuda por telefone.", url: "" },
+  { categoria: "inicio", tipo: "referencia", titulo: "Glossário do Educa+", descricao: "Curso, turma, IDALUNO, vínculo, competência, escopo do aviso, situação do contrato: os termos das telas em linguagem simples.", url: "" },
+
+  // ---- Cadastros e acessos
+  { categoria: "cadastros", tipo: "passo", titulo: "Cadastrar um aluno", descricao: "Curso, menino/menina (define a foto), contato, e-mail e senha provisória — e onde aparece o IDALUNO gerado.", url: "" },
+  { categoria: "cadastros", tipo: "passo", titulo: "Cadastrar responsável e vincular aos filhos", descricao: "Escolher os alunos, dar login ao responsável e ajustar os vínculos depois na aba Responsáveis.", url: "" },
+  { categoria: "cadastros", tipo: "passo", titulo: "Cadastrar e editar professor", descricao: "Unidades, disciplinas, homem/mulher (foto), e-mail e senha; como editar depois e o que muda nas listas.", url: "" },
+  { categoria: "cadastros", tipo: "passo", titulo: "Cadastrar outra pessoa da equipe", descricao: "Criar login administrativo para a unidade e o que esse acesso permite fazer.", url: "" },
+  { categoria: "cadastros", tipo: "passo", titulo: "Senhas & acessos: trocar senha, criar login, excluir", descricao: "Como resolver sozinha quem esqueceu a senha, quem não tem e-mail de verdade e quem precisa ser removido — e o que acontece com o acesso dela.", url: "" },
+  { categoria: "cadastros", tipo: "passo", titulo: "Importar turmas por PDF", descricao: "Enviar a lista de turmas, conferir a prévia, escolher o professor de cada linha e evitar turmas duplicadas.", url: "" },
+
+  // ---- Turmas, alunos e calendário
+  { categoria: "rotina", tipo: "passo", titulo: "Criar e ajustar turmas", descricao: "Nome, horário, sala e disciplina; colocar e tirar alunos de uma turma; quando excluir.", url: "" },
+  { categoria: "rotina", tipo: "visual", titulo: "Ficha do aluno por dentro", descricao: "Dados, turma, contato, aniversário, situação do contrato e financeiro — o que dá para editar em cada campo.", url: "" },
+  { categoria: "rotina", tipo: "passo", titulo: "Lançar itens no calendário da unidade", descricao: "Dia sem aula, prova, atividade e aviso; escolher quem recebe (alunos, responsáveis, professores) e por curso.", url: "" },
+  { categoria: "rotina", tipo: "visual", titulo: "Como o calendário aparece para a família", descricao: "Cores de presença, faltas justificadas, ícone de observação do professor e os avisos da escola vistos pelo responsável.", url: "" },
+
+  // ---- Financeiro
+  { categoria: "financeiro", tipo: "passo", titulo: "Lançar mensalidades", descricao: "Competência, valor e vencimento — pela aba Financeiro ou direto na ficha do aluno.", url: "" },
+  { categoria: "financeiro", tipo: "passo", titulo: "Dar baixa em um pagamento", descricao: "Dinheiro, Pix ou cartão, com a data do pagamento, e como desfazer um lançamento errado.", url: "" },
+  { categoria: "financeiro", tipo: "passo", titulo: "Anexar Pix copia e cola, código de barras e boleto", descricao: "O que dá para anexar em cada cobrança, limite de tamanho do PDF e como o responsável vê isso.", url: "" },
+  { categoria: "financeiro", tipo: "visual", titulo: "Painel financeiro do mês", descricao: "Como ler os cartões e gráficos da competência atual e a lista de inadimplentes ordenada por dias de atraso.", url: "" },
+
+  // ---- Contratos
+  { categoria: "contratos", tipo: "passo", titulo: "Gerar um contrato pronto para assinar", descricao: "Escolher o CNPJ (que define unidade, endereço e sócia), preencher aluno, curso, horário e valores, e imprimir ou salvar em PDF.", url: "" },
+  { categoria: "contratos", tipo: "passo", titulo: "Importar contratos em lote", descricao: "Enviar vários contratos de uma vez, conferir o que foi lido e corrigir o que veio errado antes de confirmar.", url: "" },
+  { categoria: "contratos", tipo: "passo", titulo: "Acompanhar assinaturas pendentes", descricao: "Mandar o PDF pelo WhatsApp, marcar como assinado quando voltar e o que fazer se a página for recarregada.", url: "" },
+
+  // ---- Acompanhamento pedagógico
+  { categoria: "pedagogico", tipo: "visual", titulo: "Estatísticas e alunos com faltas", descricao: "Leitura do painel dos últimos 30 dias e da lista de acompanhamento recomendado.", url: "" },
+  { categoria: "pedagogico", tipo: "passo", titulo: "Boletim de Inglês (Report Card)", descricao: "Quem preenche, os seis critérios, as notas do semestre, o feedback e o que o aluno e o responsável enxergam.", url: "" },
+  { categoria: "pedagogico", tipo: "passo", titulo: "Avaliação institucional", descricao: "Abrir e bloquear respostas, criar perguntas próprias e ler o resultado consolidado sem identificar quem respondeu.", url: "" },
+  { categoria: "pedagogico", tipo: "passo", titulo: "Certificados", descricao: "Anexar o link do certificado (Drive) ao fim do módulo, por que a Recreação não entra e como a família pede o dela.", url: "" },
+  { categoria: "pedagogico", tipo: "passo", titulo: "Aniversários e mensagem no WhatsApp", descricao: "Como a mensagem já vem pronta e para quem ela vai: o aluno, se tiver WhatsApp, ou o responsável.", url: "" },
+  { categoria: "pedagogico", tipo: "visual", titulo: "Do professor ao boletim: notas e atividades", descricao: "Como o professor lança atividades e notas nas duas etapas e como o boletim do aluno é montado a partir delas.", url: "" },
+
+  // ---- Funções automáticas
+  { categoria: "automatico", tipo: "automatico", titulo: "IDALUNO sequencial", descricao: "Cada novo aluno recebe o próximo número (0001, 0002…) sozinho, para todas as unidades — útil para diferenciar nomes iguais.", url: "" },
+  { categoria: "automatico", tipo: "automatico", titulo: "Fotos padrão por perfil", descricao: "Menino/menina, professor/professora e a foto da secretaria de cada unidade; quando aparecem as iniciais no lugar.", url: "" },
+  { categoria: "automatico", tipo: "automatico", titulo: "Situação financeira calculada", descricao: "Em dia, atrasada há X dias e próxima cobrança são calculadas sozinhas a partir das mensalidades lançadas — nunca digitadas.", url: "" },
+  { categoria: "automatico", tipo: "automatico", titulo: "Cores e alertas da presença", descricao: "Verde, amarelo e vermelho no calendário, a regra do \"pior status do dia\" e o alerta de observação do professor.", url: "" },
+  { categoria: "automatico", tipo: "automatico", titulo: "Boletim montado sozinho", descricao: "As notas do aluno vêm das atividades lançadas pelo professor; ninguém precisa digitar de novo.", url: "" },
+  { categoria: "automatico", tipo: "automatico", titulo: "Senha nova encerra sessões antigas", descricao: "Ao trocar a senha de alguém, quem estava logado com a antiga é desconectado em até 1 hora.", url: "" },
+  { categoria: "automatico", tipo: "automatico", titulo: "Nome e disciplinas sempre iguais", descricao: "Ao editar um professor, o app atualiza o cadastro, a lista da Gestão e o vínculo com cada unidade de uma vez.", url: "" },
+  { categoria: "automatico", tipo: "automatico", titulo: "Saudação e status do dia", descricao: "Bom dia/tarde/noite e o selo \"Em andamento\" ou \"Agenda do dia\" no painel do aluno e da família, conforme o horário.", url: "" },
+
+  // ---- Quando algo dá errado
+  { categoria: "ajuda", tipo: "referencia", titulo: "A pessoa não consegue entrar", descricao: "Checklist: tem login? o e-mail está certo? a senha foi trocada? o cadastro foi excluído? Quando criar um novo acesso.", url: "" },
+  { categoria: "ajuda", tipo: "referencia", titulo: "\"Não foi possível salvar\" (permission-denied)", descricao: "O que essa mensagem significa, o que conferir (unidade, tipo de acesso) e quando acionar o suporte.", url: "" },
+  { categoria: "ajuda", tipo: "referencia", titulo: "O PDF não foi lido", descricao: "Por que PDFs escaneados (imagem) não funcionam, como exportar de novo com texto selecionável e como preencher à mão.", url: "" },
+  { categoria: "ajuda", tipo: "referencia", titulo: "A foto não aparece", descricao: "Sexo não informado no cadastro, arquivo de imagem faltando ou com nome diferente, e como corrigir.", url: "" },
+  { categoria: "ajuda", tipo: "referencia", titulo: "Como falar com o suporte", descricao: "Quando chamar, o que enviar junto (print, nome da pessoa, o que estava fazendo) e os canais de contato.", url: "" },
 ];
 
 /* Cursos oferecidos por unidade. Usado no cadastro de aluno (escolhe o
@@ -1017,6 +1093,26 @@ const state = {
   perfilSenhaTrocando: false,
   perfilSenhaErro: "",
   perfilSenhaMensagem: "",
+
+  // "Meu perfil" > ficha pessoal (contato de emergência, endereço,
+  // aniversário, alergias…). Vale pra professor e pra equipe.
+  // Fica em usuarios/{uid}.ficha. fichaForm é o rascunho do formulário.
+  fichaForm: null,
+  fichaSalvando: false,
+  fichaErro: "",
+  fichaMensagem: "",
+
+  // Professor > aba "Turmas": turma com a lista de alunos aberta
+  professorTurmaDetalheId: null,
+
+  // Secretaria > Professores > "Ver ficha" (só leitura)
+  fichaModalAberto: false,
+  fichaModalNome: "",
+  fichaModalEmail: "",
+  fichaModalDisciplinas: [],
+  fichaModalCarregando: false,
+  fichaModalErro: "",
+  fichaModalDados: null,
 
   // Gestão > sub-aba "Senhas & acessos"
   gestaoAcessosBusca: "",
@@ -1509,6 +1605,7 @@ onAuthStateChanged(auth, async (user) => {
   if(!user){
     state.authUser = null;
     state.perfil = null;
+    state.fichaForm = null;
     state.cal = calNovoEstado();
     state.aval = avalNovoEstado();
     state.screen = "login";
@@ -1527,6 +1624,7 @@ onAuthStateChanged(auth, async (user) => {
       throw new Error("Não encontramos um cadastro para este acesso. Fale com a secretaria.");
     }
     state.perfil = perfilSnap.data();
+    state.fichaForm = null;
     await carregarDadosDoPerfil();
     state.loginErro = "";
   } catch(err){
@@ -1650,6 +1748,25 @@ function renderLogin(){
   </div>`;
 }
 
+
+/* Foto que aparece no cabeçalho da tela inicial, ao lado do nome (canto
+   direito). Aluno e professor usam a foto do gênero; a equipe usa a foto
+   da secretaria da unidade aberta; responsável cai nas iniciais. */
+function fotoSecretariaDaEscola(escola){
+  const nome = (escola?.nome || "").toLowerCase();
+  if(nome.includes("salto")) return SECRETARIA_WHATSAPP.find(e => e.id === "salto")?.foto || "";
+  if(nome.includes("prata")) return SECRETARIA_WHATSAPP.find(e => e.id === "prata")?.foto || "";
+  return "";
+}
+
+function iniciaisDoNome(nome){
+  return (nome || "?").trim().split(/\s+/).map(p => p[0]).slice(0,2).join("").toUpperCase() || "?";
+}
+
+function headerFotoHtml(fotoUrl, nome){
+  return avatarHtml(fotoUrl, iniciaisDoNome(nome), "avatar-foto-cabecalho");
+}
+
 function greeting(name){
   const hour = new Date().getHours();
   const period = hour < 12 ? "Bom dia" : hour < 18 ? "Boa tarde" : "Boa noite";
@@ -1701,7 +1818,7 @@ function renderEscolaPicker(){
 }
 
 /* ---------------- SHELL (sidebar + main) ---------------- */
-function shell({ navItems, active, headerSub, headerTitle, bodyHtml, navAction, schoolBadge, schoolBadgeClickable }){
+function shell({ navItems, active, headerSub, headerTitle, headerFoto, bodyHtml, navAction, schoolBadge, schoolBadgeClickable }){
   const navBtns = navItems.map(item => `
     <button class="nav-btn ${active===item.key?'active':''}" data-action="${navAction}" data-key="${item.key}">
       ${ICONS[item.icon]} ${item.label}
@@ -1728,7 +1845,8 @@ function shell({ navItems, active, headerSub, headerTitle, bodyHtml, navAction, 
     </aside>
     <main class="main">
       <div class="main-head">
-        <div>
+        ${headerFoto ? `<div class="main-head-foto">${headerFoto}</div>` : ""}
+        <div class="main-head-texto">
           <div class="main-head-sub">${headerSub}</div>
           <h1 class="main-head-title">${headerTitle}</h1>
         </div>
@@ -1770,6 +1888,7 @@ function renderAluno(){
   return shell({
     navItems, active: state.alunoTab,
     headerSub: `ALUNO · ${escapeHtml(student.turma)}`, headerTitle: greeting(student.nome),
+    headerFoto: headerFotoHtml(fotoDoAluno(student), student.nome),
     bodyHtml: classStatusCard(student) + body,
     navAction: "set-aluno-tab",
   });
@@ -1814,6 +1933,7 @@ function renderFamilia(){
   return shell({
     navItems, active: state.familiaTab,
     headerSub: "RESPONSÁVEL", headerTitle: greeting(state.perfil?.nome || "Responsável"),
+    headerFoto: headerFotoHtml(FOTO_PADRAO.responsavel, state.perfil?.nome || "Responsável"),
     bodyHtml: switcher + classStatusCard(student, true) + body,
     navAction: "set-familia-tab",
   });
@@ -2247,15 +2367,26 @@ async function carregarEventosDoProfessor(forcar = false){
   render();
   try {
     // Duas leituras: os avisos/lembretes que o próprio professor criou, e
-    // os itens da secretaria (sem aula, prova...) marcados pra ele.
-    const [proprios, daSecretaria] = await Promise.all([
+    // os itens da secretaria (sem aula, prova...) marcados pra ele. São
+    // independentes: se uma for recusada pelo servidor, a outra ainda
+    // aparece, e o aviso diz qual das duas falhou.
+    const [proprios, daSecretaria] = await Promise.allSettled([
       getDocs(query(collection(db, "eventosCalendario"), where("professorId", "==", state.authUser.uid))),
       getDocs(query(collection(db, "eventosCalendario"), where("destinatariosProfessores", "array-contains", state.authUser.uid))),
     ]);
     const porId = new Map();
-    proprios.docs.forEach(d => porId.set(d.id, { id: d.id, ...d.data() }));
-    daSecretaria.docs.forEach(d => porId.set(d.id, { id: d.id, ...d.data() }));
+    if(proprios.status === "fulfilled") proprios.value.docs.forEach(d => porId.set(d.id, { id: d.id, ...d.data() }));
+    if(daSecretaria.status === "fulfilled") daSecretaria.value.docs.forEach(d => porId.set(d.id, { id: d.id, ...d.data() }));
     prof.eventos = [...porId.values()];
+
+    if(proprios.status === "rejected" && daSecretaria.status === "rejected"){
+      throw proprios.reason;
+    }
+    if(proprios.status === "rejected"){
+      prof.erro = mensagemErroCalendario(proprios.reason).replace("a leitura do calendário", "a leitura dos seus avisos e lembretes");
+    } else if(daSecretaria.status === "rejected"){
+      prof.erro = mensagemErroCalendario(daSecretaria.reason).replace("a leitura do calendário", "a leitura dos itens da secretaria (sem aula, provas, avisos da escola)");
+    }
     prof.carregadoEm = Date.now();
   } catch(err){
     prof.erro = mensagemErroCalendario(err);
@@ -2428,13 +2559,17 @@ function professorTurmaSelect(){
 function renderProfessor(){
   const navItems = [
     { key:"calendario", label:"Calendário", icon:"calendar" },
+    { key:"turmas", label:"Turmas", icon:"users" },
     { key:"aulas", label:"Aulas & chamada", icon:"clipboard" },
     { key:"conteudos", label:"Conteúdos", icon:"book" },
     { key:"avaliacoes", label:"Notas & atividades", icon:"cap" },
     { key:"aval", label:"Avaliações", icon:"star" },
     { key:"certificados", label:"Certificados", icon:"award" },
+    { key:"perfil", label:"Meu perfil", icon:"user" },
   ];
   const body = state.professorTab === "calendario" ? calendarioProfessorView()
+    : state.professorTab === "turmas" ? professorTurmasView()
+    : state.professorTab === "perfil" ? professorPerfilView()
     : state.professorTab === "aulas" ? professorAulasView()
     : state.professorTab === "conteudos" ? professorConteudosView()
     : state.professorTab === "aval" ? avaliacoesProfessorView()
@@ -2445,9 +2580,308 @@ function renderProfessor(){
     navItems, active: state.professorTab,
     headerSub: `PROFESSOR${state.data.professorDisciplinas.length ? " · " + state.data.professorDisciplinas.join(" · ").toUpperCase() : ""}`,
     headerTitle: greeting(state.data.professorNome),
+    headerFoto: headerFotoHtml(fotoDoProfessor({ sexo: state.perfil?.sexo }), state.data.professorNome),
     bodyHtml: body,
     navAction: "set-professor-tab",
   });
+}
+
+
+/* ---------------- PROFESSOR > TURMAS ---------------- */
+function professorTurmasView(){
+  const turmas = state.data.professorTurmas || [];
+  if(turmas.length === 0){
+    return `
+      <h2 class="section-title">Minhas turmas</h2>
+      <p class="section-eyebrow">Suas turmas e os alunos de cada uma.</p>
+      <div class="teacher-empty-state"><strong>Nenhuma turma vinculada a você ainda.</strong><span>Fale com a secretaria para vincular suas turmas.</span></div>`;
+  }
+  const cards = turmas.map(t => {
+    const aberta = state.professorTurmaDetalheId === t.id;
+    const alunos = [...(t.alunos || [])].sort((a, b) => String(a).localeCompare(String(b), "pt-BR"));
+    const qtd = alunos.length;
+    const detalhe = aberta ? `
+      <div class="professor-turma-detalhe">
+        <div class="card flush">${alunos.map(nome => `
+          <div class="row"><span style="font-size:14.5px;color:var(--ink);font-weight:500;">${escapeHtml(nome)}</span></div>`).join("")
+          || `<div style="padding:16px;font-size:14px;color:var(--slate);">Nenhum aluno vinculado a esta turma ainda.</div>`}</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
+          <button type="button" class="teacher-primary-btn" style="margin-top:0;" data-action="professor-abrir-turma-em" data-tab="aulas" data-id="${escapeHtml(t.id)}">Fazer chamada</button>
+          <button type="button" class="attendance-btn" data-action="professor-abrir-turma-em" data-tab="avaliacoes" data-id="${escapeHtml(t.id)}">Lançar notas</button>
+        </div>
+      </div>` : "";
+    return `
+      <div class="professor-turma-wrap">
+        <button type="button" class="turma-card ${aberta ? "active" : ""}" data-action="professor-toggle-turma" data-id="${escapeHtml(t.id)}" aria-expanded="${aberta}">
+          <div class="turma-card-head">
+            <div>
+              <div class="turma-card-nome">${escapeHtml(t.nome)}</div>
+              ${t.disciplina ? `<div class="turma-card-disciplina">${escapeHtml(t.disciplina)}</div>` : ""}
+            </div>
+            <span class="turma-card-chevron" style="${aberta ? "transform:rotate(90deg);" : ""}">${ICONS.chevronRight}</span>
+          </div>
+          <div class="turma-card-meta">
+            ${t.horario ? `<span class="turma-card-tag">${ICONS.clock} ${escapeHtml(t.horario)}</span>` : ""}
+            ${t.sala ? `<span class="turma-card-tag">Sala ${escapeHtml(t.sala)}</span>` : ""}
+            ${t.escola ? `<span class="turma-card-tag">${ICONS.pinSmall} ${escapeHtml(t.escola)}</span>` : ""}
+            <span class="turma-card-tag">${ICONS.users} ${qtd} aluno${qtd === 1 ? "" : "s"}</span>
+          </div>
+        </button>
+        ${detalhe}
+      </div>`;
+  }).join("");
+
+  return `
+    <h2 class="section-title">Minhas turmas</h2>
+    <p class="section-eyebrow">Toque numa turma para ver os alunos, fazer a chamada ou lançar notas.</p>
+    <div class="grid-cards turma-cards-grid">${cards}</div>`;
+}
+
+/* ---------------- FICHA PESSOAL (professor e equipe) ----------------
+   Guardada em usuarios/{uid}.ficha. Só a própria pessoa edita; a
+   secretaria consulta em Professores > "Ver ficha". */
+const FICHA_CAMPOS = ["telefone", "nascimento", "endereco", "bairro", "cidade",
+  "emergenciaNome", "emergenciaParentesco", "emergenciaTelefone",
+  "tipoSanguineo", "alergias", "condicoes", "observacoes"];
+
+const TIPOS_SANGUINEOS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
+
+function fichaDoPerfil(perfil){
+  const f = (perfil && perfil.ficha) || {};
+  const out = {};
+  FICHA_CAMPOS.forEach(k => { out[k] = typeof f[k] === "string" ? f[k] : ""; });
+  return out;
+}
+
+function fichaFormAtual(){
+  if(!state.fichaForm) state.fichaForm = fichaDoPerfil(state.perfil);
+  return state.fichaForm;
+}
+
+function fichaFormCardHtml(){
+  const f = fichaFormAtual();
+  const bloqueado = state.fichaSalvando ? "disabled" : "";
+  const input = (k, label, placeholder, tipo) => `
+    <div class="ficha-campo">
+      <label class="teacher-label" for="ficha-${k}">${label}</label>
+      <input id="ficha-${k}" type="${tipo || "text"}" class="teacher-text-input" data-ficha="${k}" maxlength="120" placeholder="${escapeHtml(placeholder || "")}" value="${escapeHtml(f[k] || "")}" ${bloqueado} />
+    </div>`;
+  const area = (k, label, placeholder) => `
+    <div class="ficha-campo ficha-campo-cheio">
+      <label class="teacher-label" for="ficha-${k}">${label}</label>
+      <textarea id="ficha-${k}" class="teacher-text-input ficha-textarea" data-ficha="${k}" maxlength="500" rows="2" placeholder="${escapeHtml(placeholder || "")}" ${bloqueado}>${escapeHtml(f[k] || "")}</textarea>
+    </div>`;
+
+  return `
+    <div class="management-card management-card-wide">
+      <h3>${ICONS.shield} Minha ficha</h3>
+      <p>Informações para a escola te ajudar numa emergência e cuidar de você. A secretaria consegue ver estes dados; os outros perfis não.</p>
+
+      <h4 class="ficha-secao">Dados pessoais</h4>
+      <div class="ficha-grid">
+        ${input("telefone", "Meu telefone / WhatsApp", "(46) 99999-9999", "tel")}
+        ${input("nascimento", "Data de aniversário", "", "date")}
+      </div>
+
+      <h4 class="ficha-secao">Localização</h4>
+      <div class="ficha-grid">
+        <div class="ficha-campo-cheio">${input("endereco", "Endereço (rua e número)", "Rua das Flores, 123")}</div>
+        ${input("bairro", "Bairro", "")}
+        ${input("cidade", "Cidade", "Salto do Lontra")}
+      </div>
+
+      <h4 class="ficha-secao">Contato de emergência</h4>
+      <div class="ficha-grid">
+        ${input("emergenciaNome", "Nome", "Quem devemos chamar")}
+        ${input("emergenciaParentesco", "Parentesco", "Ex.: esposo, mãe, irmã")}
+        ${input("emergenciaTelefone", "Telefone", "(46) 99999-9999", "tel")}
+      </div>
+
+      <h4 class="ficha-secao">Saúde</h4>
+      <div class="ficha-grid">
+        <div class="ficha-campo">
+          <label class="teacher-label" for="ficha-tipoSanguineo">Tipo sanguíneo</label>
+          <select id="ficha-tipoSanguineo" class="teacher-text-input" data-ficha="tipoSanguineo" ${bloqueado}>
+            <option value="" ${!f.tipoSanguineo ? "selected" : ""}>Não informar</option>
+            ${TIPOS_SANGUINEOS.map(t => `<option value="${t}" ${f.tipoSanguineo === t ? "selected" : ""}>${t}</option>`).join("")}
+          </select>
+        </div>
+        ${area("alergias", "Alergias", "Medicamentos, alimentos, picadas… ou escreva “nenhuma”")}
+        ${area("condicoes", "Condições de saúde e medicamentos de uso contínuo", "Ex.: diabetes, hipertensão, asma")}
+        ${area("observacoes", "Outras observações", "Algo mais que a escola deva saber")}
+      </div>
+
+      <button class="teacher-primary-btn" data-action="salvar-minha-ficha" ${bloqueado}>${state.fichaSalvando ? "Salvando…" : "Salvar minha ficha"}</button>
+      ${state.fichaErro ? `<p class="teacher-error" style="color:var(--red,#C4544A);font-size:12.5px;margin-top:8px;">${escapeHtml(state.fichaErro)}</p>` : ""}
+      ${state.fichaMensagem ? `<p class="teacher-success" style="margin-top:8px;">${escapeHtml(state.fichaMensagem)}</p>` : ""}
+    </div>`;
+}
+
+async function salvarMinhaFicha(){
+  const f = fichaFormAtual();
+  const limpa = {};
+  FICHA_CAMPOS.forEach(k => { limpa[k] = String(f[k] || "").trim().slice(0, 500); });
+  state.fichaErro = "";
+  state.fichaMensagem = "";
+  if(limpa.nascimento && !/^\d{4}-\d{2}-\d{2}$/.test(limpa.nascimento)){
+    state.fichaErro = "Confira a data de aniversário.";
+    render();
+    return;
+  }
+  const comEmergencia = limpa.emergenciaNome || limpa.emergenciaParentesco;
+  if(comEmergencia && !limpa.emergenciaTelefone){
+    state.fichaErro = "Informe também o telefone do contato de emergência.";
+    render();
+    return;
+  }
+  state.fichaSalvando = true;
+  render();
+  try {
+    const ficha = { ...limpa, atualizadaEm: new Date().toISOString() };
+    await updateDoc(doc(db, "usuarios", state.authUser.uid), { ficha });
+    state.perfil = { ...state.perfil, ficha };
+    state.fichaForm = null;
+    state.fichaMensagem = "Ficha salva. A secretaria já consegue ver.";
+  } catch(err){
+    console.error("Erro ao salvar ficha:", err?.code, err);
+    state.fichaErro = err?.code === "permission-denied"
+      ? "Sem permissão para salvar a ficha. Avise o suporte (as regras do Firestore precisam liberar o campo “ficha”)."
+      : "Não foi possível salvar agora. Tente de novo.";
+  } finally {
+    state.fichaSalvando = false;
+    render();
+  }
+}
+
+/* Secretaria: lê a ficha de outra pessoa (só leitura). */
+async function abrirFichaUsuario(uid, nome){
+  state.fichaModalAberto = true;
+  state.fichaModalNome = nome || "";
+  const prof = (state.gestaoProfessores || []).find(p => p.id === uid);
+  state.fichaModalEmail = prof?.email || "";
+  state.fichaModalDisciplinas = prof?.disciplinas || [];
+  state.fichaModalDados = null;
+  state.fichaModalErro = "";
+  state.fichaModalCarregando = true;
+  render();
+  try {
+    const snap = await getDoc(doc(db, "usuarios", uid));
+    if(!snap.exists()){
+      state.fichaModalErro = "Este professor ainda não tem login/cadastro de perfil, então não há ficha.";
+    } else {
+      state.fichaModalDados = fichaDoPerfil(snap.data());
+      state.fichaModalDados.atualizadaEm = (snap.data().ficha && snap.data().ficha.atualizadaEm) || "";
+    }
+  } catch(err){
+    console.error("Erro ao ler ficha:", err?.code, err);
+    state.fichaModalErro = err?.code === "permission-denied"
+      ? "Sem permissão para ler a ficha desta pessoa (regras do Firestore)."
+      : "Não foi possível carregar a ficha agora.";
+  } finally {
+    state.fichaModalCarregando = false;
+    render();
+  }
+}
+
+function fichaModoLeituraHtml(f){
+  const vazio = `<span style="color:var(--slate);font-weight:400;">não informado</span>`;
+  const tel = (n) => n ? `<a href="tel:${encodeURIComponent(n)}" style="color:var(--ink);">${escapeHtml(n)}</a>` : vazio;
+  const txt = (v) => v ? escapeHtml(v) : vazio;
+  const local = [f.endereco, f.bairro, f.cidade].filter(Boolean).join(" · ");
+  const emergencia = f.emergenciaNome || f.emergenciaTelefone
+    ? `${escapeHtml(f.emergenciaNome || "—")}${f.emergenciaParentesco ? ` (${escapeHtml(f.emergenciaParentesco)})` : ""}`
+    : "";
+  const whats = telefoneValido(f.emergenciaTelefone)
+    ? ` <a class="aniversario-btn" style="margin-left:6px;" href="${whatsappLink(telefoneValido(f.emergenciaTelefone))}" target="_blank" rel="noopener">WhatsApp</a>` : "";
+  return `
+    <dl class="perfil-dados ficha-leitura">
+      <div><dt>Telefone</dt><dd>${tel(f.telefone)}</dd></div>
+      <div><dt>Aniversário</dt><dd>${f.nascimento ? formatarDataBr(f.nascimento) : vazio}</dd></div>
+      <div><dt>Localização</dt><dd>${txt(local)}</dd></div>
+      <div><dt>Contato de emergência</dt><dd>${emergencia ? emergencia : vazio}</dd></div>
+      <div><dt>Telefone de emergência</dt><dd>${tel(f.emergenciaTelefone)}${whats}</dd></div>
+      <div><dt>Tipo sanguíneo</dt><dd>${txt(f.tipoSanguineo)}</dd></div>
+      <div><dt>Alergias</dt><dd>${txt(f.alergias)}</dd></div>
+      <div><dt>Condições / medicamentos</dt><dd>${txt(f.condicoes)}</dd></div>
+      <div><dt>Observações</dt><dd>${txt(f.observacoes)}</dd></div>
+    </dl>`;
+}
+
+function fichaUsuarioModal(){
+  if(!state.fichaModalAberto) return "";
+  let corpo;
+  if(state.fichaModalCarregando) corpo = `<p class="section-eyebrow" style="margin:6px 0;">Carregando ficha…</p>`;
+  else if(state.fichaModalErro) corpo = `<p class="teacher-error" style="color:var(--red,#C4544A);font-size:13px;">${escapeHtml(state.fichaModalErro)}</p>`;
+  else if(state.fichaModalDados){
+    const d = state.fichaModalDados;
+    const vazia = FICHA_CAMPOS.every(k => !d[k]);
+    corpo = vazia
+      ? `<div class="teacher-empty-state"><strong>Ficha ainda não preenchida.</strong><span>O professor preenche em “Meu perfil”.</span></div>`
+      : fichaModoLeituraHtml(d) + (d.atualizadaEm ? `<p class="section-eyebrow" style="margin-top:12px;">Atualizada em ${formatarDataBr(d.atualizadaEm.slice(0, 10))}</p>` : "");
+  } else corpo = "";
+  return `
+  <div class="aluno-modal-backdrop" data-action="fechar-ficha-usuario">
+    <div class="aluno-modal" role="dialog" aria-modal="true" aria-label="Ficha do professor" data-action="noop">
+      <div class="aluno-modal-head">
+        <div>
+          <h2>${escapeHtml(state.fichaModalNome)}</h2>
+          <p class="section-eyebrow" style="margin:2px 0 0;">${escapeHtml(state.fichaModalDisciplinas.join(" · ") || "Professor(a)")}${state.fichaModalEmail ? ` · ${escapeHtml(state.fichaModalEmail)}` : ""}</p>
+        </div>
+        <button type="button" class="secretaria-modal-close" style="color:var(--slate);" data-action="fechar-ficha-usuario" aria-label="Fechar">${ICONS.close}</button>
+      </div>
+      <div class="aluno-modal-section">${corpo}</div>
+    </div>
+  </div>`;
+}
+
+/* ---------------- PROFESSOR > MEU PERFIL ---------------- */
+function professorPerfilView(){
+  const nome = (state.data.professorNome || state.perfil?.nome || "").trim();
+  const email = state.authUser?.email || "—";
+  const disciplinas = state.data.professorDisciplinas || [];
+  const unidades = [...new Set((state.data.professorTurmas || []).map(t => t.escola).filter(Boolean))];
+  const chips = [...disciplinas.map(d => `<span class="perfil-chip">${ICONS.book} ${escapeHtml(d)}</span>`),
+                 ...unidades.map(u => `<span class="perfil-chip">${ICONS.pinSmall} ${escapeHtml(u)}</span>`)].join("");
+
+  return `
+    <h2 class="section-title">Meu perfil</h2>
+    <p class="section-eyebrow">Seus dados de acesso e a ficha que a secretaria usa em caso de emergência.</p>
+
+    <section class="perfil-hero">
+      <div class="perfil-hero-foto">${avatarHtml(fotoDoProfessor({ sexo: state.perfil?.sexo }), iniciaisDoNome(nome || "Professor"), "avatar-foto-perfil")}</div>
+      <div class="perfil-hero-info">
+        <span class="perfil-hero-badge">Professor(a)</span>
+        <h2>${escapeHtml(nome || "Professor(a)")}</h2>
+        <p>${escapeHtml(email)}</p>
+        <div class="perfil-chips">${chips}</div>
+      </div>
+    </section>
+
+    <div class="perfil-grid">
+      <div class="management-card">
+        <h3>${ICONS.user} Meus dados</h3>
+        <p>Nome e disciplinas são cadastrados pela secretaria. Se algo estiver errado, avise por lá.</p>
+        <dl class="perfil-dados">
+          <div><dt>Nome</dt><dd>${escapeHtml(nome || "—")}</dd></div>
+          <div><dt>E-mail de acesso</dt><dd>${escapeHtml(email)}</dd></div>
+          <div><dt>Disciplinas</dt><dd>${escapeHtml(disciplinas.join(", ") || "—")}</dd></div>
+        </dl>
+      </div>
+
+      <div class="management-card">
+        <h3>${ICONS.key} Trocar minha senha</h3>
+        <p>Confirme a senha atual e escolha a nova. A troca vale na hora.</p>
+        <input id="perfil-senha-atual" type="password" class="teacher-text-input" placeholder="Senha atual" autocomplete="current-password" />
+        <input id="perfil-senha-nova" type="password" class="teacher-text-input" placeholder="Nova senha (mín. 6 caracteres)" autocomplete="new-password" />
+        <input id="perfil-senha-confirma" type="password" class="teacher-text-input" placeholder="Repita a nova senha" autocomplete="new-password" />
+        <button class="teacher-primary-btn" data-action="trocar-minha-senha" ${state.perfilSenhaTrocando ? "disabled" : ""}>${state.perfilSenhaTrocando ? "Salvando…" : "Salvar nova senha"}</button>
+        ${state.perfilSenhaErro ? `<p class="teacher-error" style="color:var(--red);font-size:12.5px;margin-top:8px;">${escapeHtml(state.perfilSenhaErro)}</p>` : ""}
+        ${state.perfilSenhaMensagem ? `<p class="teacher-success" style="margin-top:8px;">${escapeHtml(state.perfilSenhaMensagem)}</p>` : ""}
+        <p class="section-eyebrow" style="margin-top:12px;">Esqueceu a senha atual? Peça para a secretaria definir uma nova.</p>
+      </div>
+    </div>
+
+    ${fichaFormCardHtml()}`;
 }
 
 function professorAulasView(){
@@ -2759,11 +3193,12 @@ function renderInstituicao(){
   return shell({
     navItems, active: state.instTab,
     headerSub: "ÁREA DA INSTITUIÇÃO", headerTitle: greeting(nomePessoaLogada || "Equipe"),
+    headerFoto: headerFotoHtml(fotoSecretariaDaEscola(school), nomePessoaLogada || "Equipe"),
     bodyHtml: avisoNomePendente + body,
     navAction: "set-inst-tab",
     schoolBadge: `${ICONS.pinSmall} ${escapeHtml(school.nome)} — ${escapeHtml(school.uf)}`,
     schoolBadgeClickable: temMaisDeUmaEscola,
-  }) + alunoDetalheModal() + turmaDetalheModal() + professorTurmasModal() + editarProfessorModal() + importarTurmasModal() + responsavelVinculoModal() + acessoUsuarioModal() + contratoModal(state.contrato, {
+  }) + alunoDetalheModal() + turmaDetalheModal() + professorTurmasModal() + editarProfessorModal() + fichaUsuarioModal() + importarTurmasModal() + responsavelVinculoModal() + acessoUsuarioModal() + contratoModal(state.contrato, {
     cursos: cursosDaEscola(school?.nome || ""),
     alunos: state.instAlunos || [],
     turmas: state.instTurmas || [],
@@ -2787,9 +3222,36 @@ function gestaoInstituicaoView(school){
   if(state.gestaoSubTab === "acessos") corpo = gestaoAcessosView();
   else corpo = gestaoCadastroView(school);
 
+  // Resumo da unidade: números reais, vindos das mesmas listas que as
+  // outras abas já carregam. Enquanto não chegam, mostra "—".
+  const alunos = state.instAlunos;
+  const professores = state.gestaoProfessores;
+  const responsaveis = state.gestaoResponsaveis;
+  const carregandoResumo = state.instAlunosCarregando || state.gestaoEquipeCarregando;
+  const num = (lista) => Array.isArray(lista) && !carregandoResumo ? lista.length : "—";
+  const semLogin = (Array.isArray(alunos) && Array.isArray(responsaveis) && !carregandoResumo)
+    ? alunos.filter(a => !a.uid).length + responsaveis.filter(r => !r.uid).length
+    : "—";
+  const tiles = [
+    { rotulo: "Alunos", valor: num(alunos), icon: ICONS.users, aba: "alunos" },
+    { rotulo: "Professores", valor: num(professores), icon: ICONS.users2, aba: "professores" },
+    { rotulo: "Responsáveis", valor: num(responsaveis), icon: ICONS.user, aba: "responsaveis" },
+    { rotulo: "Sem login", valor: semLogin, icon: ICONS.key, aba: null, alerta: semLogin !== "—" && semLogin > 0 },
+  ];
+  const resumo = `<div class="gestao-resumo">${tiles.map(t => {
+    const conteudo = `
+      <span class="gestao-tile-icon">${t.icon}</span>
+      <span class="gestao-tile-valor">${t.valor}</span>
+      <span class="gestao-tile-rotulo">${t.rotulo}</span>`;
+    return t.aba
+      ? `<button type="button" class="gestao-tile" data-action="set-inst-tab" data-key="${t.aba}" title="Abrir ${t.rotulo}">${conteudo}</button>`
+      : `<div class="gestao-tile ${t.alerta ? "gestao-tile-alerta" : ""}" title="Alunos e responsáveis sem login registrado — veja em Senhas & acessos">${conteudo}</div>`;
+  }).join("")}</div>`;
+
   return `
     <h2 class="section-title">Gestão da unidade</h2>
-    <p class="section-eyebrow">Cadastros e senhas de ${escapeHtml(school.nome)}. Os contratos agora têm aba própria no menu. Para editar turmas de professores e vínculos de responsáveis, veja as abas "Professores" e "Responsáveis" no menu.</p>
+    <p class="section-eyebrow">Cadastros e acessos de ${escapeHtml(school.nome)}. Turmas de professores e vínculos de responsáveis ficam nas abas Professores e Responsáveis; contratos têm aba própria.</p>
+    ${resumo}
     ${subNav}
     ${corpo}
     ${state.instituicaoMensagem ? `<p class="teacher-success institution-success">${escapeHtml(state.instituicaoMensagem)}</p>` : ""}`;
@@ -2903,27 +3365,89 @@ function gestaoCadastroView(school){
     ? `Combine a senha provisória com a pessoa por fora — se precisar trocar depois, é em Gestão > Senhas & acessos.`
     : `Esse cadastro fica só nas coleções do banco, sem login.`;
 
-  return `
-    <div class="management-card management-card-wide">
-      <h3>Criar cadastro</h3><p>Aluno, responsável, professor e equipe ganham login (e-mail/senha) para entrar no app.</p>
+  const papeis = [
+    { key: "aluno", label: "Aluno", icon: ICONS.cap },
+    { key: "responsavel", label: "Responsável", icon: ICONS.user },
+    { key: "professor", label: "Professor", icon: ICONS.book },
+    { key: "instituicao", label: "Equipe", icon: ICONS.building },
+  ];
+  const chipsPapel = `<div class="papel-chips" role="group" aria-label="Tipo de cadastro">${papeis.map(p => `
+    <button type="button" class="papel-chip ${role === p.key ? "active" : ""}" data-action="set-new-user-role" data-role="${p.key}" aria-pressed="${role === p.key}">
+      ${p.icon}<span>${p.label}</span>
+    </button>`).join("")}</div>`;
+
+  const ajudaPorPapel = {
+    aluno: {
+      titulo: "Cadastro de aluno",
+      itens: [
+        "Recebe um IDALUNO sequencial (0001, 0002…) sozinho.",
+        "Menino/Menina define a foto padrão na ficha e nas listas.",
+        "Entra no app com o e-mail e a senha provisória que você definir.",
+        "Cadastre o aluno antes do responsável, para poder vincular os dois.",
+      ],
+    },
+    responsavel: {
+      titulo: "Cadastro de responsável",
+      itens: [
+        "Marque os filhos já cadastrados para vincular.",
+        "Vê calendário, notas, presença e financeiro de cada filho.",
+        "Com mais de um filho, alterna entre eles no topo da tela.",
+        "Os vínculos podem ser ajustados depois na aba Responsáveis.",
+      ],
+    },
+    professor: {
+      titulo: "Cadastro de professor",
+      itens: [
+        "Marque a(s) unidade(s) e a(s) disciplina(s) que ele dá.",
+        "Homem/Mulher define a foto no cabeçalho e nas listas.",
+        "As turmas são criadas depois, na aba Professores.",
+        "Nome, disciplinas e foto podem ser editados em Professores.",
+      ],
+    },
+    instituicao: {
+      titulo: "Cadastro da equipe",
+      itens: [
+        "Acesso administrativo completo à unidade atual.",
+        "A pessoa troca a própria senha em Meu perfil.",
+        "Só cadastre quem realmente precisa ver dados financeiros e de alunos.",
+      ],
+    },
+  };
+  const ajuda = ajudaPorPapel[role] || ajudaPorPapel.aluno;
+
+  const formulario = `
+    <div class="management-card management-card-wide gestao-form">
+      <h3>Criar cadastro</h3>
+      <p>Todo mundo ganha login (e-mail e senha) para entrar no app. Escolha o tipo e preencha os dados.</p>
+
+      <p class="form-secao">1 · Quem é</p>
+      ${chipsPapel}
+
+      <p class="form-secao">2 · Dados</p>
       <input id="new-user-name" class="teacher-text-input" placeholder="Nome completo" value="${escapeHtml(state.novoUsuarioNome || "")}" />
-      <select id="new-user-role" class="teacher-text-input" data-action="change-new-user-role">
-        <option value="aluno" ${role === "aluno" ? "selected" : ""}>Aluno</option>
-        <option value="responsavel" ${role === "responsavel" ? "selected" : ""}>Responsável</option>
-        <option value="professor" ${role === "professor" ? "selected" : ""}>Professor</option>
-        <option value="instituicao" ${role === "instituicao" ? "selected" : ""}>Equipe administrativa</option>
-      </select>
       ${campoTurma}
       ${campoSexo}
       ${campoEscolasProfessor}
       ${campoDisciplina}
       ${campoVinculo}
       ${campoContato}
+
+      ${precisaLogin ? `<p class="form-secao">3 · Acesso ao app</p>` : ""}
       ${campoLogin}
+
       <button class="teacher-primary-btn" data-action="create-user" ${state.novoUsuarioSalvando ? "disabled" : ""}>${rotuloBotao}</button>
       ${state.instituicaoErro ? `<p class="teacher-error" style="color:var(--red,#C4544A);font-size:12.5px;margin-top:8px;">${escapeHtml(state.instituicaoErro)}</p>` : ""}
       <p class="section-eyebrow" style="margin-top:8px;">${textoRodape}</p>
     </div>`;
+
+  const painelAjuda = `
+    <aside class="gestao-ajuda">
+      <h4>${escapeHtml(ajuda.titulo)}</h4>
+      <p>Como funciona</p>
+      <ul>${ajuda.itens.map(i => `<li>${escapeHtml(i)}</li>`).join("")}</ul>
+    </aside>`;
+
+  return `<div class="gestao-cadastro-layout">${formulario}${painelAjuda}</div>`;
 }
 
 /* ------------------------------------------------------------------
@@ -2944,8 +3468,14 @@ function gestaoAcessosView(){
     { key: "professores", label: "Professores" },
     { key: "responsaveis", label: "Responsáveis" },
   ];
+  const contagem = {
+    alunos: (state.instAlunos || []).length,
+    professores: (state.gestaoProfessores || []).length,
+    responsaveis: (state.gestaoResponsaveis || []).length,
+  };
+  contagem.todos = contagem.alunos + contagem.professores + contagem.responsaveis;
   const filtroHtml = `<div class="acesso-filtros">${filtros.map(f => `
-    <button type="button" class="acesso-filtro ${grupo === f.key ? "active" : ""}" data-action="set-acessos-grupo" data-key="${f.key}">${f.label}</button>`).join("")}</div>`;
+    <button type="button" class="acesso-filtro ${grupo === f.key ? "active" : ""}" data-action="set-acessos-grupo" data-key="${f.key}">${f.label}${contagem[f.key] ? ` <span class="acesso-filtro-count">${contagem[f.key]}</span>` : ""}</button>`).join("")}</div>`;
 
   const carregando = state.instAlunosCarregando || state.gestaoEquipeCarregando;
 
@@ -3162,6 +3692,7 @@ function professoresSection(){
         </span>
       </button>
       <span style="display:flex;align-items:center;gap:6px;">
+        <button type="button" class="attendance-btn" data-action="abrir-ficha-usuario" data-id="${escapeHtml(p.id)}" data-nome="${escapeHtml(p.nome)}" aria-label="Ver ficha (contato de emergência, alergias…)" title="Ver ficha">${ICONS.shield}</button>
         <button type="button" class="attendance-btn" data-action="abrir-acesso-usuario" data-tipo="professor" data-id="${escapeHtml(p.id)}" data-uid="${escapeHtml(p.id)}" data-nome="${escapeHtml(p.nome)}" data-email="${escapeHtml(p.email || "")}" aria-label="Senha e acesso">${ICONS.key}</button>
         <button type="button" class="attendance-btn" data-action="abrir-editar-professor" data-id="${escapeHtml(p.id)}" data-nome="${escapeHtml(p.nome)}" aria-label="Editar professor">${ICONS.pencil}</button>
         <button type="button" class="attendance-btn" data-action="confirmar-excluir-professor" data-id="${escapeHtml(p.id)}" data-nome="${escapeHtml(p.nome)}" aria-label="Excluir professor" ${state.editProfessorExcluindoId === p.id ? "disabled" : ""}>${state.editProfessorExcluindoId === p.id ? "…" : ICONS.trash}</button>
@@ -3171,7 +3702,7 @@ function professoresSection(){
   return `
     <div class="management-card management-card-wide">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
-        <div><h3>Professores</h3><p>Toque num professor pra ver as turmas dele.</p></div>
+        <div><h3>Professores</h3><p>Toque num professor pra ver as turmas dele. O escudo abre a ficha (emergência, alergias, endereço).</p></div>
       </div>
       <div class="card flush">${linhasProfessores}</div>
     </div>`;
@@ -3476,72 +4007,136 @@ function responsavelVinculoModal(){
   </div>`;
 }
 
-/* Aba "Meu perfil" da equipe administrativa: dados da conta (nome, e-mail,
-   escola vinculada), troca de senha e manuais/materiais de apoio. */
+/* Aba "Meu perfil" da equipe administrativa: cartão de identificação
+   (foto, nome, e-mail, unidades), dados e senha, atalhos (Senhas & acessos,
+   suporte) e o catálogo de manuais agrupado por assunto. */
+function manuaisAgrupadosHtml(){
+  return MANUAIS_CATEGORIAS.map(cat => {
+    const itens = MANUAIS_INSTITUICAO.filter(m => m.categoria === cat.key);
+    if(!itens.length) return "";
+    const cards = itens.map(m => {
+      const pronto = !!(m.url && m.url !== "#");
+      const tag = `<span class="manual-tag manual-tag-${escapeHtml(m.tipo)}">${escapeHtml(MANUAIS_TIPOS[m.tipo] || "Guia")}</span>`;
+      const miolo = `
+        <span class="manual-item-icon">${ICONS[cat.icon] || ICONS.clipboard}</span>
+        <span class="manual-item-text">
+          <span class="manual-item-title">${escapeHtml(m.titulo)}</span>
+          <span class="manual-item-desc">${escapeHtml(m.descricao)}</span>
+          <span class="manual-item-meta">${tag}${pronto ? "" : `<span class="manual-tag manual-tag-breve">Em breve</span>`}</span>
+        </span>`;
+      return pronto
+        ? `<a class="manual-item" href="${escapeHtml(m.url)}" target="_blank" rel="noopener">${miolo}${ICONS.chevronRight}</a>`
+        : `<div class="manual-item manual-item-breve">${miolo}</div>`;
+    }).join("");
+    return `
+      <section class="manual-grupo">
+        <div class="manual-grupo-head">
+          <span class="manual-grupo-icon">${ICONS[cat.icon] || ICONS.clipboard}</span>
+          <div>
+            <h3>${escapeHtml(cat.titulo)} <span class="manual-grupo-count">${itens.length}</span></h3>
+            <p>${escapeHtml(cat.descricao)}</p>
+          </div>
+        </div>
+        <div class="card flush manual-list">${cards}</div>
+      </section>`;
+  }).join("");
+}
+
 function perfilInstituicaoView(school){
   const nome = (state.perfil?.nome || "").trim();
   const email = state.authUser?.email || "—";
 
   const escolasVinculadas = Object.values(state.data.escolas || {}).map(e => e.nome).filter(Boolean);
-  const escolasTexto = escolasVinculadas.length ? escolasVinculadas.join(", ") : escapeHtml(school?.nome || "—");
+  const chipsEscolas = (escolasVinculadas.length ? escolasVinculadas : [school?.nome || "—"])
+    .map(n => `<span class="perfil-chip">${ICONS.pinSmall} ${escapeHtml(n)}</span>`).join("");
 
-  const manuais = MANUAIS_INSTITUICAO.map(m => `
-    <a class="manual-item" href="${escapeHtml(m.url)}" target="_blank" rel="noopener">
-      <span class="manual-item-icon">${ICONS.clipboard}</span>
-      <span class="manual-item-text">
-        <span class="manual-item-title">${escapeHtml(m.titulo)}</span>
-        <span class="manual-item-desc">${escapeHtml(m.descricao)}</span>
-      </span>
-      ${ICONS.chevronRight}
-    </a>`).join("");
+  const totalManuais = MANUAIS_INSTITUICAO.length;
+  const prontos = MANUAIS_INSTITUICAO.filter(m => m.url && m.url !== "#").length;
 
   return `
     <h2 class="section-title">Meu perfil</h2>
-    <p class="section-eyebrow">Seus dados de acesso e materiais de apoio da equipe.</p>
+    <p class="section-eyebrow">Seus dados de acesso, atalhos e materiais de apoio da equipe.</p>
 
-    <div class="management-grid">
+    <section class="perfil-hero">
+      <div class="perfil-hero-foto">${avatarHtml(fotoSecretariaDaEscola(school), iniciaisDoNome(nome || "Equipe"), "avatar-foto-perfil")}</div>
+      <div class="perfil-hero-info">
+        <span class="perfil-hero-badge">Equipe administrativa</span>
+        <h2>${nome ? escapeHtml(nome) : "Adicione seu nome"}</h2>
+        <p>${escapeHtml(email)}</p>
+        <div class="perfil-chips">${chipsEscolas}</div>
+      </div>
+    </section>
+
+    <div class="perfil-grid">
       <div class="management-card">
-        <h3>Meus dados</h3>
-        <p>Como seu nome aparece pro resto da equipe e da escola.</p>
+        <h3>${ICONS.user} Meus dados</h3>
+        <p>Como seu nome aparece para o resto da equipe e da escola.</p>
+        <label class="teacher-label" for="profile-name-input">Nome completo</label>
         <input id="profile-name-input" class="teacher-text-input" placeholder="Seu nome completo" value="${escapeHtml(state.perfilNomeInput || "")}" />
-        ${nome ? `<p class="section-eyebrow" style="margin:8px 0 0;">Nome atual: <strong style="color:var(--ink);">${escapeHtml(nome)}</strong></p>` : ""}
         <button class="teacher-primary-btn" data-action="save-profile-name" ${state.perfilNomeSalvando ? "disabled" : ""}>${state.perfilNomeSalvando ? "Salvando…" : (nome ? "Atualizar nome" : "Salvar nome")}</button>
         ${state.perfilNomeErro ? `<p class="teacher-error" style="color:var(--red);font-size:12.5px;margin-top:8px;">${escapeHtml(state.perfilNomeErro)}</p>` : ""}
-        <p class="section-eyebrow" style="margin-top:12px;">E-mail de acesso: <strong style="color:var(--ink);">${escapeHtml(email)}</strong></p>
-        <p class="section-eyebrow" style="margin-top:2px;">Unidade(s) vinculada(s): <strong style="color:var(--ink);">${escolasTexto}</strong></p>
+        <dl class="perfil-dados">
+          <div><dt>E-mail de acesso</dt><dd>${escapeHtml(email)}</dd></div>
+          <div><dt>Tipo de acesso</dt><dd>Equipe administrativa</dd></div>
+        </dl>
       </div>
 
       <div class="management-card">
         <h3>${ICONS.shield} Trocar minha senha</h3>
-        <p>Você mesmo troca sua senha aqui, na hora. Confirme a senha atual e escolha a nova.</p>
+        <p>Confirme a senha atual e escolha a nova. A troca vale na hora.</p>
         <input id="perfil-senha-atual" type="password" class="teacher-text-input" placeholder="Senha atual" autocomplete="current-password" />
-        <input id="perfil-senha-nova" type="password" class="teacher-text-input" style="margin-top:8px;" placeholder="Nova senha (mín. 6 caracteres)" autocomplete="new-password" />
-        <input id="perfil-senha-confirma" type="password" class="teacher-text-input" style="margin-top:8px;" placeholder="Repita a nova senha" autocomplete="new-password" />
+        <input id="perfil-senha-nova" type="password" class="teacher-text-input" placeholder="Nova senha (mín. 6 caracteres)" autocomplete="new-password" />
+        <input id="perfil-senha-confirma" type="password" class="teacher-text-input" placeholder="Repita a nova senha" autocomplete="new-password" />
         <button class="teacher-primary-btn" data-action="trocar-minha-senha" ${state.perfilSenhaTrocando ? "disabled" : ""}>${state.perfilSenhaTrocando ? "Salvando…" : "Salvar nova senha"}</button>
         ${state.perfilSenhaErro ? `<p class="teacher-error" style="color:var(--red);font-size:12.5px;margin-top:8px;">${escapeHtml(state.perfilSenhaErro)}</p>` : ""}
         ${state.perfilSenhaMensagem ? `<p class="teacher-success" style="margin-top:8px;">${escapeHtml(state.perfilSenhaMensagem)}</p>` : ""}
-
-        <p class="section-eyebrow" style="margin-top:14px;">Esqueceu a senha atual? Não mandamos link por e-mail — fale com o suporte técnico logo abaixo.</p>
-      </div>
-
-      <div class="management-card">
-        <h3>${ICONS.key} Senhas da escola</h3>
-        <p>Trocar a senha de um aluno, professor ou responsável, ou excluir um cadastro, é na Gestão.</p>
-        <button class="teacher-primary-btn" data-action="ir-para-acessos">Abrir Senhas & acessos</button>
-        <p class="section-eyebrow" style="margin-top:8px;">Atalho para Gestão &gt; Senhas &amp; acessos.</p>
-      </div>
-
-      <div class="management-card">
-        <h3>${ICONS.lifebuoy} Suporte técnico</h3>
-        <p>Problema no sistema (erro na tela, acesso travado, dado que não salva)? Fale com quem cuida do app.</p>
-        <button class="teacher-primary-btn" data-action="whatsapp-suporte">Chamar o suporte no WhatsApp</button>
-        <p class="section-eyebrow" style="margin-top:8px;">Ou por e-mail: <strong style="color:var(--ink);">${escapeHtml(SUPORTE_TECNICO.email)}</strong></p>
+        <p class="section-eyebrow" style="margin-top:12px;">Esqueceu a senha atual? Não mandamos link por e-mail — fale com o suporte ao lado.</p>
       </div>
     </div>
 
-    <h2 class="section-title" style="margin-top:28px;">Manuais e materiais de apoio</h2>
-    <p class="section-eyebrow">Guias rápidos para o dia a dia da equipe.</p>
-    <div class="card flush manual-list">${manuais}</div>`;
+    ${fichaFormCardHtml()}
+
+    <div class="perfil-atalhos">
+      <div class="perfil-atalho">
+        <span class="perfil-atalho-icon">${ICONS.key}</span>
+        <div class="perfil-atalho-texto">
+          <strong>Senhas da escola</strong>
+          <span>Trocar senha de aluno, professor ou responsável, ou excluir um cadastro.</span>
+        </div>
+        <button class="teacher-primary-btn" data-action="ir-para-acessos">Abrir</button>
+      </div>
+      <div class="perfil-atalho">
+        <span class="perfil-atalho-icon">${ICONS.lifebuoy}</span>
+        <div class="perfil-atalho-texto">
+          <strong>Suporte técnico</strong>
+          <span>Erro na tela, acesso travado ou dado que não salva? WhatsApp ou ${escapeHtml(SUPORTE_TECNICO.email)}.</span>
+        </div>
+        <button class="teacher-primary-btn" data-action="whatsapp-suporte">WhatsApp</button>
+      </div>
+    </div>
+
+    <div class="manuais-cabecalho">
+      <h2 class="section-title">Manuais e materiais de apoio</h2>
+      <span class="manuais-progresso">${prontos} de ${totalManuais} prontos</span>
+    </div>
+    <p class="section-eyebrow">Guias para o dia a dia da equipe. Os marcados como "Em breve" ainda serão produzidos.</p>
+    ${manuaisAgrupadosHtml()}`;
+}
+
+/* Troca o tipo de cadastro em Gestão > Criar cadastro (aluno, responsável,
+   professor, equipe). Usado pelos botões de tipo. */
+async function mudarPapelNovoUsuario(papel){
+  state.novoUsuarioRole = papel;
+  state.instituicaoErro = "";
+  if(papel === "responsavel" && state.escolaSelecionadaId){
+    await carregarAlunosParaVinculo(state.escolaSelecionadaId);
+  }
+  if(papel === "professor" && state.novoUsuarioEscolasIds.length === 0 && state.escolaSelecionadaId){
+    // começa marcado só na unidade atual; a secretaria desmarca/marca
+    // outras se o professor também der aula nelas.
+    state.novoUsuarioEscolasIds = [state.escolaSelecionadaId];
+  }
+  render();
 }
 
 async function carregarAlunosParaVinculo(escolaId){
@@ -3637,6 +4232,17 @@ async function carregarEquipeDaEscola(escolaId){
       });
     }
     state.gestaoProfessores = Array.from(profPorUid.values());
+
+    // Aniversário e telefone vêm da ficha pessoal (usuarios/{uid}.ficha) —
+    // alimentam a aba "Aniversários". Falha de um não derruba os outros.
+    await Promise.allSettled(state.gestaoProfessores.map(async (p) => {
+      try {
+        const snap = await getDoc(doc(db, "usuarios", p.id));
+        const ficha = (snap.exists() && snap.data().ficha) || {};
+        p.nascimento = typeof ficha.nascimento === "string" ? ficha.nascimento : "";
+        p.telefone = typeof ficha.telefone === "string" ? ficha.telefone : "";
+      } catch(_e){ p.nascimento = ""; p.telefone = ""; }
+    }));
 
     state.gestaoResponsaveis = respR.status === "fulfilled"
       ? respR.value.docs.map(d => ({
@@ -4635,9 +5241,19 @@ function mensagemErroAcessosContrato(err){
    desatualizado ora no dashboard do professor, ora na lista da Gestão. */
 async function salvarEdicaoProfessor(uid, nome, disciplinas, sexo){
   await updateDoc(doc(db, "usuarios", uid), { nome, disciplinas, sexo: sexo || "" });
-  const qVinculos = query(collection(db, "escolaProfessores"), where("professorId", "==", uid));
-  const snaps = await getDocs(qVinculos);
-  await Promise.all(snaps.docs.map(d => updateDoc(d.ref, { nome, disciplinas, sexo: sexo || "" })));
+
+  // Uma consulta POR unidade da equipe logada, sempre com "escolaId ==".
+  // Consultar só por "professorId ==" faz o Firestore recusar a consulta
+  // inteira (permission-denied), porque a regra de segurança exige provar
+  // o escolaId na própria consulta — e sem ele não dá pra provar nada.
+  const escolasIds = Object.keys(state.data.escolas || {});
+  const resultados = await Promise.all(escolasIds.map(escolaId => getDocs(query(
+    collection(db, "escolaProfessores"),
+    where("escolaId", "==", escolaId),
+    where("professorId", "==", uid),
+  ))));
+  const vinculos = resultados.flatMap(snap => snap.docs);
+  await Promise.all(vinculos.map(d => updateDoc(d.ref, { nome, disciplinas, sexo: sexo || "" })));
 }
 
 /* Remove um professor de UMA unidade: apaga o vínculo dele em
@@ -5165,7 +5781,9 @@ function aniversariosView(school){
       <div style="padding:20px;font-size:14px;color:var(--slate);">Carregando aniversariantes…</div>`;
   }
 
-  const todos = state.instAlunos || [];
+  const alunosTodos = state.instAlunos || [];
+  const professoresTodos = (state.gestaoProfessores || []).map(p => ({ ...p, ehProfessor: true }));
+  const todos = [...alunosTodos, ...professoresTodos];
   const comData = todos
     .filter(a => /^\d{4}-\d{2}-\d{2}$/.test(a.nascimento || ""))
     .map(a => {
@@ -5174,7 +5792,8 @@ function aniversariosView(school){
       const idade = hoje.getFullYear() - ano;
       return { ...a, dia, mes, ano, idade, ehHoje: dia === diaHoje && mes === mesHoje };
     });
-  const semData = todos.length - comData.length;
+  const semData = alunosTodos.length - comData.filter(a => !a.ehProfessor).length;
+  const profSemData = professoresTodos.length - comData.filter(a => a.ehProfessor).length;
 
   const filtrados = (state.aniversarioMes === "todos"
     ? comData
@@ -5183,7 +5802,25 @@ function aniversariosView(school){
 
   const aniversariantesHoje = comData.filter(a => a.ehHoje);
 
+  const linhaProfessor = (a) => {
+    const numero = telefoneValido(a.telefone);
+    const texto = `Parabéns, ${primeiroNome(a.nome)}! 🎉 Toda a equipe do Educa+ Centro Educacional deseja um dia muito especial, com muita saúde e alegria. Obrigado(a) por fazer parte da nossa escola! 💙`;
+    return `
+      <div class="aniversario-row${a.ehHoje ? " is-hoje" : ""}">
+        <div class="aniversario-data">
+          <strong>${String(a.dia).padStart(2, "0")}</strong>
+          <span>${MESES_CURTOS[a.mes - 1]}</span>
+        </div>
+        <div class="aniversario-info">
+          <span class="aniversario-nome">${escapeHtml(a.nome)} <span class="pill pill-gold" style="font-size:11px;">Professor(a)</span>${a.ehHoje ? ` <span class="aniversario-hoje-tag">hoje</span>` : ""}</span>
+          <span class="aniversario-sub">${escapeHtml((a.disciplinas || []).join(", ") || "Professor(a)")} · faz ${a.idade} anos · ${numero ? "WhatsApp do professor" : "Sem WhatsApp na ficha"}</span>
+        </div>
+        ${numero ? `<a class="aniversario-btn" href="${whatsappLinkComTexto(numero, texto)}" target="_blank" rel="noopener">${ICONS.megaphone} Enviar parabéns</a>` : ""}
+      </div>`;
+  };
+
   const linha = (a) => {
+    if(a.ehProfessor) return linhaProfessor(a);
     const destino = destinoDoParabens(a);
     const rotuloDestino = destino
       ? (destino.tipo === "aluno"
@@ -5223,14 +5860,15 @@ function aniversariosView(school){
 
   return `
     <h2 class="section-title">Aniversários</h2>
-    <p class="section-eyebrow">Alunos de ${escapeHtml(school.nome)} por data de nascimento. A mensagem já vai escrita: se o aluno tem WhatsApp, vai pra ele; se não tem, vai pro responsável vinculado.</p>
+    <p class="section-eyebrow">Alunos e professores de ${escapeHtml(school.nome)} por data de nascimento. A mensagem já vai escrita: se o aluno tem WhatsApp, vai pra ele; se não tem, vai pro responsável vinculado. Professores entram quando preenchem o aniversário em "Meu perfil".</p>
     ${blocoHoje}
     <div class="aniversario-filtro">
       <label class="teacher-label" for="aniversario-mes">Mês</label>
       <select id="aniversario-mes" class="teacher-text-input" data-action="noop">${opcoesMes}</select>
     </div>
     <div class="card flush">${lista}</div>
-    ${semData ? `<p class="section-eyebrow" style="margin-top:10px;">${semData} aluno(s) ainda sem data de nascimento no cadastro. Dá pra preencher na ficha do aluno, na aba "Alunos" — os contratos novos já gravam a data sozinhos.</p>` : ""}`;
+    ${semData ? `<p class="section-eyebrow" style="margin-top:10px;">${semData} aluno(s) ainda sem data de nascimento no cadastro. Dá pra preencher na ficha do aluno, na aba "Alunos" — os contratos novos já gravam a data sozinhos.</p>` : ""}
+    ${profSemData ? `<p class="section-eyebrow" style="margin-top:6px;">${profSemData} professor(es) ainda não informaram o aniversário na ficha.</p>` : ""}`;
 }
 
 /* Bloco "Financeiro" dentro da ficha do aluno: lista as mensalidades já
@@ -6146,6 +6784,10 @@ function bindEvents(){
       return;
     }
     if(t.id === "acesso-email"){ state.acessoEmail = t.value; return; }
+    if(t.dataset && t.dataset.ficha){
+      fichaFormAtual()[t.dataset.ficha] = t.value;
+      return;
+    }
     if(t.dataset && t.dataset.observation){
       state.professorObservacoes[t.dataset.observation] = t.value;
       return;
@@ -6510,17 +7152,7 @@ function bindEvents(){
     if(t.id === "new-user-sexo"){ state.novoUsuarioSexo = t.value; return; }
     if(t.id === "edit-professor-sexo"){ state.editProfessorSexo = t.value; return; }
     if(t.id === "new-user-role"){
-      state.novoUsuarioRole = t.value;
-      state.instituicaoErro = "";
-      if(t.value === "responsavel" && state.escolaSelecionadaId){
-        await carregarAlunosParaVinculo(state.escolaSelecionadaId);
-      }
-      if(t.value === "professor" && state.novoUsuarioEscolasIds.length === 0 && state.escolaSelecionadaId){
-        // começa marcado só na unidade atual; a secretaria desmarca/marca
-        // outras se o professor também der aula nelas.
-        state.novoUsuarioEscolasIds = [state.escolaSelecionadaId];
-      }
-      render();
+      await mudarPapelNovoUsuario(t.value);
     }
   });
 
@@ -6590,6 +7222,9 @@ function bindEvents(){
       case "set-inst-tab":
         state.instTab = el.dataset.key;
         state.cal.diaAberto = null;
+        if(state.instTab === "perfil"){
+          state.fichaForm = null; state.fichaErro = ""; state.fichaMensagem = "";
+        }
         render();
         if(state.instTab === "aval") avalAbrirNaInstituicao();
         if(state.instTab === "turmas" && state.escolaSelecionadaId
@@ -6621,7 +7256,7 @@ function bindEvents(){
           // quem marcar como destinatário quando a secretaria salvar um item
           garantirPessoasDaUnidade();
         }
-        if(state.instTab === "gestao" && state.gestaoSubTab === "acessos"){
+        if(state.instTab === "gestao"){
           garantirPessoasDaUnidade();
         }
         // contratos precisa dos alunos (pendentes de assinatura, nomes já
@@ -6681,6 +7316,10 @@ function bindEvents(){
       case "set-acessos-grupo":
         state.gestaoAcessosGrupo = el.dataset.key;
         render();
+        break;
+
+      case "set-new-user-role":
+        await mudarPapelNovoUsuario(el.dataset.role);
         break;
 
       case "ir-para-acessos":
@@ -6941,6 +7580,10 @@ function bindEvents(){
       case "set-professor-tab":
         state.professorTab = el.dataset.key;
         state.cal.diaAberto = null;
+        if(state.professorTab === "perfil"){
+          state.fichaForm = null; state.fichaErro = ""; state.fichaMensagem = "";
+          state.perfilSenhaErro = ""; state.perfilSenhaMensagem = "";
+        }
         render();
         if(state.professorTab === "calendario") carregarEventosDoProfessor();
         else if(state.professorTab === "aval") avalAbrirNoProfessor();
@@ -7645,6 +8288,36 @@ function bindEvents(){
         state.instituicaoMensagem = "Ação simulada — a integração de escrita com o banco entra na próxima etapa.";
         render();
         break;
+
+      case "salvar-minha-ficha":
+        await salvarMinhaFicha();
+        break;
+      case "abrir-ficha-usuario":
+        await abrirFichaUsuario(el.dataset.id, el.dataset.nome);
+        break;
+      case "fechar-ficha-usuario":
+        state.fichaModalAberto = false;
+        state.fichaModalDados = null;
+        render();
+        break;
+      case "professor-toggle-turma":
+        state.professorTurmaDetalheId = state.professorTurmaDetalheId === el.dataset.id ? null : el.dataset.id;
+        render();
+        break;
+      case "professor-abrir-turma-em": {
+        state.professorTurmaId = el.dataset.id;
+        state.professorTab = el.dataset.tab === "avaliacoes" ? "avaliacoes" : "aulas";
+        state.professorNotasSalvas = false;
+        state.professorNotasErro = "";
+        state.professorAtividadeEditandoId = null;
+        state.professorAtividadeNome = "";
+        state.professorAtividadeExcluirConfirmId = null;
+        state.cal.diaAberto = null;
+        const turma = professorTurmaAtual();
+        render();
+        if(turma) await Promise.all([carregarRegistroDoDia(turma), carregarAtividadesDaTurma(turma)]);
+        break;
+      }
 
       case "save-profile-name": {
         const nomeInformado = (state.perfilNomeInput || document.getElementById("profile-name-input")?.value || "").trim();
