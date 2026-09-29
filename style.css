@@ -2231,3 +2231,6 @@ button.gestao-tile:hover { border-color: var(--gold); transform: translateY(-1px
     .ficha-grid { grid-template-columns: 1fr; }
     .ficha-leitura dd { max-width: 55%; }
 }
+
+/* botão "Enviar parabéns" agora é <button> (gera o cartão com a logo) */
+button.aniversario-btn { border: 0; cursor: pointer; font-family: inherit; }

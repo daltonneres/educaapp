@@ -484,15 +484,164 @@ const MENSAGEM_CERTIFICADO = {
     `Olá! Gostaria de solicitar o certificado do(a) aluno(a) ${nomeAluno}${turma ? ` (${turma})` : ""}, por favor.`,
 };
 
-/* Mensagem de parabéns enviada pela aba "Aniversários". Ajuste os textos
-   aqui se a escola quiser mudar o jeito de falar — o resto continua
-   funcionando igual. */
-const MENSAGEM_ANIVERSARIO = {
-  paraAluno: (primeiroNome) =>
-    `Feliz aniversário, ${primeiroNome}! 🎉\n\nToda a equipe do Educa+ Centro Educacional deseja um dia muito especial pra você. Conte sempre com a gente!`,
-  paraResponsavel: (primeiroNomeResponsavel, nomeAluno) =>
-    `Olá, ${primeiroNomeResponsavel}! 🎉\n\nHoje é aniversário do(a) ${nomeAluno}! A equipe do Educa+ Centro Educacional deseja muitas felicidades e pede que dê os parabéns por nós.`,
+/* Mensagens de parabéns da aba "Aniversários". A secretaria pode
+   personalizar (botão "Personalizar mensagem"); o texto fica salvo por
+   unidade em mensagensAniversario/{escolaId}. Se não houver texto salvo,
+   vale o padrão abaixo.
+   Variáveis: {nome} = primeiro nome de quem recebe · {aluno} = nome do
+   aluno (na mensagem ao responsável) · {idade} = idade que completa. */
+const TEMPLATES_ANIVERSARIO_PADRAO = {
+  aluno: "Feliz aniversário, {nome}! 🎉\n\nToda a equipe do Educa+ Centro Educacional deseja um dia muito especial pra você. Conte sempre com a gente!",
+  responsavel: "Olá, {nome}! 🎉\n\nHoje é aniversário do(a) {aluno}! A equipe do Educa+ Centro Educacional deseja muitas felicidades e pede que dê os parabéns por nós.",
+  professor: "Parabéns, {nome}! 🎉\n\nToda a equipe do Educa+ Centro Educacional deseja um dia muito especial, com muita saúde e alegria. Obrigado(a) por fazer parte da nossa escola! 💙",
 };
+const TIPOS_MSG_ANIVERSARIO = [
+  { key: "aluno", titulo: "Para o aluno", dica: "Enviada ao WhatsApp do próprio aluno. Variáveis: {nome} e {idade}." },
+  { key: "responsavel", titulo: "Para o responsável", dica: "Enviada quando o aluno não tem WhatsApp. Variáveis: {nome} (do responsável), {aluno} e {idade}." },
+  { key: "professor", titulo: "Para o professor", dica: "Variáveis: {nome} e {idade}." },
+];
+
+function textoAniversario(tipo, vars){
+  const salvo = state.aniversarioMsgs && typeof state.aniversarioMsgs[tipo] === "string" ? state.aniversarioMsgs[tipo].trim() : "";
+  const modelo = salvo || TEMPLATES_ANIVERSARIO_PADRAO[tipo];
+  return modelo.replace(/\{(nome|aluno|idade)\}/g, (_m, k) => (vars && vars[k] != null ? String(vars[k]) : ""));
+}
+
+async function carregarMensagensAniversario(escolaId){
+  if(!escolaId) return;
+  state.aniversarioMsgsEscolaId = escolaId;
+  try {
+    const snap = await getDoc(doc(db, "mensagensAniversario", escolaId));
+    state.aniversarioMsgs = snap.exists() ? snap.data() : {};
+  } catch(err){
+    console.error("Mensagens de aniversário não carregadas (usando o padrão):", err?.code);
+    state.aniversarioMsgs = {};
+  }
+  render();
+}
+
+/* ---- Cartão com a logo da escola (imagem PNG gerada no navegador) ---- */
+const LOGO_ESCOLA_SRC = "imgs/logoeduca.jpeg";
+let _logoEscolaPromise = null;
+function carregarLogoEscola(){
+  if(!_logoEscolaPromise){
+    _logoEscolaPromise = new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => resolve(null);
+      img.src = LOGO_ESCOLA_SRC;
+    });
+  }
+  return _logoEscolaPromise;
+}
+
+async function gerarCartaoAniversario(nome, tipo){
+  const W = 1080, H = 1080;
+  const canvas = document.createElement("canvas");
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext("2d");
+  const INK = "#122032", OURO = "#C9A24A";
+
+  const fundo = ctx.createLinearGradient(0, 0, 0, H);
+  fundo.addColorStop(0, "#FFFDF7");
+  fundo.addColorStop(1, "#F6EBD0");
+  ctx.fillStyle = fundo; ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = OURO; ctx.lineWidth = 10; ctx.strokeRect(36, 36, W - 72, H - 72);
+  ctx.lineWidth = 2; ctx.strokeRect(58, 58, W - 116, H - 116);
+
+  const logo = await carregarLogoEscola();
+  let y = 120;
+  if(logo){
+    const alvoW = 420;
+    const alvoH = alvoW * (logo.naturalHeight / logo.naturalWidth);
+    const alturaMax = 300;
+    const esc = alvoH > alturaMax ? alturaMax / alvoH : 1;
+    const w = alvoW * esc, h = alvoH * esc;
+    ctx.drawImage(logo, (W - w) / 2, y, w, h);
+    y += h + 50;
+  } else {
+    y += 120;
+  }
+
+  ctx.textAlign = "center";
+  ctx.fillStyle = OURO;
+  ctx.font = "700 40px 'Helvetica Neue', Arial, sans-serif";
+  ctx.fillText("🎉  " + (tipo === "aluno" ? "FELIZ ANIVERSÁRIO" : "PARABÉNS") + "  🎉", W / 2, y + 40);
+
+  // nome: reduz a fonte até caber
+  let tamanho = 120;
+  ctx.fillStyle = INK;
+  do {
+    ctx.font = `700 ${tamanho}px Georgia, 'Times New Roman', serif`;
+    tamanho -= 4;
+  } while(ctx.measureText(nome).width > W - 200 && tamanho > 40);
+  ctx.fillText(nome, W / 2, y + 190);
+
+  ctx.fillStyle = "#4A5A6E";
+  ctx.font = "400 38px 'Helvetica Neue', Arial, sans-serif";
+  ctx.fillText("Muita saúde, alegria e conquistas!", W / 2, y + 270);
+  ctx.fillStyle = INK;
+  ctx.font = "700 34px 'Helvetica Neue', Arial, sans-serif";
+  ctx.fillText("Educa+ Centro Educacional", W / 2, H - 110);
+
+  return await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+}
+
+const ehCelular = () => /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || "");
+
+async function enviarParabensComLogo({ numero, texto, nome, tipo }){
+  state.aniversarioAviso = "";
+  const linkWhats = whatsappLinkComTexto(numero, texto);
+  const nomeArquivo = `parabens-${String(nome || "aniversariante").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-")}.png`;
+
+  // Celular: abre a folha de compartilhar do sistema com imagem + texto
+  // (a pessoa escolhe o WhatsApp e o contato).
+  if(ehCelular() && navigator.canShare && navigator.share){
+    try {
+      const blob = await gerarCartaoAniversario(nome, tipo);
+      const arquivo = new File([blob], nomeArquivo, { type: "image/png" });
+      if(navigator.canShare({ files: [arquivo] })){
+        await navigator.share({ files: [arquivo], text: texto });
+        return;
+      }
+    } catch(err){
+      if(err && err.name === "AbortError") return;   // pessoa cancelou
+      console.error("Compartilhar cartão falhou:", err);
+    }
+    window.open(linkWhats, "_blank", "noopener");
+    state.aniversarioAviso = "Não deu para anexar a logo neste aparelho — abri o WhatsApp só com o texto.";
+    render();
+    return;
+  }
+
+  // Computador: copia o cartão para a área de transferência e abre a
+  // conversa já com o texto; é só colar (Ctrl+V) e enviar. Se o navegador
+  // não deixar copiar imagem, baixa o arquivo.
+  const janela = window.open("about:blank", "_blank");
+  const blobPromise = gerarCartaoAniversario(nome, tipo);
+  let copiou = false;
+  try {
+    if(navigator.clipboard && window.ClipboardItem){
+      await navigator.clipboard.write([new ClipboardItem({ "image/png": blobPromise })]);
+      copiou = true;
+    }
+  } catch(_e){ copiou = false; }
+  if(!copiou){
+    try {
+      const blob = await blobPromise;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = nomeArquivo;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+    } catch(_e){ /* segue só com o texto */ }
+  }
+  if(janela) janela.location.href = linkWhats; else window.open(linkWhats, "_blank", "noopener");
+  state.aniversarioAviso = copiou
+    ? "Cartão com a logo copiado! Na conversa do WhatsApp, cole com Ctrl+V (a mensagem já está escrita) e envie."
+    : "Cartão com a logo baixado. Na conversa do WhatsApp, anexe a imagem baixada (a mensagem já está escrita).";
+  render();
+}
 
 /* Link do WhatsApp já com a mensagem escrita, pronta pra secretaria só
    conferir e apertar enviar. */
@@ -1225,6 +1374,13 @@ const state = {
 
   // aba "Aniversários"
   aniversarioMes: String(new Date().getMonth() + 1),  // "1".."12" ou "todos"
+  aniversarioMsgs: null,            // { aluno, responsavel, professor } salvos da unidade ({} = usar padrão)
+  aniversarioMsgsEscolaId: null,
+  aniversarioMsgModalAberto: false,
+  aniversarioMsgRascunho: null,
+  aniversarioMsgSalvando: false,
+  aniversarioMsgErro: "",
+  aniversarioAviso: "",
 
   alunoDetalheNascimentoInput: "",
   // ficha do aluno > seção "Turmas"
@@ -3198,7 +3354,7 @@ function renderInstituicao(){
     navAction: "set-inst-tab",
     schoolBadge: `${ICONS.pinSmall} ${escapeHtml(school.nome)} — ${escapeHtml(school.uf)}`,
     schoolBadgeClickable: temMaisDeUmaEscola,
-  }) + alunoDetalheModal() + turmaDetalheModal() + professorTurmasModal() + editarProfessorModal() + fichaUsuarioModal() + importarTurmasModal() + responsavelVinculoModal() + acessoUsuarioModal() + contratoModal(state.contrato, {
+  }) + alunoDetalheModal() + turmaDetalheModal() + professorTurmasModal() + editarProfessorModal() + fichaUsuarioModal() + aniversarioMsgModal() + importarTurmasModal() + responsavelVinculoModal() + acessoUsuarioModal() + contratoModal(state.contrato, {
     cursos: cursosDaEscola(school?.nome || ""),
     alunos: state.instAlunos || [],
     turmas: state.instTurmas || [],
@@ -4814,6 +4970,9 @@ function garantirPessoasDaUnidade(){
   if((state.gestaoProfessores === null || state.gestaoEquipeEscolaId !== escolaId) && !state.gestaoEquipeCarregando){
     carregarEquipeDaEscola(escolaId);
   }
+  if(state.aniversarioMsgsEscolaId !== escolaId){
+    carregarMensagensAniversario(escolaId);
+  }
   // as turmas alimentam o seletor "Turma" dos contratos
   garantirTurmasDaUnidade();
 }
@@ -5754,7 +5913,7 @@ function destinoDoParabens(aluno){
       tipo: "aluno",
       nome: aluno.nome,
       numero: doAluno,
-      texto: MENSAGEM_ANIVERSARIO.paraAluno(primeiroNome(aluno.nome)),
+      texto: textoAniversario("aluno", { nome: primeiroNome(aluno.nome), idade: aluno.idade }),
     };
   }
   const responsavel = (state.gestaoResponsaveis || [])
@@ -5764,10 +5923,39 @@ function destinoDoParabens(aluno){
       tipo: "responsavel",
       nome: responsavel.nome,
       numero: telefoneValido(responsavel.contato),
-      texto: MENSAGEM_ANIVERSARIO.paraResponsavel(primeiroNome(responsavel.nome), aluno.nome),
+      texto: textoAniversario("responsavel", { nome: primeiroNome(responsavel.nome), aluno: aluno.nome, idade: aluno.idade }),
     };
   }
   return null;
+}
+
+
+function aniversarioMsgModal(){
+  if(!state.aniversarioMsgModalAberto || !state.aniversarioMsgRascunho) return "";
+  const r = state.aniversarioMsgRascunho;
+  const campos = TIPOS_MSG_ANIVERSARIO.map(t => `
+    <div class="aluno-modal-section">
+      <h3 class="teacher-label">${t.titulo}</h3>
+      <textarea class="teacher-text-input ficha-textarea" style="min-height:120px;" maxlength="800" data-aniv-msg="${t.key}" ${state.aniversarioMsgSalvando ? "disabled" : ""}>${escapeHtml(r[t.key] || "")}</textarea>
+      <p class="section-eyebrow" style="margin:4px 0 0;">${t.dica}</p>
+    </div>`).join("");
+  return `
+  <div class="aluno-modal-backdrop" data-action="fechar-aniv-msg">
+    <div class="aluno-modal" role="dialog" aria-modal="true" aria-label="Personalizar mensagem de aniversário" data-action="noop">
+      <div class="aluno-modal-head">
+        <div><h2>Mensagem de aniversário</h2><p class="section-eyebrow" style="margin:2px 0 0;">Vale para toda a equipe desta unidade. Use as variáveis entre chaves, como {nome}.</p></div>
+        <button type="button" class="secretaria-modal-close" style="color:var(--slate);" data-action="fechar-aniv-msg" aria-label="Fechar">${ICONS.close}</button>
+      </div>
+      ${campos}
+      <div class="aluno-modal-section">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button type="button" class="teacher-primary-btn" style="margin-top:0;" data-action="salvar-aniv-msg" ${state.aniversarioMsgSalvando ? "disabled" : ""}>${state.aniversarioMsgSalvando ? "Salvando…" : "Salvar mensagens"}</button>
+          <button type="button" class="attendance-btn" data-action="restaurar-aniv-msg" ${state.aniversarioMsgSalvando ? "disabled" : ""}>Restaurar padrão</button>
+        </div>
+        ${state.aniversarioMsgErro ? `<p class="teacher-error" style="color:var(--red,#C4544A);font-size:12.5px;margin-top:8px;">${escapeHtml(state.aniversarioMsgErro)}</p>` : ""}
+      </div>
+    </div>
+  </div>`;
 }
 
 function aniversariosView(school){
@@ -5804,7 +5992,7 @@ function aniversariosView(school){
 
   const linhaProfessor = (a) => {
     const numero = telefoneValido(a.telefone);
-    const texto = `Parabéns, ${primeiroNome(a.nome)}! 🎉 Toda a equipe do Educa+ Centro Educacional deseja um dia muito especial, com muita saúde e alegria. Obrigado(a) por fazer parte da nossa escola! 💙`;
+    const texto = textoAniversario("professor", { nome: primeiroNome(a.nome), idade: a.idade });
     return `
       <div class="aniversario-row${a.ehHoje ? " is-hoje" : ""}">
         <div class="aniversario-data">
@@ -5815,7 +6003,7 @@ function aniversariosView(school){
           <span class="aniversario-nome">${escapeHtml(a.nome)} <span class="pill pill-gold" style="font-size:11px;">Professor(a)</span>${a.ehHoje ? ` <span class="aniversario-hoje-tag">hoje</span>` : ""}</span>
           <span class="aniversario-sub">${escapeHtml((a.disciplinas || []).join(", ") || "Professor(a)")} · faz ${a.idade} anos · ${numero ? "WhatsApp do professor" : "Sem WhatsApp na ficha"}</span>
         </div>
-        ${numero ? `<a class="aniversario-btn" href="${whatsappLinkComTexto(numero, texto)}" target="_blank" rel="noopener">${ICONS.megaphone} Enviar parabéns</a>` : ""}
+        ${numero ? `<button type="button" class="aniversario-btn" data-action="enviar-parabens" data-tipo="professor" data-numero="${escapeHtml(numero)}" data-nome="${escapeHtml(primeiroNome(a.nome))}" data-texto="${escapeHtml(texto)}">${ICONS.megaphone} Enviar parabéns</button>` : ""}
       </div>`;
   };
 
@@ -5828,7 +6016,7 @@ function aniversariosView(school){
           : `Responsável: ${escapeHtml(destino.nome)}`)
       : "Sem WhatsApp cadastrado";
     const botao = destino
-      ? `<a class="aniversario-btn" href="${whatsappLinkComTexto(destino.numero, destino.texto)}" target="_blank" rel="noopener">${ICONS.megaphone} Enviar parabéns</a>`
+      ? `<button type="button" class="aniversario-btn" data-action="enviar-parabens" data-tipo="aluno" data-numero="${escapeHtml(destino.numero)}" data-nome="${escapeHtml(primeiroNome(a.nome))}" data-texto="${escapeHtml(destino.texto)}">${ICONS.megaphone} Enviar parabéns</button>`
       : `<button type="button" class="btn-secondary" data-action="abrir-aluno" data-id="${escapeHtml(a.id)}">Cadastrar contato</button>`;
     return `
       <div class="aniversario-row${a.ehHoje ? " is-hoje" : ""}">
@@ -5859,8 +6047,12 @@ function aniversariosView(school){
     : `<div style="padding:20px;font-size:14px;color:var(--slate);">Nenhum aniversariante ${state.aniversarioMes === "todos" ? "com data cadastrada" : `em ${MESES_LONGOS[Number(state.aniversarioMes) - 1].toLowerCase()}`}.</div>`;
 
   return `
-    <h2 class="section-title">Aniversários</h2>
-    <p class="section-eyebrow">Alunos e professores de ${escapeHtml(school.nome)} por data de nascimento. A mensagem já vai escrita: se o aluno tem WhatsApp, vai pra ele; se não tem, vai pro responsável vinculado. Professores entram quando preenchem o aniversário em "Meu perfil".</p>
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
+      <h2 class="section-title" style="margin-bottom:0;">Aniversários</h2>
+      <button type="button" class="attendance-btn" data-action="abrir-aniv-msg">${ICONS.pencil} Personalizar mensagem</button>
+    </div>
+    ${state.aniversarioAviso ? `<p class="teacher-success institution-success" style="margin-top:10px;">${escapeHtml(state.aniversarioAviso)}</p>` : ""}
+    <p class="section-eyebrow">Alunos e professores de ${escapeHtml(school.nome)} por data de nascimento. A mensagem já vai escrita: se o aluno tem WhatsApp, vai pra ele; se não tem, vai pro responsável vinculado. Professores entram quando preenchem o aniversário em "Meu perfil". Ao enviar, a mensagem vai acompanhada de um cartão com a logo da escola.</p>
     ${blocoHoje}
     <div class="aniversario-filtro">
       <label class="teacher-label" for="aniversario-mes">Mês</label>
@@ -6784,6 +6976,10 @@ function bindEvents(){
       return;
     }
     if(t.id === "acesso-email"){ state.acessoEmail = t.value; return; }
+    if(t.dataset && t.dataset.anivMsg){
+      if(state.aniversarioMsgRascunho) state.aniversarioMsgRascunho[t.dataset.anivMsg] = t.value;
+      return;
+    }
     if(t.dataset && t.dataset.ficha){
       fichaFormAtual()[t.dataset.ficha] = t.value;
       return;
@@ -8288,6 +8484,62 @@ function bindEvents(){
         state.instituicaoMensagem = "Ação simulada — a integração de escrita com o banco entra na próxima etapa.";
         render();
         break;
+
+      case "enviar-parabens":
+        await enviarParabensComLogo({
+          numero: el.dataset.numero, texto: el.dataset.texto,
+          nome: el.dataset.nome, tipo: el.dataset.tipo,
+        });
+        break;
+      case "abrir-aniv-msg": {
+        const salvos = state.aniversarioMsgs || {};
+        state.aniversarioMsgRascunho = {};
+        TIPOS_MSG_ANIVERSARIO.forEach(t => {
+          state.aniversarioMsgRascunho[t.key] = (typeof salvos[t.key] === "string" && salvos[t.key].trim()) ? salvos[t.key] : TEMPLATES_ANIVERSARIO_PADRAO[t.key];
+        });
+        state.aniversarioMsgErro = "";
+        state.aniversarioMsgModalAberto = true;
+        render();
+        break;
+      }
+      case "fechar-aniv-msg":
+        state.aniversarioMsgModalAberto = false;
+        render();
+        break;
+      case "restaurar-aniv-msg":
+        state.aniversarioMsgRascunho = { ...TEMPLATES_ANIVERSARIO_PADRAO };
+        render();
+        break;
+      case "salvar-aniv-msg": {
+        const escolaId = state.escolaSelecionadaId;
+        const r = state.aniversarioMsgRascunho || {};
+        const dados = {};
+        TIPOS_MSG_ANIVERSARIO.forEach(t => {
+          const v = String(r[t.key] || "").trim().slice(0, 800);
+          // igual ao padrão = não grava (continua acompanhando o padrão)
+          dados[t.key] = v === TEMPLATES_ANIVERSARIO_PADRAO[t.key] ? "" : v;
+        });
+        state.aniversarioMsgSalvando = true;
+        state.aniversarioMsgErro = "";
+        render();
+        try {
+          await setDoc(doc(db, "mensagensAniversario", escolaId), {
+            ...dados, atualizadoEm: new Date().toISOString(), atualizadoPorId: state.authUser.uid,
+          });
+          state.aniversarioMsgs = dados;
+          state.aniversarioMsgModalAberto = false;
+          state.aniversarioAviso = "Mensagens salvas. Já valem para os próximos envios.";
+        } catch(err){
+          console.error("Erro ao salvar mensagens de aniversário:", err?.code, err);
+          state.aniversarioMsgErro = err?.code === "permission-denied"
+            ? "Sem permissão para salvar. Publique a regra de “mensagensAniversario” no Firestore."
+            : "Não foi possível salvar agora. Tente de novo.";
+        } finally {
+          state.aniversarioMsgSalvando = false;
+          render();
+        }
+        break;
+      }
 
       case "salvar-minha-ficha":
         await salvarMinhaFicha();
