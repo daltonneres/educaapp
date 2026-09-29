@@ -52,6 +52,19 @@
    turmas/{turmaId}      (turmas de um professor — coleção própria)
      nome, horario, sala, escola, escolaId, disciplina, professorId
      alunos: [nomes]
+     encontros: [{ dia: 0–6 (0 = domingo), inicio: "HH:MM", fim: "HH:MM" }]   // aba Horários;
+                // `horario` (texto) continua sendo gravado a partir dele. Turmas antigas
+                // sem `encontros` têm o texto lido na hora (ver horarios.js).
+
+   horariosExcecoes/{turmaId_AAAA-MM-DD_indice}   (aba Horários — mudança de UMA aula:
+                                    remarcada ou cancelada; o horário fixo da turma não muda)
+     turmaId, turmaNome, escolaId, professorId, dataOriginal, encIdx
+     tipo: "remarcada" | "cancelada", novaData, inicio, fim, sala, motivo
+     alteradoPorId, alteradoPorNome, atualizadoEm
+
+   anotacoesHorario/{id}   (aba Horários — anotação pessoal, só o autor lê)
+     autorId, autorNome, autorRole, escolaId, titulo, texto, data, turmaId, turmaNome
+     criadoEm, atualizadoEm
 
    conteudos/{conteudoId}   (banco de conteúdos do semestre, por disciplina)
      professorId, disciplina, texto
@@ -192,6 +205,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
 import { firebaseConfig } from "./firebase-config.js";
+import { criarHorarios } from "./horarios.js";
 import {
   contratoEstadoInicial,
   contratoModal,
@@ -398,6 +412,8 @@ const ICONS = {
   fileText: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h6"/></svg>`,
   award: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="6"/><path d="m9 13.5-1.5 7L12 18l4.5 2.5-1.5-7"/></svg>`,
   star: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`,
+  horarios: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>`,
+  support: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-4.6A8 8 0 1 1 21 12Z"/><path d="M9.5 10a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .8-1 1.5"/><path d="M12 16.5h.01"/></svg>`,
 };
 
 /* Contatos de WhatsApp da secretaria, por unidade. Ajuste os números aqui
@@ -783,9 +799,11 @@ const MANUAIS_CATEGORIAS = [
   { key: "inicio", icon: "building", titulo: "Primeiros passos", descricao: "Para quem está começando a usar o Educa+." },
   { key: "cadastros", icon: "user", titulo: "Cadastros e acessos", descricao: "Criar pessoas, dar login, trocar senha e importar turmas." },
   { key: "rotina", icon: "calendar", titulo: "Turmas, alunos e calendário", descricao: "O dia a dia da secretaria com turmas, fichas e avisos." },
+  { key: "horarios", icon: "horarios", titulo: "Horários e agenda", descricao: "Agenda de aulas, remarcações, lembretes para as turmas e anotações." },
   { key: "financeiro", icon: "wallet", titulo: "Financeiro", descricao: "Mensalidades, baixas, boletos e inadimplência." },
   { key: "contratos", icon: "fileText", titulo: "Contratos", descricao: "Gerar, importar e acompanhar a assinatura." },
   { key: "pedagogico", icon: "cap", titulo: "Acompanhamento pedagógico", descricao: "Faltas, boletim, avaliações, certificados e aniversários." },
+  { key: "perfis", icon: "users2", titulo: "Guias por perfil", descricao: "O que o professor e a família veem e fazem no app — para orientar por telefone." },
   { key: "automatico", icon: "clock", titulo: "O que o sistema faz sozinho", descricao: "Funções que rodam sem ninguém pedir — saber disso evita retrabalho." },
   { key: "ajuda", icon: "lifebuoy", titulo: "Quando algo dá errado", descricao: "Erros comuns e o que fazer em cada um." },
 ];
@@ -804,12 +822,21 @@ const MANUAIS_INSTITUICAO = [
   { categoria: "cadastros", tipo: "passo", titulo: "Cadastrar outra pessoa da equipe", descricao: "Criar login administrativo para a unidade e o que esse acesso permite fazer.", url: "" },
   { categoria: "cadastros", tipo: "passo", titulo: "Senhas & acessos: trocar senha, criar login, excluir", descricao: "Como resolver sozinha quem esqueceu a senha, quem não tem e-mail de verdade e quem precisa ser removido — e o que acontece com o acesso dela.", url: "" },
   { categoria: "cadastros", tipo: "passo", titulo: "Importar turmas por PDF", descricao: "Enviar a lista de turmas, conferir a prévia, escolher o professor de cada linha e evitar turmas duplicadas.", url: "" },
+  { categoria: "cadastros", tipo: "passo", titulo: "Minha ficha e ficha do professor", descricao: "O que preencher (contato de emergência, alergias, tipo sanguíneo…), quem enxerga e como a secretaria abre a ficha de um professor.", url: "manuais/ficha.html" },
 
   // ---- Turmas, alunos e calendário
   { categoria: "rotina", tipo: "passo", titulo: "Criar e ajustar turmas", descricao: "Nome, horário, sala e disciplina; colocar e tirar alunos de uma turma; quando excluir.", url: "" },
   { categoria: "rotina", tipo: "visual", titulo: "Ficha do aluno por dentro", descricao: "Dados, turma, contato, aniversário, situação do contrato e financeiro — o que dá para editar em cada campo.", url: "" },
   { categoria: "rotina", tipo: "passo", titulo: "Lançar itens no calendário da unidade", descricao: "Dia sem aula, prova, atividade e aviso; escolher quem recebe (alunos, responsáveis, professores) e por curso.", url: "" },
   { categoria: "rotina", tipo: "visual", titulo: "Como o calendário aparece para a família", descricao: "Cores de presença, faltas justificadas, ícone de observação do professor e os avisos da escola vistos pelo responsável.", url: "" },
+
+  // ---- Horários e agenda
+  { categoria: "horarios", tipo: "passo", titulo: "Aba Horários: agenda do dia, da semana e do mês", descricao: "Navegar pela agenda, filtrar por turma ou professor, abrir a ficha da aula e ir direto para a chamada.", url: "manuais/horarios.html" },
+  { categoria: "horarios", tipo: "passo", titulo: "Remarcar ou cancelar uma aula", descricao: "Só aquele dia, cancelamento ou mudança do horário fixo; aviso de conflito e como voltar ao horário normal.", url: "manuais/horarios.html#alterar" },
+  { categoria: "horarios", tipo: "passo", titulo: "Lembretes e avisos para a turma", descricao: "Enviar recado que aparece no calendário dos alunos e responsáveis da turma.", url: "manuais/horarios.html#lembrete" },
+  { categoria: "horarios", tipo: "passo", titulo: "Criar turma com dias e horários", descricao: "Nome, professor, disciplina, sala, encontros da semana e alunos; como resolver \"Turmas sem horário definido\".", url: "manuais/horarios.html#turma" },
+  { categoria: "horarios", tipo: "passo", titulo: "Anotações pessoais", descricao: "Anotações que só você vê, soltas ou ligadas a uma turma.", url: "manuais/horarios.html#anotacoes" },
+  { categoria: "horarios", tipo: "referencia", titulo: "Como avisar as famílias: qual ferramenta usar", descricao: "Horários, Calendário da unidade ou Comunicados: quando usar cada um e quem recebe.", url: "manuais/avisar-familias.html" },
 
   // ---- Financeiro
   { categoria: "financeiro", tipo: "passo", titulo: "Lançar mensalidades", descricao: "Competência, valor e vencimento — pela aba Financeiro ou direto na ficha do aluno.", url: "" },
@@ -829,6 +856,10 @@ const MANUAIS_INSTITUICAO = [
   { categoria: "pedagogico", tipo: "passo", titulo: "Certificados", descricao: "Anexar o link do certificado (Drive) ao fim do módulo, por que a Recreação não entra e como a família pede o dela.", url: "" },
   { categoria: "pedagogico", tipo: "passo", titulo: "Aniversários e mensagem no WhatsApp", descricao: "Como a mensagem já vem pronta e para quem ela vai: o aluno, se tiver WhatsApp, ou o responsável.", url: "" },
   { categoria: "pedagogico", tipo: "visual", titulo: "Do professor ao boletim: notas e atividades", descricao: "Como o professor lança atividades e notas nas duas etapas e como o boletim do aluno é montado a partir delas.", url: "" },
+
+  // ---- Guias por perfil
+  { categoria: "perfis", tipo: "visual", titulo: "Guia do professor: chamada, conteúdos e notas", descricao: "Aulas de hoje, Conteúdos do semestre e Notas e atividades — e como isso vira o boletim.", url: "manuais/guia-professor.html" },
+  { categoria: "perfis", tipo: "visual", titulo: "Guia do aluno e do responsável", descricao: "Calendário, boletim, presença, certificados, financeiro e comunicados, como a família vê.", url: "manuais/guia-familia.html" },
 
   // ---- Funções automáticas
   { categoria: "automatico", tipo: "automatico", titulo: "IDALUNO sequencial", descricao: "Cada novo aluno recebe o próximo número (0001, 0002…) sozinho, para todas as unidades — útil para diferenciar nomes iguais.", url: "" },
@@ -1166,6 +1197,7 @@ const state = {
   professorNotasErro: "",
   mobileMenuOpen: false,
   secretariaModalOpen: false,
+  suporte: suporteNovoEstado(),   // caixinha "Suporte & feedback" (aluno / responsável / professor) — ver seção Suporte
   instituicaoMensagem: "",
   instituicaoErro: "",
   novoUsuarioRole: "aluno",       // aluno | responsavel | professor | instituicao
@@ -1431,6 +1463,46 @@ const state = {
 };
 
 const app = document.getElementById("app");
+
+/* ------------------------------------------------------------------
+   Aba "Horários" (professor e secretaria). Toda a tela, os formulários e
+   a gravação no Firestore ficam em horarios.js; aqui só entregamos o que
+   ele precisa do resto do app.
+   ------------------------------------------------------------------ */
+const horarios = criarHorarios({
+  state, db, render,
+  fs: { doc, setDoc, updateDoc, deleteDoc, collection, query, where, getDocs, getDoc },
+  ICONS, escapeHtml,
+  cursosDaEscola, todosOsCursos: TODOS_OS_CURSOS,
+  // itens do calendário (sem aula, avisos) — os mesmos que a aba Calendário já carrega
+  eventosCalendario: () => state.screen === "professor"
+    ? state.cal.prof.eventos
+    : (state.cal.inst.cache[state.escolaSelecionadaId]?.eventos || []),
+  carregarEventosCalendario: (forcar = false) => state.screen === "professor"
+    ? carregarEventosDoProfessor(forcar)
+    : carregarEventosDaInstituicao(state.escolaSelecionadaId, forcar),
+  garantirTurmas: () => garantirTurmasDaUnidade(),
+  garantirEquipe: () => {
+    const id = state.escolaSelecionadaId;
+    if(id && (state.gestaoProfessores === null || state.gestaoEquipeEscolaId !== id) && !state.gestaoEquipeCarregando){
+      carregarEquipeDaEscola(id);
+    }
+  },
+  // "Fazer chamada" a partir de uma aula da agenda (mesmo caminho da aba Turmas)
+  abrirChamada: async (turmaId) => {
+    state.professorTurmaId = turmaId;
+    state.professorTab = "aulas";
+    state.professorNotasSalvas = false;
+    state.professorNotasErro = "";
+    state.professorAtividadeEditandoId = null;
+    state.professorAtividadeNome = "";
+    state.professorAtividadeExcluirConfirmId = null;
+    state.cal.diaAberto = null;
+    const turma = professorTurmaAtual();
+    render();
+    if(turma) await Promise.all([carregarRegistroDoDia(turma), carregarAtividadesDaTurma(turma)]);
+  },
+});
 
 /* ================================================================== */
 /* Carregamento de dados no Firestore, por perfil                      */
@@ -1762,6 +1834,7 @@ onAuthStateChanged(auth, async (user) => {
   if(!user){
     state.authUser = null;
     state.perfil = null;
+    state.suporte = suporteNovoEstado();
     state.fichaForm = null;
     state.cal = calNovoEstado();
     state.aval = avalNovoEstado();
@@ -1827,6 +1900,241 @@ function mensagemErroFirebase(code){
     "auth/missing-password": "Informe uma senha provisória.",
   };
   return mapa[code] || "Não foi possível concluir. Tente novamente.";
+}
+
+/* ================================================================== */
+/* Suporte & feedback (aluno, responsável e professor)                  */
+/* ------------------------------------------------------------------
+   Um botão só no menu ("Suporte & feedback") abre uma caixinha que pede
+   nome, a situação e a mensagem. Pra onde a mensagem vai depende da
+   situação escolhida:
+
+     Suporte                        -> secretaria da unidade (abre o
+                                       WhatsApp dela com o texto pronto)
+     Melhoria / Manutenção /
+     Feedback                       -> desenvolvedor (grava na coleção
+                                       "suporteMensagens" do Firestore)
+
+   Toda mensagem — inclusive as de suporte — também é registrada em
+   "suporteMensagens" (destino: "secretaria" | "dev"), com o perfil,
+   a tela e o navegador de quem enviou, pra ajudar a achar o problema.
+   Pra isso funcionar, a regra de segurança do Firestore precisa deixar
+   qualquer usuário logado CRIAR documentos nessa coleção (ver o bloco
+   de regras no fim da explicação que acompanha este arquivo).
+   ------------------------------------------------------------------ */
+const SUPORTE_COLECAO = "suporteMensagens";
+const SUPORTE_MENSAGEM_MAX = 2000;
+const SUPORTE_TIPOS = [
+  { id: "suporte",    rotulo: "Suporte",    desc: "Dúvida ou problema com acesso, notas, dados…", destino: "secretaria" },
+  { id: "melhoria",   rotulo: "Melhoria",   desc: "Uma ideia pra o app ficar melhor",             destino: "dev" },
+  { id: "manutencao", rotulo: "Manutenção", desc: "Algo quebrado ou dando erro no app",           destino: "dev" },
+  { id: "feedback",   rotulo: "Feedback",   desc: "Elogio, crítica ou opinião",                   destino: "dev" },
+];
+const SUPORTE_ROTULO_PERFIL = { aluno: "Aluno(a)", responsavel: "Responsável", professor: "Professor(a)" };
+
+function suporteNovoEstado(){
+  return { aberto: false, nome: "", tipo: "", unidade: "", mensagem: "", enviando: false, erro: "", enviado: null };
+}
+
+/* Alunos/responsáveis: escola do(s) aluno(s). Professor: escolasIds do perfil. */
+function suporteEscolaIds(){
+  const p = state.perfil || {};
+  if(p.role === "aluno") return [state.data.aluno?.escolaId].filter(Boolean);
+  if(p.role === "responsavel"){
+    const alunos = state.data.familiaAlunos || [];
+    const s = alunos.find(a => a.id === state.familiaStudentId) || alunos[0];
+    return [s?.escolaId].filter(Boolean);
+  }
+  return Array.isArray(p.escolasIds) && p.escolasIds.length ? p.escolasIds : (p.escolaId ? [p.escolaId] : []);
+}
+
+/* Tenta adivinhar a secretaria pelo id da escola (ex.: contém "salto" ou
+   "prata"). Se o id for um código sem esse texto, volta "" e a pessoa
+   escolhe a unidade na própria caixinha. */
+function suporteSecretariaSugerida(){
+  const ids = suporteEscolaIds().map(id => String(id).toLowerCase());
+  const achada = SECRETARIA_WHATSAPP.find(sec => ids.some(id => id.includes(sec.id)));
+  return achada ? achada.id : "";
+}
+
+function suporteContexto(){
+  const p = state.perfil || {};
+  const ctx = {
+    role: p.role || "",
+    uid: state.authUser?.uid || "",
+    email: state.authUser?.email || "",
+    escolasIds: suporteEscolaIds(),
+    tela: state.screen === "aluno" ? state.alunoTab : state.screen === "familia" ? state.familiaTab : state.professorTab,
+    navegador: (typeof navigator !== "undefined" ? navigator.userAgent : "") || "",
+  };
+  if(p.role === "aluno" && state.data.aluno){
+    ctx.alunoNome = state.data.aluno.nome || "";
+    ctx.turma = state.data.aluno.turma || "";
+  } else if(p.role === "responsavel"){
+    const alunos = state.data.familiaAlunos || [];
+    const s = alunos.find(a => a.id === state.familiaStudentId) || alunos[0];
+    ctx.alunoNome = s?.nome || "";
+    ctx.turma = s?.turma || "";
+  } else if(p.role === "professor"){
+    ctx.disciplinas = state.data.professorDisciplinas || [];
+  }
+  return ctx;
+}
+
+function suporteAbrir(){
+  const p = state.perfil || {};
+  return {
+    ...suporteNovoEstado(),
+    aberto: true,
+    nome: p.nome || state.data.aluno?.nome || "",
+    unidade: suporteSecretariaSugerida(),
+  };
+}
+
+function suporteTextoWhatsApp(nome, ctx, mensagem){
+  const perfil = SUPORTE_ROTULO_PERFIL[ctx.role] || "Usuário";
+  const linhas = [
+    "*Suporte — Educa+*",
+    `Nome: ${nome}`,
+    `Perfil: ${perfil}${ctx.alunoNome && ctx.role !== "aluno" ? ` (aluno: ${ctx.alunoNome})` : ""}${ctx.turma ? ` · ${ctx.turma}` : ""}`,
+    "",
+    mensagem,
+  ];
+  return linhas.join("\n");
+}
+
+async function suporteEnviar(){
+  const s = state.suporte;
+  if(s.enviando) return;
+  const nome = s.nome.trim();
+  const mensagem = s.mensagem.trim();
+  const tipo = SUPORTE_TIPOS.find(t => t.id === s.tipo);
+  const secretaria = SECRETARIA_WHATSAPP.find(e => e.id === s.unidade);
+
+  s.erro = "";
+  if(!nome) s.erro = "Informe seu nome.";
+  else if(!tipo) s.erro = "Escolha a situação que você quer informar.";
+  else if(tipo.destino === "secretaria" && !secretaria) s.erro = "Escolha a unidade da secretaria.";
+  else if(mensagem.length < 5) s.erro = "Escreva a sua mensagem.";
+  if(s.erro){ render(); return; }
+
+  const ctx = suporteContexto();
+  const registro = {
+    destino: tipo.destino,
+    tipo: tipo.id,
+    nome,
+    mensagem,
+    unidade: tipo.destino === "secretaria" ? secretaria.id : "",
+    status: "novo",
+    criadoEm: new Date().toISOString(),
+    ...ctx,
+  };
+
+  if(tipo.destino === "secretaria"){
+    // O WhatsApp abre AQUI, direto no clique (antes de qualquer await) —
+    // depois de um await o navegador trata como pop-up e bloqueia.
+    window.open(whatsappLinkComTexto(secretaria.numero, suporteTextoWhatsApp(nome, ctx, mensagem)), "_blank", "noopener");
+    s.enviando = true;
+    render();
+    try {
+      await setDoc(doc(collection(db, SUPORTE_COLECAO)), registro);
+    } catch(err){
+      // O registro é só histórico: se falhar, a mensagem já foi pro WhatsApp.
+      console.warn("Não foi possível registrar o pedido de suporte:", err);
+    }
+    s.enviando = false;
+    s.enviado = { destino: "secretaria" };
+    render();
+    return;
+  }
+
+  s.enviando = true;
+  render();
+  try {
+    await setDoc(doc(collection(db, SUPORTE_COLECAO)), registro);
+    s.enviado = { destino: "dev" };
+  } catch(err){
+    console.error(err);
+    s.erro = err?.code === "permission-denied"
+      ? "O servidor não aceitou o envio. Avise a secretaria."
+      : "Não foi possível enviar agora. Verifique sua internet e tente de novo.";
+  }
+  s.enviando = false;
+  render();
+}
+
+function suporteModal(){
+  const s = state.suporte;
+  if(!s || !s.aberto) return "";
+
+  if(s.enviado){
+    const paraSecretaria = s.enviado.destino === "secretaria";
+    return `
+    <div class="aluno-modal-backdrop" data-action="fechar-suporte">
+      <div class="aluno-modal suporte-modal" role="dialog" aria-modal="true" aria-label="Suporte e feedback" data-action="noop">
+        <div class="suporte-ok">
+          <div class="suporte-ok-icone">${ICONS.check}</div>
+          <h2>${paraSecretaria ? "Quase lá!" : "Mensagem enviada!"}</h2>
+          <p>${paraSecretaria
+            ? "Abrimos o WhatsApp da secretaria com a sua mensagem pronta. É só tocar em enviar por lá."
+            : "Sua mensagem chegou para a equipe de desenvolvimento. Obrigado por ajudar o Educa+ a melhorar!"}</p>
+          <button type="button" class="teacher-primary-btn" data-action="fechar-suporte">Fechar</button>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  const tipo = SUPORTE_TIPOS.find(t => t.id === s.tipo);
+  const off = s.enviando ? "disabled" : "";
+
+  const tiposHtml = SUPORTE_TIPOS.map(t => `
+    <button type="button" class="suporte-tipo ${t.id === s.tipo ? "ativo" : ""}" data-action="suporte-tipo" data-tipo="${t.id}" ${off}>
+      <strong>${t.rotulo}</strong>
+      <span>${t.desc}</span>
+    </button>`).join("");
+
+  const destinoHtml = tipo ? `
+    <p class="suporte-destino">${tipo.destino === "secretaria"
+      ? "Esta mensagem vai para a <strong>secretaria</strong>, pelo WhatsApp."
+      : "Esta mensagem vai para a <strong>equipe de desenvolvimento</strong> do app."}</p>` : "";
+
+  const unidadeHtml = tipo && tipo.destino === "secretaria" ? `
+    <label class="teacher-label">Qual unidade?</label>
+    <div class="suporte-unidades">
+      ${SECRETARIA_WHATSAPP.map(sec => `
+        <button type="button" class="suporte-unidade ${sec.id === s.unidade ? "ativo" : ""}" data-action="suporte-unidade" data-unidade="${sec.id}" ${off}>${escapeHtml(sec.nome)}</button>`).join("")}
+    </div>` : "";
+
+  return `
+  <div class="aluno-modal-backdrop" data-action="fechar-suporte">
+    <div class="aluno-modal suporte-modal" role="dialog" aria-modal="true" aria-label="Suporte e feedback" data-action="noop">
+      <div class="aluno-modal-head">
+        <div>
+          <h2>Suporte &amp; feedback</h2>
+          <p class="section-eyebrow" style="margin:4px 0 0;">Conte pra gente o que aconteceu.</p>
+        </div>
+        <button type="button" class="attendance-btn" data-action="fechar-suporte" aria-label="Fechar" ${off}>${ICONS.close}</button>
+      </div>
+
+      <label class="teacher-label" for="suporte-nome">Seu nome</label>
+      <input id="suporte-nome" class="teacher-text-input" data-suporte-campo="nome" value="${escapeHtml(s.nome)}" placeholder="Nome completo" maxlength="120" autocomplete="name" ${off} />
+
+      <label class="teacher-label">Qual situação você quer informar?</label>
+      <div class="suporte-tipos">${tiposHtml}</div>
+      ${destinoHtml}
+      ${unidadeHtml}
+
+      <label class="teacher-label" for="suporte-mensagem">Mensagem</label>
+      <textarea id="suporte-mensagem" class="teacher-text-input suporte-textarea" data-suporte-campo="mensagem" rows="5" maxlength="${SUPORTE_MENSAGEM_MAX}" placeholder="Descreva com o máximo de detalhes que puder…" ${off}>${escapeHtml(s.mensagem)}</textarea>
+
+      ${s.erro ? `<p class="suporte-erro" role="alert">${escapeHtml(s.erro)}</p>` : ""}
+
+      <div class="suporte-acoes">
+        <button type="button" class="attendance-btn" data-action="fechar-suporte" ${off}>Cancelar</button>
+        <button type="button" class="teacher-primary-btn" style="margin-top:0;" data-action="enviar-suporte" ${off}>${s.enviando ? "Enviando…" : (tipo && tipo.destino === "secretaria" ? "Enviar pelo WhatsApp" : "Enviar")}</button>
+      </div>
+    </div>
+  </div>`;
 }
 
 /* ================================================================== */
@@ -1975,7 +2283,7 @@ function renderEscolaPicker(){
 }
 
 /* ---------------- SHELL (sidebar + main) ---------------- */
-function shell({ navItems, active, headerSub, headerTitle, headerFoto, bodyHtml, navAction, schoolBadge, schoolBadgeClickable }){
+function shell({ navItems, active, headerSub, headerTitle, headerFoto, bodyHtml, navAction, schoolBadge, schoolBadgeClickable, suporte }){
   const navBtns = navItems.map(item => `
     <button class="nav-btn ${active===item.key?'active':''}" data-action="${navAction}" data-key="${item.key}">
       ${ICONS[item.icon]} ${item.label}
@@ -1998,6 +2306,7 @@ function shell({ navItems, active, headerSub, headerTitle, headerFoto, bodyHtml,
           : `<div class="sidebar-school">${schoolBadge}</div>`
       ) : ""}
       <nav class="sidebar-nav">${navBtns}</nav>
+      ${suporte ? `<button class="logout-btn suporte-btn" data-action="abrir-suporte">${ICONS.support} Suporte &amp; feedback</button>` : ""}
       <button class="logout-btn" data-action="logout">${ICONS.logout} Sair</button>
     </aside>
     <main class="main">
@@ -2016,7 +2325,8 @@ function shell({ navItems, active, headerSub, headerTitle, headerFoto, bodyHtml,
     <div class="mobile-menu-backdrop ${state.mobileMenuOpen ? "open" : ""}" data-action="close-mobile-menu"></div>
     <nav class="mobile-drawer ${state.mobileMenuOpen ? "open" : ""}" aria-label="Menu principal">
       <div class="mobile-drawer-head"><strong>Menu</strong><button data-action="close-mobile-menu" aria-label="Fechar menu">${ICONS.close}</button></div>
-      <div class="mobile-drawer-nav">${mobileDrawerBtns}</div>
+      <div class="mobile-drawer-nav">${mobileDrawerBtns}${suporte ? `
+        <button class="mobile-drawer-btn mobile-drawer-suporte" data-action="abrir-suporte">${ICONS.support} <span>Suporte &amp; feedback</span></button>` : ""}</div>
       <button class="mobile-drawer-logout" data-action="logout">${ICONS.logout} Sair da conta</button>
     </nav>
   </div>`;
@@ -2048,7 +2358,8 @@ function renderAluno(){
     headerFoto: headerFotoHtml(fotoDoAluno(student), student.nome),
     bodyHtml: classStatusCard(student) + body,
     navAction: "set-aluno-tab",
-  });
+    suporte: true,
+  }) + suporteModal();
 }
 
 /* ---------------- FAMÍLIA (RESPONSÁVEL) DASHBOARD ---------------- */
@@ -2093,7 +2404,8 @@ function renderFamilia(){
     headerFoto: headerFotoHtml(FOTO_PADRAO.responsavel, state.perfil?.nome || "Responsável"),
     bodyHtml: switcher + classStatusCard(student, true) + body,
     navAction: "set-familia-tab",
-  });
+    suporte: true,
+  }) + suporteModal();
 }
 
 function notasView(student){
@@ -2716,6 +3028,7 @@ function professorTurmaSelect(){
 function renderProfessor(){
   const navItems = [
     { key:"calendario", label:"Calendário", icon:"calendar" },
+    { key:"horarios", label:"Horários", icon:"horarios" },
     { key:"turmas", label:"Turmas", icon:"users" },
     { key:"aulas", label:"Aulas & chamada", icon:"clipboard" },
     { key:"conteudos", label:"Conteúdos", icon:"book" },
@@ -2725,6 +3038,7 @@ function renderProfessor(){
     { key:"perfil", label:"Meu perfil", icon:"user" },
   ];
   const body = state.professorTab === "calendario" ? calendarioProfessorView()
+    : state.professorTab === "horarios" ? horarios.view()
     : state.professorTab === "turmas" ? professorTurmasView()
     : state.professorTab === "perfil" ? professorPerfilView()
     : state.professorTab === "aulas" ? professorAulasView()
@@ -2740,7 +3054,8 @@ function renderProfessor(){
     headerFoto: headerFotoHtml(fotoDoProfessor({ sexo: state.perfil?.sexo }), state.data.professorNome),
     bodyHtml: body,
     navAction: "set-professor-tab",
-  });
+    suporte: true,
+  }) + horarios.modais() + suporteModal();
 }
 
 
@@ -3307,6 +3622,7 @@ function renderInstituicao(){
   const navItems = [
     { key:"turmas", label:"Turmas", icon:"clipboard" },
     { key:"calendario", label:"Calendário", icon:"calendar" },
+    { key:"horarios", label:"Horários", icon:"horarios" },
     { key:"estatisticas", label:"Estatísticas", icon:"chart" },
     { key:"financeiro", label:"Financeiro", icon:"wallet" },
     { key:"alunos", label:"Alunos", icon:"users" },
@@ -3323,6 +3639,7 @@ function renderInstituicao(){
   let body = "";
   if(state.instTab === "turmas") body = turmasView(school);
   else if(state.instTab === "calendario") body = calendarioInstituicaoView(school);
+  else if(state.instTab === "horarios") body = horarios.view();
   else if(state.instTab === "estatisticas") body = estatisticasView(school);
   else if(state.instTab === "financeiro") body = financeiroInstituicaoView(school);
   else if(state.instTab === "alunos") body = alunosView(school);
@@ -3349,7 +3666,7 @@ function renderInstituicao(){
     navAction: "set-inst-tab",
     schoolBadge: `${ICONS.pinSmall} ${escapeHtml(school.nome)} — ${escapeHtml(school.uf)}`,
     schoolBadgeClickable: temMaisDeUmaEscola,
-  }) + alunoDetalheModal() + turmaDetalheModal() + professorTurmasModal() + editarProfessorModal() + fichaUsuarioModal() + aniversarioMsgModal() + importarTurmasModal() + responsavelVinculoModal() + acessoUsuarioModal() + contratoModal(state.contrato, {
+  }) + horarios.modais() + alunoDetalheModal() + turmaDetalheModal() + professorTurmasModal() + editarProfessorModal() + fichaUsuarioModal() + aniversarioMsgModal() + importarTurmasModal() + responsavelVinculoModal() + acessoUsuarioModal() + contratoModal(state.contrato, {
     cursos: cursosDaEscola(school?.nome || ""),
     alunos: state.instAlunos || [],
     turmas: state.instTurmas || [],
@@ -6965,6 +7282,13 @@ function bindEvents(){
 
   app.addEventListener("input", (e) => {
     const t = e.target;
+    // Caixinha de Suporte & feedback: guarda o texto sem re-renderizar, pro cursor não pular.
+    if(t.dataset && t.dataset.suporteCampo){
+      state.suporte[t.dataset.suporteCampo] = t.value;
+      return;
+    }
+    // Aba Horários: guarda o valor sem re-renderizar, pro cursor não pular.
+    if(t.dataset && t.dataset.hor){ horarios.input(t); return; }
     // Aba Avaliações: campos do boletim e comentário da avaliação institucional
     // guardam o valor sem re-renderizar, pro cursor não pular.
     if(t.dataset && t.dataset.avalCampo){
@@ -7084,6 +7408,7 @@ function bindEvents(){
 
   app.addEventListener("change", async (e) => {
     const t = e.target;
+    if(t.dataset && t.dataset.hor){ horarios.change(t); return; }
     if(t.id === "aval-inst-periodo"){
       state.aval.periodo = t.value;
       render();
@@ -7388,6 +7713,12 @@ function bindEvents(){
     if(!el) return;
     const action = el.dataset.action;
 
+    // Aba Horários: todas as ações começam com "hor-" (ver horarios.js)
+    if(action.startsWith("hor-")){
+      await horarios.click(el);
+      return;
+    }
+
     switch(action){
       case "logout":
         state.mobileMenuOpen = false;
@@ -7455,6 +7786,7 @@ function bindEvents(){
         }
         render();
         if(state.instTab === "aval") avalAbrirNaInstituicao();
+        if(state.instTab === "horarios") horarios.aoAbrir();
         if(state.instTab === "turmas" && state.escolaSelecionadaId
           && (state.instTurmas === null || state.instTurmasEscolaId !== state.escolaSelecionadaId)
           && !state.instTurmasCarregando){
@@ -7815,6 +8147,7 @@ function bindEvents(){
         }
         render();
         if(state.professorTab === "calendario") carregarEventosDoProfessor();
+        else if(state.professorTab === "horarios") horarios.aoAbrir();
         else if(state.professorTab === "aval") avalAbrirNoProfessor();
         break;
       case "set-professor-class": {
@@ -8856,6 +9189,36 @@ function bindEvents(){
       case "close-secretaria-modal":
         state.secretariaModalOpen = false;
         render();
+        break;
+
+      case "abrir-suporte":
+        state.mobileMenuOpen = false;
+        state.suporte = suporteAbrir();
+        render();
+        break;
+
+      case "fechar-suporte":
+        if(state.suporte.enviando) break;
+        state.suporte.aberto = false;
+        render();
+        break;
+
+      case "suporte-tipo":
+        if(state.suporte.enviando) break;
+        state.suporte.tipo = el.dataset.tipo;
+        state.suporte.erro = "";
+        render();
+        break;
+
+      case "suporte-unidade":
+        if(state.suporte.enviando) break;
+        state.suporte.unidade = el.dataset.unidade;
+        state.suporte.erro = "";
+        render();
+        break;
+
+      case "enviar-suporte":
+        await suporteEnviar();
         break;
 
       case "whatsapp-secretaria": {

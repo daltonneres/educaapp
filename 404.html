@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="robots" content="noindex" />
+<title>Página não encontrada · Educa+ Centro Educacional</title>
+<link rel="icon" href="/imgs/logoeduca.jpeg" type="image/jpeg" />
+<style>
+  :root {
+    --navy: #0E2038;
+    --navy-deep: #081524;
+    --gold: #C9A24A;
+    --gold-light: #E9CE8C;
+    --cream: #F7F3E9;
+    --red: #E0776A;
+    --font-display: 'Iowan Old Style', 'Palatino Linotype', Georgia, serif;
+    --font-body: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: grid;
+    place-items: center;
+    padding: max(24px, env(safe-area-inset-top)) 20px max(24px, env(safe-area-inset-bottom));
+    background: radial-gradient(120% 90% at 50% 0%, var(--navy) 0%, var(--navy-deep) 70%);
+    color: var(--cream);
+    font-family: var(--font-body);
+    -webkit-font-smoothing: antialiased;
+  }
+  main { width: 100%; max-width: 460px; text-align: center; }
+  .logo {
+    width: 84px; height: 84px; object-fit: cover; border-radius: 50%;
+    border: 2px solid rgba(233, 206, 140, .45);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, .35);
+  }
+  h1 {
+    margin: 22px 0 10px;
+    font-family: var(--font-display);
+    font-weight: 500;
+    font-size: clamp(30px, 8vw, 40px);
+    line-height: 1.15;
+    color: #fff;
+  }
+  .lead { margin: 0 auto; max-width: 380px; color: rgba(255, 255, 255, .68); font-size: 15.5px; line-height: 1.55; }
+
+  /* A lista de chamada: o elemento marcante da página */
+  .chamada {
+    margin: 30px 0 28px;
+    padding: 6px 18px;
+    text-align: left;
+    background: rgba(255, 255, 255, .05);
+    border: 1px solid rgba(233, 206, 140, .22);
+    border-radius: 16px;
+  }
+  .linha {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 13px 0;
+    border-bottom: 1px dashed rgba(233, 206, 140, .2);
+    font-size: 14.5px;
+  }
+  .linha:last-child { border-bottom: 0; }
+  .linha .nome { color: rgba(255, 255, 255, .8); }
+  .presente { color: #8fd0a5; font-size: 13px; font-weight: 600; }
+  .linha.falta .nome { color: #fff; font-weight: 600; overflow-wrap: anywhere; }
+  .selo {
+    flex-shrink: 0;
+    padding: 3px 11px;
+    border: 2px solid var(--red);
+    border-radius: 8px;
+    color: var(--red);
+    font-size: 13px;
+    font-weight: 800;
+    transform: rotate(-6deg);
+    animation: carimbo .45s cubic-bezier(.2, 1.4, .4, 1) .35s both;
+  }
+  @keyframes carimbo {
+    from { opacity: 0; transform: rotate(-6deg) scale(1.9); }
+    to   { opacity: 1; transform: rotate(-6deg) scale(1); }
+  }
+
+  .acoes { display: flex; flex-direction: column; gap: 10px; }
+  .btn {
+    display: block; padding: 13px 18px; border-radius: 12px;
+    font: inherit; font-size: 15px; font-weight: 700; text-decoration: none;
+    transition: background .15s ease, border-color .15s ease;
+  }
+  .btn-principal { background: var(--gold); color: var(--navy-deep); }
+  .btn-principal:hover { background: var(--gold-light); }
+  .btn-sec { border: 1px solid rgba(233, 206, 140, .35); color: var(--gold-light); }
+  .btn-sec:hover { border-color: var(--gold); background: rgba(201, 162, 74, .1); }
+  .btn:focus-visible { outline: 3px solid var(--gold-light); outline-offset: 3px; }
+
+  .secretarias { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .dica { margin: 4px 0 0; color: rgba(255, 255, 255, .5); font-size: 12.5px; }
+
+  @media (max-width: 400px) { .secretarias { grid-template-columns: 1fr; } }
+  @media (prefers-reduced-motion: reduce) { .selo { animation: none; } }
+</style>
+</head>
+<body>
+<main>
+  <img class="logo" src="/imgs/logoeduca.jpeg" alt="Logo do Educa+ Centro Educacional" onerror="this.style.display='none'" />
+
+  <h1>Esta página faltou à aula</h1>
+  <p class="lead">O endereço que você abriu não existe ou mudou de lugar. Confira se digitou certo ou volte para o início.</p>
+
+  <div class="chamada" role="img" aria-label="Lista de chamada: a página procurada está marcada com falta">
+    <div class="linha"><span class="nome">Login</span><span class="presente">Presente</span></div>
+    <div class="linha"><span class="nome">Calendário</span><span class="presente">Presente</span></div>
+    <div class="linha falta"><span class="nome" id="caminho">Página procurada</span><span class="selo">Falta</span></div>
+  </div>
+
+  <div class="acoes">
+    <a class="btn btn-principal" href="/">Voltar ao início</a>
+    <div class="secretarias">
+      <a class="btn btn-sec" href="https://wa.me/5546999318578" target="_blank" rel="noopener">Secretaria Salto do Lontra</a>
+      <a class="btn btn-sec" href="https://wa.me/554699274677" target="_blank" rel="noopener">Secretaria Nova Prata</a>
+    </div>
+    <p class="dica">Se o problema continuar, fale com a secretaria da sua unidade.</p>
+  </div>
+</main>
+<script>
+  // Mostra na lista de chamada o endereço que a pessoa tentou abrir.
+  (function () {
+    var el = document.getElementById("caminho");
+    var caminho = location.pathname;
+    if (el && caminho && caminho !== "/") el.textContent = caminho;
+  })();
+</script>
+</body>
+</html>

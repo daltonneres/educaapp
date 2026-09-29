@@ -2234,3 +2234,292 @@ button.gestao-tile:hover { border-color: var(--gold); transform: translateY(-1px
 
 /* botão "Enviar parabéns" agora é <button> (gera o cartão com a logo) */
 button.aniversario-btn { border: 0; cursor: pointer; font-family: inherit; }
+
+
+/* ==================================================================
+   Aba "Horários" (professor e secretaria) — ver horarios.js
+   ================================================================== */
+.hor-topo { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 12px 20px; }
+.hor-topo .section-eyebrow { margin-bottom: 14px; max-width: 46ch; }
+.hor-acoes { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.hor-acoes .teacher-primary-btn { margin-top: 0; }
+.hor-acoes .attendance-btn { padding: 9px 14px; font-size: 13px; }
+
+.hor-aviso { display: flex; align-items: center; gap: 8px; margin: 0 0 14px; padding: 10px 14px; border: 1px solid rgba(62, 122, 87, .3); border-radius: 10px; background: rgba(62, 122, 87, .08); color: var(--green); font-size: 13.5px; font-weight: 600; }
+
+/* barra de visão + navegação */
+.hor-barra { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 18px; margin-bottom: 14px; }
+.hor-seg { display: inline-flex; padding: 3px; border: 1px solid rgba(18, 32, 50, .12); border-radius: 999px; background: #fff; }
+.hor-seg button { padding: 7px 16px; border: 0; border-radius: 999px; background: transparent; color: var(--slate); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.hor-seg button:hover { color: var(--ink); }
+.hor-seg button.ativo { background: var(--navy); color: #fff; }
+.hor-seg-modal { display: flex; margin-bottom: 16px; }
+.hor-seg-modal button { flex: 1; padding: 8px 6px; font-size: 12.5px; }
+.hor-nav { display: flex; align-items: center; gap: 10px; }
+.hor-nav-titulo { min-width: 150px; text-align: center; font-family: var(--font-display); font-size: 20px; color: var(--ink); }
+.hor-nav-extra { display: flex; gap: 14px; }
+.hor-filtros { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.hor-filtros .teacher-text-input { width: auto; min-width: 200px; margin-top: 0; }
+.hor-resumo { margin: 0 0 12px; color: var(--slate); font-size: 13.5px; }
+
+/* ---- visão Dia ---- */
+.hor-dia-grid { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 20px; align-items: start; }
+.hor-timeline { display: flex; flex-direction: column; gap: 12px; }
+.hor-aula { display: grid; grid-template-columns: 76px minmax(0, 1fr); background: #fff; border: 1px solid rgba(18, 32, 50, .08); border-left: 4px solid var(--hor-cor, var(--navy)); border-radius: 14px; overflow: hidden; }
+.hor-aula.apagada { background: rgba(255, 255, 255, .6); }
+.hor-aula.apagada .hor-aula-hora strong, .hor-aula.apagada .hor-aula-titulo { text-decoration: line-through; color: var(--slate); }
+.hor-aula-hora { display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 2px; padding: 14px 6px; background: rgba(18, 32, 50, .035); }
+.hor-aula-hora strong { font-family: var(--font-display); font-size: 21px; font-weight: 500; color: var(--ink); letter-spacing: -.01em; }
+.hor-aula-hora span { font-size: 12px; color: var(--slate); }
+.hor-aula-corpo { padding: 12px 16px 14px; min-width: 0; }
+.hor-aula-linha { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; }
+.hor-aula-titulo { padding: 0; border: 0; background: none; color: var(--ink); font: inherit; font-size: 16px; font-weight: 700; text-align: left; cursor: pointer; }
+.hor-aula-titulo:hover { color: var(--gold-deep); }
+.hor-aula-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
+.hor-aula-detalhe { margin: 8px 0 0; color: var(--slate); font-size: 13px; }
+.hor-aula-acoes { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 11px; }
+.hor-aula-acoes .attendance-btn { display: inline-flex; align-items: center; gap: 5px; }
+
+.hor-badge { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 700; background: rgba(18, 32, 50, .08); color: var(--slate); }
+.hor-badge.cancelada { background: rgba(177, 74, 61, .12); color: var(--red); }
+.hor-badge.saiu, .hor-badge.semaula { background: rgba(91, 107, 126, .14); color: var(--slate); }
+.hor-badge.alterada, .hor-badge.reposicao { background: rgba(201, 162, 74, .2); color: var(--gold-deep); }
+.hor-badge.agora { background: var(--green); color: #fff; }
+.hor-badge.proxima { background: var(--navy); color: #fff; }
+
+.hor-faixa { display: flex; align-items: flex-start; gap: 9px; margin-bottom: 14px; padding: 11px 14px; border-radius: 10px; background: rgba(201, 162, 74, .14); border: 1px solid rgba(201, 162, 74, .35); color: var(--ink); font-size: 13.5px; }
+.hor-faixa svg { flex-shrink: 0; margin-top: 3px; }
+.hor-faixa.semaula, .hor-faixa.saiu { background: rgba(91, 107, 126, .1); border-color: rgba(91, 107, 126, .3); }
+.hor-faixa.cancelada { background: rgba(177, 74, 61, .08); border-color: rgba(177, 74, 61, .3); color: var(--red); }
+
+/* coluna lateral do dia */
+.hor-lado { display: flex; flex-direction: column; gap: 14px; }
+.hor-lado .card { padding: 16px; }
+.hor-lado h3 { margin: 0; font-size: 15px; color: var(--ink); }
+.hor-lado-topo { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.hor-lado-lista { margin: 10px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; font-size: 13.5px; color: var(--ink); }
+.hor-lado-lista em { color: var(--slate); font-style: normal; }
+.hor-lado-tipo { display: inline-block; margin-right: 4px; padding: 1px 7px; border-radius: 6px; background: rgba(18, 32, 50, .07); color: var(--slate); font-size: 11.5px; font-weight: 700; }
+.hor-vazio-txt { margin: 0; color: var(--slate); font-size: 13px; }
+.hor-nota { padding: 11px 12px; margin-top: 8px; border-radius: 10px; background: #FBF7EA; border: 1px solid rgba(201, 162, 74, .3); font-size: 13.5px; }
+.hor-nota:first-of-type { margin-top: 0; }
+.hor-nota strong { display: block; margin-bottom: 2px; }
+.hor-nota p { margin: 0; white-space: normal; overflow-wrap: anywhere; }
+.hor-nota-turma { display: inline-block; margin-bottom: 4px; font-size: 11.5px; font-weight: 700; color: var(--gold-deep); }
+.hor-nota-acoes { display: flex; gap: 6px; margin-top: 8px; }
+.hor-perigo { border-color: rgba(177, 74, 61, .5) !important; color: var(--red) !important; background: rgba(177, 74, 61, .07) !important; }
+
+/* ---- visão Semana ---- */
+.hor-semana { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
+.hor-semana.com-domingo { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.hor-col { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 8px; border: 1px solid rgba(18, 32, 50, .08); border-radius: 12px; background: rgba(255, 255, 255, .7); }
+.hor-col.hoje { border-color: var(--gold); background: #fff; box-shadow: 0 0 0 1px var(--gold) inset; }
+.hor-col-topo { display: flex; align-items: baseline; justify-content: center; gap: 6px; padding: 4px 0 6px; border: 0; border-bottom: 1px solid rgba(18, 32, 50, .08); background: none; font: inherit; color: var(--slate); cursor: pointer; }
+.hor-col-topo strong { font-family: var(--font-display); font-size: 22px; font-weight: 500; color: var(--ink); }
+.hor-col.hoje .hor-col-topo strong { color: var(--gold-deep); }
+.hor-col-aviso { padding: 4px 7px; border-radius: 6px; background: rgba(91, 107, 126, .12); color: var(--slate); font-size: 11.5px; font-weight: 600; }
+.hor-col-corpo { display: flex; flex-direction: column; gap: 6px; flex: 1; }
+.hor-col-vazio { padding: 10px 0; text-align: center; color: rgba(91, 107, 126, .6); font-size: 12px; }
+.hor-col-notas { padding: 5px 7px; border: 0; border-radius: 6px; background: #FBF7EA; color: var(--gold-deep); font: inherit; font-size: 11.5px; font-weight: 700; cursor: pointer; text-align: left; }
+.hor-bloco { display: flex; flex-direction: column; gap: 1px; padding: 7px 8px; border: 0; border-left: 3px solid var(--hor-cor, var(--navy)); border-radius: 7px; background: rgba(18, 32, 50, .045); font: inherit; text-align: left; color: var(--ink); cursor: pointer; min-width: 0; }
+.hor-bloco:hover { background: rgba(201, 162, 74, .16); }
+.hor-bloco.destaque { background: rgba(201, 162, 74, .15); }
+.hor-bloco.apagada { opacity: .6; }
+.hor-bloco.apagada .hor-bloco-nome { text-decoration: line-through; }
+.hor-bloco-hora { font-size: 11.5px; font-weight: 700; color: var(--slate); }
+.hor-bloco-nome { font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
+.hor-bloco-sala { font-size: 11.5px; color: var(--slate); }
+.hor-bloco-flag { align-self: flex-start; margin-top: 2px; padding: 1px 6px; border-radius: 5px; font-size: 10.5px; font-weight: 700; background: rgba(18, 32, 50, .08); color: var(--slate); }
+.hor-bloco-flag.cancelada { background: rgba(177, 74, 61, .12); color: var(--red); }
+.hor-bloco-flag.alterada, .hor-bloco-flag.reposicao { background: rgba(201, 162, 74, .25); color: var(--gold-deep); }
+.hor-legenda { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 14px; font-size: 12.5px; color: var(--slate); }
+.hor-legenda span { display: inline-flex; align-items: center; gap: 6px; }
+.hor-legenda i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; }
+.hor-legenda.marcas i, .hor-mes-marcas i { border-radius: 50%; width: 8px; height: 8px; }
+.hor-legenda i.alterada, .hor-mes-marcas i.alterada { background: var(--gold); }
+.hor-legenda i.cancelada, .hor-mes-marcas i.cancelada { background: var(--red); }
+.hor-legenda i.nota, .hor-mes-marcas i.nota { background: var(--navy); }
+
+/* ---- visão Mês ---- */
+.hor-mes-card { padding: 16px; }
+.hor-mes-semanas, .hor-mes-grade { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
+.hor-mes-semanas { margin-bottom: 6px; text-align: center; color: var(--slate); font-size: 12px; font-weight: 600; }
+.hor-mes-vazio { min-height: 72px; }
+.hor-mes-dia { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; min-height: 72px; padding: 7px 8px; border: 1.5px solid rgba(18, 32, 50, .08); border-radius: 10px; background: #fff; font: inherit; color: var(--ink); text-align: left; cursor: pointer; }
+.hor-mes-dia:hover { border-color: var(--gold); background: rgba(201, 162, 74, .08); }
+.hor-mes-dia.domingo { background: rgba(18, 32, 50, .025); }
+.hor-mes-dia.semaula { background: rgba(91, 107, 126, .1); }
+.hor-mes-dia.hoje { border-color: var(--gold); box-shadow: 0 0 0 1px var(--gold) inset; }
+.hor-mes-num { font-size: 14px; font-weight: 700; }
+.hor-mes-dia.hoje .hor-mes-num { color: var(--gold-deep); }
+.hor-mes-aulas { padding: 1px 7px; border-radius: 999px; background: var(--navy); color: #fff; font-size: 11px; font-weight: 700; }
+.hor-mes-marcas { display: flex; gap: 4px; margin-top: auto; }
+
+/* ---- turmas sem horário ---- */
+.hor-sem-horario { margin-top: 22px; }
+.hor-sem-horario h3 { margin: 0 0 4px; font-size: 15px; }
+.hor-sem-horario p { margin: 0 0 10px; color: var(--slate); font-size: 13px; }
+.hor-sem-linha { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 0; border-top: 1px solid rgba(18, 32, 50, .07); font-size: 13.5px; }
+.hor-sem-linha em { color: var(--slate); font-style: normal; }
+
+/* ---- modais ---- */
+.aluno-modal.hor-modal-largo { max-width: 560px; }
+.hor-campo { display: block; margin-top: 12px; }
+.hor-campo .teacher-label { margin-bottom: 5px; }
+.hor-campo small { display: block; margin-top: 4px; color: var(--slate); font-size: 12px; }
+.hor-campo .teacher-text-input { width: 100%; }
+textarea.teacher-text-input { resize: vertical; font-family: inherit; }
+.hor-dois { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.hor-check { display: flex; align-items: flex-start; gap: 9px; margin-top: 14px; font-size: 13.5px; color: var(--ink); cursor: pointer; }
+.hor-check input { margin-top: 3px; accent-color: var(--navy); }
+.hor-modal-rodape { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+.hor-modal-rodape .attendance-btn { padding: 10px 16px; font-size: 13px; }
+.hor-modal-acoes { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+.hor-modal-acoes .attendance-btn { padding: 9px 14px; font-size: 13px; }
+.hor-info { display: flex; flex-direction: column; margin-top: 4px; }
+.hor-info-linha { display: flex; justify-content: space-between; gap: 14px; padding: 8px 0; border-top: 1px solid rgba(18, 32, 50, .07); font-size: 13.5px; }
+.hor-info-linha:first-child { border-top: 0; }
+.hor-info-linha span { color: var(--slate); }
+.hor-info-linha strong { text-align: right; font-weight: 600; }
+.hor-alunos-chips { display: flex; flex-wrap: wrap; gap: 6px; max-height: 150px; overflow-y: auto; }
+.hor-alunos-chips span { padding: 4px 10px; border-radius: 999px; background: rgba(18, 32, 50, .06); font-size: 13px; }
+.hor-alunos-lista { max-height: 200px; overflow-y: auto; }
+.hor-aluno-item[hidden] { display: none; }
+.hor-encontros { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+.hor-encontro { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) auto minmax(0, 1fr) auto; align-items: center; gap: 8px; }
+.hor-encontro .teacher-text-input { margin-top: 0; }
+.hor-encontro span { color: var(--slate); font-size: 13px; }
+.hor-encontros > .cal-link { align-self: flex-start; }
+
+/* ---- celular ---- */
+@media (max-width: 900px) {
+  .hor-dia-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 760px) {
+  .hor-semana, .hor-semana.com-domingo { grid-template-columns: 1fr; }
+  .hor-col { flex-direction: row; flex-wrap: wrap; align-items: stretch; }
+  .hor-col-topo { flex-direction: column; align-items: center; justify-content: center; min-width: 52px; padding: 0 8px 0 0; border-bottom: 0; border-right: 1px solid rgba(18, 32, 50, .08); }
+  .hor-col-corpo { flex: 1 1 0; min-width: 0; }
+  .hor-col-aviso, .hor-col-notas { flex-basis: 100%; }
+  .hor-mes-dia, .hor-mes-vazio { min-height: 54px; }
+  .hor-mes-dia { padding: 5px 4px; align-items: center; }
+  .hor-mes-aulas { font-size: 0; padding: 0; width: 8px; height: 8px; }
+  .hor-mes-card { padding: 10px; }
+  .hor-aula { grid-template-columns: 62px minmax(0, 1fr); }
+  .hor-aula-hora strong { font-size: 18px; }
+  .hor-nav-titulo { min-width: 0; flex: 1; font-size: 18px; }
+  .hor-nav { flex: 1 1 100%; }
+  .hor-filtros .teacher-text-input { flex: 1 1 100%; }
+  .hor-encontro { grid-template-columns: 1fr 1fr; }
+  .hor-encontro span { display: none; }
+  .hor-dois { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hor-aula, .hor-bloco, .hor-mes-dia { transition: none; }
+}
+
+/* ---------- Suporte & feedback (aluno / responsável / professor) ---------- */
+.suporte-btn {
+    width: 100%;
+    margin-bottom: 8px;
+    border-color: rgba(201, 162, 74, 0.35);
+    color: var(--gold-light);
+    background: rgba(201, 162, 74, 0.08);
+}
+.suporte-btn:hover { background: rgba(201, 162, 74, 0.16); }
+.mobile-drawer-suporte { margin-top: 10px; border: 1px solid rgba(201, 162, 74, 0.35) !important; color: var(--gold-light) !important; }
+
+.suporte-modal { max-width: 520px; }
+.suporte-modal .teacher-label { margin-top: 16px; }
+.suporte-modal .teacher-text-input { margin-top: 0; }
+.suporte-textarea { resize: vertical; min-height: 110px; line-height: 1.45; }
+
+.suporte-tipos {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+.suporte-tipo {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 10px 12px;
+    border: 1px solid rgba(18, 32, 50, .15);
+    border-radius: 12px;
+    background: #fff;
+    color: var(--ink);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: border-color .15s ease, background .15s ease;
+}
+.suporte-tipo strong { font-size: 13.5px; }
+.suporte-tipo span { font-size: 11.5px; line-height: 1.35; color: var(--slate); }
+.suporte-tipo:hover { border-color: rgba(201, 162, 74, .7); }
+.suporte-tipo.ativo {
+    border-color: var(--gold);
+    background: rgba(201, 162, 74, .12);
+    box-shadow: 0 0 0 1px var(--gold) inset;
+}
+.suporte-tipo:disabled, .suporte-unidade:disabled { opacity: .6; cursor: not-allowed; }
+
+.suporte-destino {
+    margin: 10px 0 0;
+    padding: 8px 11px;
+    border-radius: 9px;
+    background: rgba(14, 32, 56, .05);
+    color: var(--slate);
+    font-size: 12.5px;
+    line-height: 1.4;
+}
+.suporte-destino strong { color: var(--ink); }
+
+.suporte-unidades { display: flex; flex-wrap: wrap; gap: 8px; }
+.suporte-unidade {
+    flex: 1 1 180px;
+    padding: 9px 12px;
+    border: 1px solid rgba(18, 32, 50, .15);
+    border-radius: 10px;
+    background: #fff;
+    color: var(--ink);
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+}
+.suporte-unidade.ativo {
+    border-color: var(--gold);
+    background: rgba(201, 162, 74, .12);
+    font-weight: 700;
+}
+
+.suporte-erro { margin: 12px 0 0; color: var(--red); font-size: 12.5px; }
+
+.suporte-acoes {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 10px;
+    margin-top: 18px;
+}
+.suporte-acoes .attendance-btn { padding: 10px 15px; font-size: 13px; }
+
+.suporte-ok { text-align: center; padding: 8px 0 2px; }
+.suporte-ok h2 { margin: 12px 0 6px; font-family: var(--font-display); font-size: 22px; font-weight: 500; color: var(--ink); }
+.suporte-ok p { margin: 0 auto 6px; max-width: 340px; color: var(--slate); font-size: 14px; line-height: 1.5; }
+.suporte-ok-icone {
+    display: grid;
+    place-items: center;
+    width: 46px;
+    height: 46px;
+    margin: 0 auto;
+    border-radius: 50%;
+    background: rgba(62, 122, 87, .14);
+    color: var(--green);
+}
+.suporte-ok-icone svg { width: 22px; height: 22px; }
+
+@media (max-width: 430px) {
+    .suporte-tipos { grid-template-columns: 1fr; }
+    .suporte-acoes { flex-direction: column-reverse; align-items: stretch; }
+    .suporte-acoes .teacher-primary-btn, .suporte-acoes .attendance-btn { width: 100%; justify-content: center; }
+}
