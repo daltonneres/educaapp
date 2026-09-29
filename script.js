@@ -1246,6 +1246,7 @@ const state = {
   // "Meu perfil" > ficha pessoal (contato de emergência, endereço,
   // aniversário, alergias…). Vale pra professor e pra equipe.
   // Fica em usuarios/{uid}.ficha. fichaForm é o rascunho do formulário.
+  perfilSubTab: "dados",     // dados | senha | ficha | manuais — sub-abas de "Meu perfil"
   fichaForm: null,
   fichaSalvando: false,
   fichaErro: "",
@@ -2996,6 +2997,12 @@ function professorPerfilView(){
   const email = state.authUser?.email || "—";
   const disciplinas = state.data.professorDisciplinas || [];
   const unidades = [...new Set((state.data.professorTurmas || []).map(t => t.escola).filter(Boolean))];
+  const abasProf = [
+    { key: "dados", label: "Meus dados", icon: ICONS.user },
+    { key: "senha", label: "Trocar minha senha", icon: ICONS.key },
+    { key: "ficha", label: "Minha ficha", icon: ICONS.shield },
+  ];
+  const ativaProf = perfilSubTabAtiva(abasProf);
   const chips = [...disciplinas.map(d => `<span class="perfil-chip">${ICONS.book} ${escapeHtml(d)}</span>`),
                  ...unidades.map(u => `<span class="perfil-chip">${ICONS.pinSmall} ${escapeHtml(u)}</span>`)].join("");
 
@@ -3013,8 +3020,9 @@ function professorPerfilView(){
       </div>
     </section>
 
-    <div class="perfil-grid">
-      <div class="management-card">
+    ${perfilSubNavHtml(abasProf)}
+    ${ativaProf === "dados" ? `
+      <div class="management-card management-card-wide">
         <h3>${ICONS.user} Meus dados</h3>
         <p>Nome e disciplinas são cadastrados pela secretaria. Se algo estiver errado, avise por lá.</p>
         <dl class="perfil-dados">
@@ -3022,22 +3030,9 @@ function professorPerfilView(){
           <div><dt>E-mail de acesso</dt><dd>${escapeHtml(email)}</dd></div>
           <div><dt>Disciplinas</dt><dd>${escapeHtml(disciplinas.join(", ") || "—")}</dd></div>
         </dl>
-      </div>
-
-      <div class="management-card">
-        <h3>${ICONS.key} Trocar minha senha</h3>
-        <p>Confirme a senha atual e escolha a nova. A troca vale na hora.</p>
-        <input id="perfil-senha-atual" type="password" class="teacher-text-input" placeholder="Senha atual" autocomplete="current-password" />
-        <input id="perfil-senha-nova" type="password" class="teacher-text-input" placeholder="Nova senha (mín. 6 caracteres)" autocomplete="new-password" />
-        <input id="perfil-senha-confirma" type="password" class="teacher-text-input" placeholder="Repita a nova senha" autocomplete="new-password" />
-        <button class="teacher-primary-btn" data-action="trocar-minha-senha" ${state.perfilSenhaTrocando ? "disabled" : ""}>${state.perfilSenhaTrocando ? "Salvando…" : "Salvar nova senha"}</button>
-        ${state.perfilSenhaErro ? `<p class="teacher-error" style="color:var(--red);font-size:12.5px;margin-top:8px;">${escapeHtml(state.perfilSenhaErro)}</p>` : ""}
-        ${state.perfilSenhaMensagem ? `<p class="teacher-success" style="margin-top:8px;">${escapeHtml(state.perfilSenhaMensagem)}</p>` : ""}
-        <p class="section-eyebrow" style="margin-top:12px;">Esqueceu a senha atual? Peça para a secretaria definir uma nova.</p>
-      </div>
-    </div>
-
-    ${fichaFormCardHtml()}`;
+      </div>`
+    : ativaProf === "senha" ? perfilSenhaCardHtml("Esqueceu a senha atual? Peça para a secretaria definir uma nova.")
+    : fichaFormCardHtml()}`;
 }
 
 function professorAulasView(){
@@ -4198,6 +4193,36 @@ function manuaisAgrupadosHtml(){
   }).join("");
 }
 
+/* Sub-abas de "Meu perfil" (secretaria e professor). */
+function perfilSubNavHtml(abas){
+  const ativa = abas.some(a => a.key === state.perfilSubTab) ? state.perfilSubTab : abas[0].key;
+  return `<div class="subtab-bar">${abas.map(t => `
+    <button type="button" class="subtab-btn ${ativa === t.key ? "active" : ""}" data-action="set-perfil-subtab" data-key="${t.key}">
+      ${t.icon}<span>${t.label}</span>
+    </button>`).join("")}</div>`;
+}
+
+function perfilSubTabAtiva(abas){
+  return abas.some(a => a.key === state.perfilSubTab) ? state.perfilSubTab : abas[0].key;
+}
+
+function perfilSenhaCardHtml(notaRodape){
+  return `
+    <div class="management-card management-card-wide">
+      <h3>${ICONS.shield} Trocar minha senha</h3>
+      <p>Confirme a senha atual e escolha a nova. A troca vale na hora.</p>
+      <div style="max-width:420px;">
+        <input id="perfil-senha-atual" type="password" class="teacher-text-input" placeholder="Senha atual" autocomplete="current-password" />
+        <input id="perfil-senha-nova" type="password" class="teacher-text-input" placeholder="Nova senha (mín. 6 caracteres)" autocomplete="new-password" />
+        <input id="perfil-senha-confirma" type="password" class="teacher-text-input" placeholder="Repita a nova senha" autocomplete="new-password" />
+        <button class="teacher-primary-btn" data-action="trocar-minha-senha" ${state.perfilSenhaTrocando ? "disabled" : ""}>${state.perfilSenhaTrocando ? "Salvando…" : "Salvar nova senha"}</button>
+      </div>
+      ${state.perfilSenhaErro ? `<p class="teacher-error" style="color:var(--red);font-size:12.5px;margin-top:8px;">${escapeHtml(state.perfilSenhaErro)}</p>` : ""}
+      ${state.perfilSenhaMensagem ? `<p class="teacher-success" style="margin-top:8px;">${escapeHtml(state.perfilSenhaMensagem)}</p>` : ""}
+      <p class="section-eyebrow" style="margin-top:12px;">${notaRodape}</p>
+    </div>`;
+}
+
 function perfilInstituicaoView(school){
   const nome = (state.perfil?.nome || "").trim();
   const email = state.authUser?.email || "—";
@@ -4209,9 +4234,67 @@ function perfilInstituicaoView(school){
   const totalManuais = MANUAIS_INSTITUICAO.length;
   const prontos = MANUAIS_INSTITUICAO.filter(m => m.url && m.url !== "#").length;
 
+  const abas = [
+    { key: "dados", label: "Meus dados", icon: ICONS.user },
+    { key: "senha", label: "Trocar minha senha", icon: ICONS.key },
+    { key: "ficha", label: "Minha ficha", icon: ICONS.shield },
+    { key: "manuais", label: "Manuais e materiais", icon: ICONS.book },
+  ];
+  const ativa = perfilSubTabAtiva(abas);
+
+  let corpo = "";
+  if(ativa === "dados"){
+    corpo = `
+      <div class="management-card management-card-wide">
+        <h3>${ICONS.user} Meus dados</h3>
+        <p>Como seu nome aparece para o resto da equipe e da escola.</p>
+        <div style="max-width:420px;">
+          <label class="teacher-label" for="profile-name-input">Nome completo</label>
+          <input id="profile-name-input" class="teacher-text-input" placeholder="Seu nome completo" value="${escapeHtml(state.perfilNomeInput || "")}" />
+          <button class="teacher-primary-btn" data-action="save-profile-name" ${state.perfilNomeSalvando ? "disabled" : ""}>${state.perfilNomeSalvando ? "Salvando…" : (nome ? "Atualizar nome" : "Salvar nome")}</button>
+        </div>
+        ${state.perfilNomeErro ? `<p class="teacher-error" style="color:var(--red);font-size:12.5px;margin-top:8px;">${escapeHtml(state.perfilNomeErro)}</p>` : ""}
+        <dl class="perfil-dados">
+          <div><dt>E-mail de acesso</dt><dd>${escapeHtml(email)}</dd></div>
+          <div><dt>Tipo de acesso</dt><dd>Equipe administrativa</dd></div>
+        </dl>
+      </div>
+
+      <div class="perfil-atalhos">
+        <div class="perfil-atalho">
+          <span class="perfil-atalho-icon">${ICONS.key}</span>
+          <div class="perfil-atalho-texto">
+            <strong>Senhas da escola</strong>
+            <span>Trocar senha de aluno, professor ou responsável, ou excluir um cadastro.</span>
+          </div>
+          <button class="teacher-primary-btn" data-action="ir-para-acessos">Abrir</button>
+        </div>
+        <div class="perfil-atalho">
+          <span class="perfil-atalho-icon">${ICONS.lifebuoy}</span>
+          <div class="perfil-atalho-texto">
+            <strong>Suporte técnico</strong>
+            <span>Erro na tela, acesso travado ou dado que não salva? WhatsApp ou ${escapeHtml(SUPORTE_TECNICO.email)}.</span>
+          </div>
+          <button class="teacher-primary-btn" data-action="whatsapp-suporte">WhatsApp</button>
+        </div>
+      </div>`;
+  } else if(ativa === "senha"){
+    corpo = perfilSenhaCardHtml("Esqueceu a senha atual? Não mandamos link por e-mail — fale com o suporte (aba “Meus dados”).");
+  } else if(ativa === "ficha"){
+    corpo = fichaFormCardHtml();
+  } else {
+    corpo = `
+      <div class="manuais-cabecalho">
+        <h2 class="section-title">Manuais e materiais de apoio</h2>
+        <span class="manuais-progresso">${prontos} de ${totalManuais} prontos</span>
+      </div>
+      <p class="section-eyebrow">Guias para o dia a dia da equipe. Os marcados como "Em breve" ainda serão produzidos.</p>
+      ${manuaisAgrupadosHtml()}`;
+  }
+
   return `
     <h2 class="section-title">Meu perfil</h2>
-    <p class="section-eyebrow">Seus dados de acesso, atalhos e materiais de apoio da equipe.</p>
+    <p class="section-eyebrow">Seus dados de acesso, ficha pessoal e materiais de apoio da equipe.</p>
 
     <section class="perfil-hero">
       <div class="perfil-hero-foto">${avatarHtml(fotoSecretariaDaEscola(school), iniciaisDoNome(nome || "Equipe"), "avatar-foto-perfil")}</div>
@@ -4223,60 +4306,8 @@ function perfilInstituicaoView(school){
       </div>
     </section>
 
-    <div class="perfil-grid">
-      <div class="management-card">
-        <h3>${ICONS.user} Meus dados</h3>
-        <p>Como seu nome aparece para o resto da equipe e da escola.</p>
-        <label class="teacher-label" for="profile-name-input">Nome completo</label>
-        <input id="profile-name-input" class="teacher-text-input" placeholder="Seu nome completo" value="${escapeHtml(state.perfilNomeInput || "")}" />
-        <button class="teacher-primary-btn" data-action="save-profile-name" ${state.perfilNomeSalvando ? "disabled" : ""}>${state.perfilNomeSalvando ? "Salvando…" : (nome ? "Atualizar nome" : "Salvar nome")}</button>
-        ${state.perfilNomeErro ? `<p class="teacher-error" style="color:var(--red);font-size:12.5px;margin-top:8px;">${escapeHtml(state.perfilNomeErro)}</p>` : ""}
-        <dl class="perfil-dados">
-          <div><dt>E-mail de acesso</dt><dd>${escapeHtml(email)}</dd></div>
-          <div><dt>Tipo de acesso</dt><dd>Equipe administrativa</dd></div>
-        </dl>
-      </div>
-
-      <div class="management-card">
-        <h3>${ICONS.shield} Trocar minha senha</h3>
-        <p>Confirme a senha atual e escolha a nova. A troca vale na hora.</p>
-        <input id="perfil-senha-atual" type="password" class="teacher-text-input" placeholder="Senha atual" autocomplete="current-password" />
-        <input id="perfil-senha-nova" type="password" class="teacher-text-input" placeholder="Nova senha (mín. 6 caracteres)" autocomplete="new-password" />
-        <input id="perfil-senha-confirma" type="password" class="teacher-text-input" placeholder="Repita a nova senha" autocomplete="new-password" />
-        <button class="teacher-primary-btn" data-action="trocar-minha-senha" ${state.perfilSenhaTrocando ? "disabled" : ""}>${state.perfilSenhaTrocando ? "Salvando…" : "Salvar nova senha"}</button>
-        ${state.perfilSenhaErro ? `<p class="teacher-error" style="color:var(--red);font-size:12.5px;margin-top:8px;">${escapeHtml(state.perfilSenhaErro)}</p>` : ""}
-        ${state.perfilSenhaMensagem ? `<p class="teacher-success" style="margin-top:8px;">${escapeHtml(state.perfilSenhaMensagem)}</p>` : ""}
-        <p class="section-eyebrow" style="margin-top:12px;">Esqueceu a senha atual? Não mandamos link por e-mail — fale com o suporte ao lado.</p>
-      </div>
-    </div>
-
-    ${fichaFormCardHtml()}
-
-    <div class="perfil-atalhos">
-      <div class="perfil-atalho">
-        <span class="perfil-atalho-icon">${ICONS.key}</span>
-        <div class="perfil-atalho-texto">
-          <strong>Senhas da escola</strong>
-          <span>Trocar senha de aluno, professor ou responsável, ou excluir um cadastro.</span>
-        </div>
-        <button class="teacher-primary-btn" data-action="ir-para-acessos">Abrir</button>
-      </div>
-      <div class="perfil-atalho">
-        <span class="perfil-atalho-icon">${ICONS.lifebuoy}</span>
-        <div class="perfil-atalho-texto">
-          <strong>Suporte técnico</strong>
-          <span>Erro na tela, acesso travado ou dado que não salva? WhatsApp ou ${escapeHtml(SUPORTE_TECNICO.email)}.</span>
-        </div>
-        <button class="teacher-primary-btn" data-action="whatsapp-suporte">WhatsApp</button>
-      </div>
-    </div>
-
-    <div class="manuais-cabecalho">
-      <h2 class="section-title">Manuais e materiais de apoio</h2>
-      <span class="manuais-progresso">${prontos} de ${totalManuais} prontos</span>
-    </div>
-    <p class="section-eyebrow">Guias para o dia a dia da equipe. Os marcados como "Em breve" ainda serão produzidos.</p>
-    ${manuaisAgrupadosHtml()}`;
+    ${perfilSubNavHtml(abas)}
+    ${corpo}`;
 }
 
 /* Troca o tipo de cadastro em Gestão > Criar cadastro (aluno, responsável,
@@ -7419,6 +7450,7 @@ function bindEvents(){
         state.instTab = el.dataset.key;
         state.cal.diaAberto = null;
         if(state.instTab === "perfil"){
+          state.perfilSubTab = "dados";
           state.fichaForm = null; state.fichaErro = ""; state.fichaMensagem = "";
         }
         render();
@@ -7777,6 +7809,7 @@ function bindEvents(){
         state.professorTab = el.dataset.key;
         state.cal.diaAberto = null;
         if(state.professorTab === "perfil"){
+          state.perfilSubTab = "dados";
           state.fichaForm = null; state.fichaErro = ""; state.fichaMensagem = "";
           state.perfilSenhaErro = ""; state.perfilSenhaMensagem = "";
         }
@@ -8541,6 +8574,12 @@ function bindEvents(){
         break;
       }
 
+      case "set-perfil-subtab":
+        state.perfilSubTab = el.dataset.key;
+        state.perfilSenhaErro = ""; state.perfilSenhaMensagem = "";
+        state.fichaErro = ""; state.fichaMensagem = "";
+        render();
+        break;
       case "salvar-minha-ficha":
         await salvarMinhaFicha();
         break;
