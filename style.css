@@ -2035,7 +2035,7 @@ h3.aval-h3 { font-family: var(--font-display); font-size: 17px; color: var(--ink
     font-size: 12px;
     font-weight: 700;
 }
-.manual-grupo { margin-top: 22px; }
+.manual-grupo { margin-top: 10px; }
 .manual-grupo-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
 .manual-grupo-icon {
     display: grid;
@@ -2047,6 +2047,25 @@ h3.aval-h3 { font-family: var(--font-display); font-size: 17px; color: var(--ink
     background: var(--navy);
     color: var(--gold-light);
 }
+.manual-grupo-toggle {
+    width: 100%;
+    margin: 0;
+    padding: 12px 14px;
+    text-align: left;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+    background: #fff;
+    border: 1px solid rgba(18, 32, 50, 0.09);
+    border-radius: 14px;
+    transition: background .15s ease, box-shadow .15s ease;
+}
+.manual-grupo-toggle:hover { background: rgba(18, 32, 50, 0.03); }
+.manual-grupo-toggle > div { flex: 1; min-width: 0; }
+.manual-grupo-chevron { flex-shrink: 0; color: var(--slate); display: grid; place-items: center; transition: transform .2s ease; }
+.manual-grupo.aberto .manual-grupo-chevron { transform: rotate(90deg); }
+.manual-grupo.aberto .manual-grupo-toggle { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.manual-grupo.aberto .manual-list { border-top-left-radius: 0; border-top-right-radius: 0; margin-top: 0; }
 .manual-grupo-head h3 { margin: 0; font-family: var(--font-display); font-size: 19px; font-weight: 500; color: var(--ink); }
 .manual-grupo-head p { margin: 2px 0 0; font-size: 12.5px; color: var(--slate); }
 .manual-grupo-count {

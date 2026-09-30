@@ -20,6 +20,9 @@
 
    alunos/{alunoId}
      nome, turma, foto, escolaId, contato
+     situacao: "ativo" | "inativo" | "cancelado"   // sem o campo = ativo (cadastros antigos)
+     matriculadoEm: "AAAA-MM-DD"    // alimenta "alunos novos" nas Estatísticas
+     situacaoEm: "AAAA-MM-DD", motivoSaida: string   // quando virou inativo/cancelado
      notas: [] // campo antigo, não é mais usado (ver "atividades" e "notasAluno" abaixo)
      presenca: { percentual, faltasMes, registros: [{data,status}] }
      financeiro: { mensalidades: [{ id, competencia (\"AAAA-MM\"), valor,
@@ -413,7 +416,6 @@ const ICONS = {
   award: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="6"/><path d="m9 13.5-1.5 7L12 18l4.5 2.5-1.5-7"/></svg>`,
   star: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`,
   horarios: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>`,
-  support: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-4.6A8 8 0 1 1 21 12Z"/><path d="M9.5 10a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .8-1 1.5"/><path d="M12 16.5h.01"/></svg>`,
 };
 
 /* Contatos de WhatsApp da secretaria, por unidade. Ajuste os números aqui
@@ -800,83 +802,81 @@ const MANUAIS_CATEGORIAS = [
   { key: "cadastros", icon: "user", titulo: "Cadastros e acessos", descricao: "Criar pessoas, dar login, trocar senha e importar turmas." },
   { key: "rotina", icon: "calendar", titulo: "Turmas, alunos e calendário", descricao: "O dia a dia da secretaria com turmas, fichas e avisos." },
   { key: "horarios", icon: "horarios", titulo: "Horários e agenda", descricao: "Agenda de aulas, remarcações, lembretes para as turmas e anotações." },
-  { key: "financeiro", icon: "wallet", titulo: "Financeiro", descricao: "Mensalidades, baixas, boletos e inadimplência." },
+  { key: "financeiro", icon: "wallet", titulo: "Financeiro", descricao: "Lançar cobranças e consultar boletos." },
   { key: "contratos", icon: "fileText", titulo: "Contratos", descricao: "Gerar, importar e acompanhar a assinatura." },
   { key: "pedagogico", icon: "cap", titulo: "Acompanhamento pedagógico", descricao: "Faltas, boletim, avaliações, certificados e aniversários." },
-  { key: "perfis", icon: "users2", titulo: "Guias por perfil", descricao: "O que o professor e a família veem e fazem no app — para orientar por telefone." },
+  { key: "perfis", icon: "users2", titulo: "Guias por perfil", descricao: "O que o professor e a família veem e fazem no app — para orientar por telefone.", descricaoProfessor: "Como o app funciona no seu dia a dia: chamada, conteúdos e notas." },
   { key: "automatico", icon: "clock", titulo: "O que o sistema faz sozinho", descricao: "Funções que rodam sem ninguém pedir — saber disso evita retrabalho." },
   { key: "ajuda", icon: "lifebuoy", titulo: "Quando algo dá errado", descricao: "Erros comuns e o que fazer em cada um." },
 ];
 
 const MANUAIS_INSTITUICAO = [
   // ---- Primeiros passos
-  { categoria: "inicio", tipo: "visual", titulo: "Tour pelo menu da equipe", descricao: "Mapa ilustrado de cada aba (Turmas, Calendário, Estatísticas, Financeiro, Alunos, Aniversários, Professores, Responsáveis, Contratos, Avaliações, Certificados, Gestão e Meu perfil) e para que cada uma serve.", url: "" },
-  { categoria: "inicio", tipo: "passo", titulo: "Entrar, trocar de unidade e sair", descricao: "Como fazer login, alternar entre Salto do Lontra e Nova Prata pelo selo da unidade no menu e sair da conta com segurança.", url: "" },
-  { categoria: "inicio", tipo: "visual", titulo: "Como cada perfil enxerga o app", descricao: "Telas de aluno, responsável e professor ao lado da sua, para você saber exatamente o que a pessoa vê quando pede ajuda por telefone.", url: "" },
-  { categoria: "inicio", tipo: "referencia", titulo: "Glossário do Educa+", descricao: "Curso, turma, IDALUNO, vínculo, competência, escopo do aviso, situação do contrato: os termos das telas em linguagem simples.", url: "" },
+  { categoria: "inicio", tipo: "visual", titulo: "Tour pelo menu da equipe", descricao: "Mapa ilustrado de cada aba (Turmas, Calendário, Estatísticas, Financeiro, Alunos, Aniversários, Professores, Responsáveis, Contratos, Avaliações, Certificados, Gestão e Meu perfil) e para que cada uma serve.", url: "manuais/primeiros-passos.html#tour" },
+  { categoria: "inicio", tipo: "passo", titulo: "Entrar, trocar de unidade e sair", descricao: "Como fazer login, alternar entre Salto do Lontra e Nova Prata pelo selo da unidade no menu e sair da conta com segurança.", url: "manuais/primeiros-passos.html#entrar" },
+  { categoria: "inicio", tipo: "visual", titulo: "Como cada perfil enxerga o app", descricao: "Telas de aluno, responsável e professor ao lado da sua, para você saber exatamente o que a pessoa vê quando pede ajuda por telefone.", url: "manuais/primeiros-passos.html#perfis" },
+  { categoria: "inicio", tipo: "referencia", titulo: "Glossário do Educa+", descricao: "Curso, turma, IDALUNO, vínculo, competência, escopo do aviso, situação do contrato: os termos das telas em linguagem simples.", url: "manuais/primeiros-passos.html#glossario" },
 
   // ---- Cadastros e acessos
-  { categoria: "cadastros", tipo: "passo", titulo: "Cadastrar um aluno", descricao: "Curso, menino/menina (define a foto), contato, e-mail e senha provisória — e onde aparece o IDALUNO gerado.", url: "" },
-  { categoria: "cadastros", tipo: "passo", titulo: "Cadastrar responsável e vincular aos filhos", descricao: "Escolher os alunos, dar login ao responsável e ajustar os vínculos depois na aba Responsáveis.", url: "" },
-  { categoria: "cadastros", tipo: "passo", titulo: "Cadastrar e editar professor", descricao: "Unidades, disciplinas, homem/mulher (foto), e-mail e senha; como editar depois e o que muda nas listas.", url: "" },
-  { categoria: "cadastros", tipo: "passo", titulo: "Cadastrar outra pessoa da equipe", descricao: "Criar login administrativo para a unidade e o que esse acesso permite fazer.", url: "" },
-  { categoria: "cadastros", tipo: "passo", titulo: "Senhas & acessos: trocar senha, criar login, excluir", descricao: "Como resolver sozinha quem esqueceu a senha, quem não tem e-mail de verdade e quem precisa ser removido — e o que acontece com o acesso dela.", url: "" },
-  { categoria: "cadastros", tipo: "passo", titulo: "Importar turmas por PDF", descricao: "Enviar a lista de turmas, conferir a prévia, escolher o professor de cada linha e evitar turmas duplicadas.", url: "" },
-  { categoria: "cadastros", tipo: "passo", titulo: "Minha ficha e ficha do professor", descricao: "O que preencher (contato de emergência, alergias, tipo sanguíneo…), quem enxerga e como a secretaria abre a ficha de um professor.", url: "manuais/ficha.html" },
+  { categoria: "cadastros", tipo: "passo", titulo: "Cadastrar um aluno", descricao: "Curso, menino/menina (define a foto), contato, e-mail e senha provisória — e onde aparece o IDALUNO gerado.", url: "manuais/cadastros.html#aluno" },
+  { categoria: "cadastros", tipo: "passo", titulo: "Cadastrar responsável e vincular aos filhos", descricao: "Escolher os alunos, dar login ao responsável e ajustar os vínculos depois na aba Responsáveis.", url: "manuais/cadastros.html#responsavel" },
+  { categoria: "cadastros", tipo: "passo", titulo: "Cadastrar e editar professor", descricao: "Unidades, disciplinas, homem/mulher (foto), e-mail e senha; como editar depois e o que muda nas listas.", url: "manuais/cadastros.html#professor" },
+  { categoria: "cadastros", tipo: "passo", titulo: "Cadastrar outra pessoa da equipe", descricao: "Criar login administrativo para a unidade e o que esse acesso permite fazer.", url: "manuais/cadastros.html#equipe" },
+  { categoria: "cadastros", tipo: "passo", titulo: "Senhas & acessos: trocar senha, criar login, excluir", descricao: "Como resolver sozinha quem esqueceu a senha, quem não tem e-mail de verdade e quem precisa ser removido — e o que acontece com o acesso dela.", url: "manuais/cadastros.html#acessos" },
+  { categoria: "cadastros", tipo: "passo", titulo: "Importar turmas por PDF", descricao: "Enviar a lista de turmas, conferir a prévia, escolher o professor de cada linha e evitar turmas duplicadas.", url: "manuais/cadastros.html#importar-turmas" },
+  { professor: true, categoria: "cadastros", tipo: "passo", titulo: "Minha ficha e ficha do professor", descricao: "O que preencher (contato de emergência, alergias, tipo sanguíneo…), quem enxerga e como a secretaria abre a ficha de um professor.", url: "manuais/ficha.html" },
 
   // ---- Turmas, alunos e calendário
-  { categoria: "rotina", tipo: "passo", titulo: "Criar e ajustar turmas", descricao: "Nome, horário, sala e disciplina; colocar e tirar alunos de uma turma; quando excluir.", url: "" },
-  { categoria: "rotina", tipo: "visual", titulo: "Ficha do aluno por dentro", descricao: "Dados, turma, contato, aniversário, situação do contrato e financeiro — o que dá para editar em cada campo.", url: "" },
-  { categoria: "rotina", tipo: "passo", titulo: "Lançar itens no calendário da unidade", descricao: "Dia sem aula, prova, atividade e aviso; escolher quem recebe (alunos, responsáveis, professores) e por curso.", url: "" },
-  { categoria: "rotina", tipo: "visual", titulo: "Como o calendário aparece para a família", descricao: "Cores de presença, faltas justificadas, ícone de observação do professor e os avisos da escola vistos pelo responsável.", url: "" },
+  { categoria: "rotina", tipo: "passo", titulo: "Criar e ajustar turmas", descricao: "Nome, horário, sala e disciplina; colocar e tirar alunos de uma turma; quando excluir.", url: "manuais/rotina.html#turmas" },
+  { categoria: "rotina", tipo: "visual", titulo: "Ficha do aluno por dentro", descricao: "Dados, turma, contato, aniversário, situação do contrato e financeiro — o que dá para editar em cada campo.", url: "manuais/rotina.html#ficha-aluno" },
+  { categoria: "rotina", tipo: "passo", titulo: "Lançar itens no calendário da unidade", descricao: "Dia sem aula, prova, atividade e aviso; escolher quem recebe (alunos, responsáveis, professores) e por curso.", url: "manuais/rotina.html#calendario-unidade" },
+  { categoria: "rotina", tipo: "visual", titulo: "Como o calendário aparece para a família", descricao: "Cores de presença, faltas justificadas, ícone de observação do professor e os avisos da escola vistos pelo responsável.", url: "manuais/rotina.html#calendario-familia" },
 
   // ---- Horários e agenda
-  { categoria: "horarios", tipo: "passo", titulo: "Aba Horários: agenda do dia, da semana e do mês", descricao: "Navegar pela agenda, filtrar por turma ou professor, abrir a ficha da aula e ir direto para a chamada.", url: "manuais/horarios.html" },
-  { categoria: "horarios", tipo: "passo", titulo: "Remarcar ou cancelar uma aula", descricao: "Só aquele dia, cancelamento ou mudança do horário fixo; aviso de conflito e como voltar ao horário normal.", url: "manuais/horarios.html#alterar" },
-  { categoria: "horarios", tipo: "passo", titulo: "Lembretes e avisos para a turma", descricao: "Enviar recado que aparece no calendário dos alunos e responsáveis da turma.", url: "manuais/horarios.html#lembrete" },
-  { categoria: "horarios", tipo: "passo", titulo: "Criar turma com dias e horários", descricao: "Nome, professor, disciplina, sala, encontros da semana e alunos; como resolver \"Turmas sem horário definido\".", url: "manuais/horarios.html#turma" },
-  { categoria: "horarios", tipo: "passo", titulo: "Anotações pessoais", descricao: "Anotações que só você vê, soltas ou ligadas a uma turma.", url: "manuais/horarios.html#anotacoes" },
+  { professor: true, categoria: "horarios", tipo: "passo", titulo: "Aba Horários: agenda do dia, da semana e do mês", descricao: "Navegar pela agenda, filtrar por turma ou professor, abrir a ficha da aula e ir direto para a chamada.", url: "manuais/horarios.html" },
+  { professor: true, categoria: "horarios", tipo: "passo", titulo: "Remarcar ou cancelar uma aula", descricao: "Só aquele dia, cancelamento ou mudança do horário fixo; aviso de conflito e como voltar ao horário normal.", url: "manuais/horarios.html#alterar" },
+  { professor: true, categoria: "horarios", tipo: "passo", titulo: "Lembretes e avisos para a turma", descricao: "Enviar recado que aparece no calendário dos alunos e responsáveis da turma.", url: "manuais/horarios.html#lembrete" },
+  { professor: true, categoria: "horarios", tipo: "passo", titulo: "Criar turma com dias e horários", descricao: "Nome, professor, disciplina, sala, encontros da semana e alunos; como resolver \"Turmas sem horário definido\".", url: "manuais/horarios.html#turma" },
+  { professor: true, categoria: "horarios", tipo: "passo", titulo: "Anotações pessoais", descricao: "Anotações que só você vê, soltas ou ligadas a uma turma.", url: "manuais/horarios.html#anotacoes" },
   { categoria: "horarios", tipo: "referencia", titulo: "Como avisar as famílias: qual ferramenta usar", descricao: "Horários, Calendário da unidade ou Comunicados: quando usar cada um e quem recebe.", url: "manuais/avisar-familias.html" },
 
   // ---- Financeiro
-  { categoria: "financeiro", tipo: "passo", titulo: "Lançar mensalidades", descricao: "Competência, valor e vencimento — pela aba Financeiro ou direto na ficha do aluno.", url: "" },
-  { categoria: "financeiro", tipo: "passo", titulo: "Dar baixa em um pagamento", descricao: "Dinheiro, Pix ou cartão, com a data do pagamento, e como desfazer um lançamento errado.", url: "" },
-  { categoria: "financeiro", tipo: "passo", titulo: "Anexar Pix copia e cola, código de barras e boleto", descricao: "O que dá para anexar em cada cobrança, limite de tamanho do PDF e como o responsável vê isso.", url: "" },
-  { categoria: "financeiro", tipo: "visual", titulo: "Painel financeiro do mês", descricao: "Como ler os cartões e gráficos da competência atual e a lista de inadimplentes ordenada por dias de atraso.", url: "" },
-
+  { categoria: "financeiro", tipo: "passo", titulo: "Lançar mensalidades", descricao: "Competência, valor e vencimento — pela aba Financeiro ou direto na ficha do aluno.", url: "manuais/financeiro.html#lancar" },
+  { categoria: "financeiro", tipo: "passo", titulo: "Anexar Pix copia e cola, código de barras e boleto", descricao: "O que dá para anexar em cada cobrança, limite de tamanho do PDF e como o responsável vê isso.", url: "manuais/financeiro.html#anexos" },
+  
   // ---- Contratos
-  { categoria: "contratos", tipo: "passo", titulo: "Gerar um contrato pronto para assinar", descricao: "Escolher o CNPJ (que define unidade, endereço e sócia), preencher aluno, curso, horário e valores, e imprimir ou salvar em PDF.", url: "" },
-  { categoria: "contratos", tipo: "passo", titulo: "Importar contratos em lote", descricao: "Enviar vários contratos de uma vez, conferir o que foi lido e corrigir o que veio errado antes de confirmar.", url: "" },
-  { categoria: "contratos", tipo: "passo", titulo: "Acompanhar assinaturas pendentes", descricao: "Mandar o PDF pelo WhatsApp, marcar como assinado quando voltar e o que fazer se a página for recarregada.", url: "" },
+  { categoria: "contratos", tipo: "passo", titulo: "Gerar um contrato pronto para assinar", descricao: "Escolher o CNPJ (que define unidade, endereço e sócia), preencher aluno, curso, horário e valores, e imprimir ou salvar em PDF.", url: "manuais/contratos.html#gerar" },
+  { categoria: "contratos", tipo: "passo", titulo: "Importar contratos em lote", descricao: "Enviar vários contratos de uma vez, conferir o que foi lido e corrigir o que veio errado antes de confirmar.", url: "manuais/contratos.html#importar" },
+  { categoria: "contratos", tipo: "passo", titulo: "Acompanhar assinaturas pendentes", descricao: "Mandar o PDF pelo WhatsApp, marcar como assinado quando voltar e o que fazer se a página for recarregada.", url: "manuais/contratos.html#assinaturas" },
 
   // ---- Acompanhamento pedagógico
-  { categoria: "pedagogico", tipo: "visual", titulo: "Estatísticas e alunos com faltas", descricao: "Leitura do painel dos últimos 30 dias e da lista de acompanhamento recomendado.", url: "" },
-  { categoria: "pedagogico", tipo: "passo", titulo: "Boletim de Inglês (Report Card)", descricao: "Quem preenche, os seis critérios, as notas do semestre, o feedback e o que o aluno e o responsável enxergam.", url: "" },
-  { categoria: "pedagogico", tipo: "passo", titulo: "Avaliação institucional", descricao: "Abrir e bloquear respostas, criar perguntas próprias e ler o resultado consolidado sem identificar quem respondeu.", url: "" },
-  { categoria: "pedagogico", tipo: "passo", titulo: "Certificados", descricao: "Anexar o link do certificado (Drive) ao fim do módulo, por que a Recreação não entra e como a família pede o dela.", url: "" },
-  { categoria: "pedagogico", tipo: "passo", titulo: "Aniversários e mensagem no WhatsApp", descricao: "Como a mensagem já vem pronta e para quem ela vai: o aluno, se tiver WhatsApp, ou o responsável.", url: "" },
-  { categoria: "pedagogico", tipo: "visual", titulo: "Do professor ao boletim: notas e atividades", descricao: "Como o professor lança atividades e notas nas duas etapas e como o boletim do aluno é montado a partir delas.", url: "" },
+  { categoria: "pedagogico", tipo: "visual", titulo: "Estatísticas e alunos com faltas", descricao: "Leitura do painel dos últimos 30 dias e da lista de acompanhamento recomendado.", url: "manuais/pedagogico.html#estatisticas" },
+  { professor: true, categoria: "pedagogico", tipo: "passo", titulo: "Boletim de Inglês (Report Card)", descricao: "Quem preenche, os seis critérios, as notas do semestre, o feedback e o que o aluno e o responsável enxergam.", url: "manuais/pedagogico.html#boletim" },
+  { categoria: "pedagogico", tipo: "passo", titulo: "Avaliação institucional", descricao: "Abrir e bloquear respostas, criar perguntas próprias e ler o resultado consolidado sem identificar quem respondeu.", url: "manuais/pedagogico.html#avaliacao" },
+  { professor: true, categoria: "pedagogico", tipo: "passo", titulo: "Certificados", descricao: "Anexar o link do certificado (Drive) ao fim do módulo, por que a Recreação não entra e como a família pede o dela.", url: "manuais/pedagogico.html#certificados" },
+  { categoria: "pedagogico", tipo: "passo", titulo: "Aniversários e mensagem no WhatsApp", descricao: "Como a mensagem já vem pronta e para quem ela vai: o aluno, se tiver WhatsApp, ou o responsável.", url: "manuais/pedagogico.html#aniversarios" },
+  { professor: true, categoria: "pedagogico", tipo: "visual", titulo: "Do professor ao boletim: notas e atividades", descricao: "Como o professor lança atividades e notas nas duas etapas e como o boletim do aluno é montado a partir delas.", url: "manuais/pedagogico.html#notas" },
 
   // ---- Guias por perfil
-  { categoria: "perfis", tipo: "visual", titulo: "Guia do professor: chamada, conteúdos e notas", descricao: "Aulas de hoje, Conteúdos do semestre e Notas e atividades — e como isso vira o boletim.", url: "manuais/guia-professor.html" },
+  { professor: true, categoria: "perfis", tipo: "visual", titulo: "Guia do professor: chamada, conteúdos e notas", descricao: "Aulas de hoje, Conteúdos do semestre e Notas e atividades — e como isso vira o boletim.", url: "manuais/guia-professor.html" },
   { categoria: "perfis", tipo: "visual", titulo: "Guia do aluno e do responsável", descricao: "Calendário, boletim, presença, certificados, financeiro e comunicados, como a família vê.", url: "manuais/guia-familia.html" },
 
   // ---- Funções automáticas
-  { categoria: "automatico", tipo: "automatico", titulo: "IDALUNO sequencial", descricao: "Cada novo aluno recebe o próximo número (0001, 0002…) sozinho, para todas as unidades — útil para diferenciar nomes iguais.", url: "" },
-  { categoria: "automatico", tipo: "automatico", titulo: "Fotos padrão por perfil", descricao: "Menino/menina, professor/professora e a foto da secretaria de cada unidade; quando aparecem as iniciais no lugar.", url: "" },
-  { categoria: "automatico", tipo: "automatico", titulo: "Situação financeira calculada", descricao: "Em dia, atrasada há X dias e próxima cobrança são calculadas sozinhas a partir das mensalidades lançadas — nunca digitadas.", url: "" },
-  { categoria: "automatico", tipo: "automatico", titulo: "Cores e alertas da presença", descricao: "Verde, amarelo e vermelho no calendário, a regra do \"pior status do dia\" e o alerta de observação do professor.", url: "" },
-  { categoria: "automatico", tipo: "automatico", titulo: "Boletim montado sozinho", descricao: "As notas do aluno vêm das atividades lançadas pelo professor; ninguém precisa digitar de novo.", url: "" },
-  { categoria: "automatico", tipo: "automatico", titulo: "Senha nova encerra sessões antigas", descricao: "Ao trocar a senha de alguém, quem estava logado com a antiga é desconectado em até 1 hora.", url: "" },
-  { categoria: "automatico", tipo: "automatico", titulo: "Nome e disciplinas sempre iguais", descricao: "Ao editar um professor, o app atualiza o cadastro, a lista da Gestão e o vínculo com cada unidade de uma vez.", url: "" },
-  { categoria: "automatico", tipo: "automatico", titulo: "Saudação e status do dia", descricao: "Bom dia/tarde/noite e o selo \"Em andamento\" ou \"Agenda do dia\" no painel do aluno e da família, conforme o horário.", url: "" },
+  { categoria: "automatico", tipo: "automatico", titulo: "IDALUNO sequencial", descricao: "Cada novo aluno recebe o próximo número (0001, 0002…) sozinho, para todas as unidades — e o botão Gerar IDALUNO numera os alunos antigos.", url: "manuais/automatico.html#idaluno" },
+  { professor: true, categoria: "automatico", tipo: "automatico", titulo: "Fotos padrão por perfil", descricao: "Menino/menina, professor/professora e a foto da secretaria de cada unidade; quando aparecem as iniciais no lugar.", url: "manuais/automatico.html#fotos" },
+  { categoria: "automatico", tipo: "automatico", titulo: "Situação financeira calculada", descricao: "Em dia, atrasada há X dias e próxima cobrança são calculadas sozinhas a partir das mensalidades lançadas — nunca digitadas.", url: "manuais/automatico.html#situacao-financeira" },
+  { professor: true, categoria: "automatico", tipo: "automatico", titulo: "Cores e alertas da presença", descricao: "Verde, amarelo e vermelho no calendário, a regra do \"pior status do dia\" e o alerta de observação do professor.", url: "manuais/automatico.html#cores" },
+  { professor: true, categoria: "automatico", tipo: "automatico", titulo: "Boletim montado sozinho", descricao: "As notas do aluno vêm das atividades lançadas pelo professor; ninguém precisa digitar de novo.", url: "manuais/automatico.html#boletim-auto" },
+  { categoria: "automatico", tipo: "automatico", titulo: "Senha nova encerra sessões antigas", descricao: "Ao trocar a senha de alguém, quem estava logado com a antiga é desconectado em até 1 hora.", url: "manuais/automatico.html#senha-sessoes" },
+  { categoria: "automatico", tipo: "automatico", titulo: "Nome e disciplinas sempre iguais", descricao: "Ao editar um professor, o app atualiza o cadastro, a lista da Gestão e o vínculo com cada unidade de uma vez.", url: "manuais/automatico.html#nome-disciplinas" },
+  { professor: true, categoria: "automatico", tipo: "automatico", titulo: "Saudação e status do dia", descricao: "Bom dia/tarde/noite e o selo \"Em andamento\" (aluno), \"Presente agora\" (família) ou \"Agenda do dia\", conforme o horário do relógio.", url: "manuais/automatico.html#saudacao" },
 
   // ---- Quando algo dá errado
-  { categoria: "ajuda", tipo: "referencia", titulo: "A pessoa não consegue entrar", descricao: "Checklist: tem login? o e-mail está certo? a senha foi trocada? o cadastro foi excluído? Quando criar um novo acesso.", url: "" },
-  { categoria: "ajuda", tipo: "referencia", titulo: "\"Não foi possível salvar\" (permission-denied)", descricao: "O que essa mensagem significa, o que conferir (unidade, tipo de acesso) e quando acionar o suporte.", url: "" },
-  { categoria: "ajuda", tipo: "referencia", titulo: "O PDF não foi lido", descricao: "Por que PDFs escaneados (imagem) não funcionam, como exportar de novo com texto selecionável e como preencher à mão.", url: "" },
-  { categoria: "ajuda", tipo: "referencia", titulo: "A foto não aparece", descricao: "Sexo não informado no cadastro, arquivo de imagem faltando ou com nome diferente, e como corrigir.", url: "" },
-  { categoria: "ajuda", tipo: "referencia", titulo: "Como falar com o suporte", descricao: "Quando chamar, o que enviar junto (print, nome da pessoa, o que estava fazendo) e os canais de contato.", url: "" },
+  { categoria: "ajuda", tipo: "referencia", titulo: "A pessoa não consegue entrar", descricao: "Checklist: tem login? o e-mail está certo? a senha foi trocada? o cadastro foi excluído? Quando criar um novo acesso.", url: "manuais/ajuda.html#entrar" },
+  { professor: true, categoria: "ajuda", tipo: "referencia", titulo: "\"Não foi possível salvar\" (permission-denied)", descricao: "O que essa mensagem significa, o que conferir (unidade, tipo de acesso) e quando acionar o suporte.", url: "manuais/ajuda.html#permissao" },
+  { categoria: "ajuda", tipo: "referencia", titulo: "O PDF não foi lido", descricao: "Por que PDFs escaneados (imagem) não funcionam, como exportar de novo com texto selecionável e como preencher à mão.", url: "manuais/ajuda.html#pdf" },
+  { categoria: "ajuda", tipo: "referencia", titulo: "A foto não aparece", descricao: "Sexo não informado no cadastro, arquivo de imagem faltando ou com nome diferente, e como corrigir.", url: "manuais/ajuda.html#foto" },
+  { professor: true, categoria: "ajuda", tipo: "referencia", titulo: "Como falar com o suporte", descricao: "Quando chamar, o que enviar junto (print, nome da pessoa, o que estava fazendo) e os canais de contato.", url: "manuais/ajuda.html#suporte" },
 ];
 
 /* Cursos oferecidos por unidade. Usado no cadastro de aluno (escolhe o
@@ -1145,7 +1145,7 @@ const state = {
     professorNome: "",
     professorDisciplinas: [],  // pode dar mais de uma disciplina
     professorTurmas: [],       // [{ id, nome, horario, sala, escola, disciplina, alunos:[nomes] }]
-    escolas: {},                // { [escolaId]: { nome, uf, data, turmas, faltantes, alunos } } — financeiro é calculado à parte, ver calcularFinanceiroDaUnidade
+    escolas: {},                // { [escolaId]: { nome, uf, data, turmas, faltantes, alunos } }
   },
 
   alunoTab: "calendario",
@@ -1157,7 +1157,7 @@ const state = {
   escolaSelecionadaId: null,
   instTab: "turmas",
   gestaoSubTab: "cadastro",   // cadastro | acessos — sub-abas dentro de "Gestão"
-  finSubTab: "visao",         // visao | lancar — sub-abas dentro de "Financeiro"
+  finSubTab: "consultar",     // consultar | lancar — sub-abas dentro de "Financeiro"
   alunosBusca: "",
   professorTab: "calendario",
   professorTurmaId: null,
@@ -1197,7 +1197,6 @@ const state = {
   professorNotasErro: "",
   mobileMenuOpen: false,
   secretariaModalOpen: false,
-  suporte: suporteNovoEstado(),   // caixinha "Suporte & feedback" (aluno / responsável / professor) — ver seção Suporte
   instituicaoMensagem: "",
   instituicaoErro: "",
   novoUsuarioRole: "aluno",       // aluno | responsavel | professor | instituicao
@@ -1279,10 +1278,14 @@ const state = {
   // aniversário, alergias…). Vale pra professor e pra equipe.
   // Fica em usuarios/{uid}.ficha. fichaForm é o rascunho do formulário.
   perfilSubTab: "dados",     // dados | senha | ficha | manuais — sub-abas de "Meu perfil"
+  manuaisAbertos: {},       // grupos de manuais expandidos em "Meu perfil" (chave = categoria)
   fichaForm: null,
   fichaSalvando: false,
   fichaErro: "",
   fichaMensagem: "",
+  // Ficha do ALUNO (alunos/{id}.ficha) — preenchida pelo próprio aluno (login),
+  // pelo responsável, ou só pelo responsável na Recreação. Rascunho por aluno.
+  alunoFicha: { alunoId: null, form: null, salvando: false, erro: "", mensagem: "" },
 
   // Professor > aba "Turmas": turma com a lista de alunos aberta
   professorTurmaDetalheId: null,
@@ -1364,14 +1367,22 @@ const state = {
   alunoFinSalvando: false,
   alunoFinErro: "",
   alunoFinMensagem: "",
-  alunoFinPagamentoAbertoId: null,   // id da mensalidade com o miniformulário "marcar como pago" aberto
-  alunoFinPagamentoForma: "dinheiro",
-  alunoFinPagamentoData: "",
 
   // Aba "Financeiro" (visão geral da escola) > lançar cobrança direto
   // por ali, sem precisar abrir a ficha do aluno primeiro.
   finCobrancaAberto: false,
   finCobrancaAlunoId: "",
+  estPeriodo: "mes",            // mes | 30 | 90 | ano — período das Estatísticas
+  alunoSitSituacao: "ativo",    // ficha do aluno > "Situação na escola"
+  alunoSitMatricula: "",
+  alunoSitData: "",
+  alunoSitMotivo: "",
+  alunoSitSalvando: false,
+  alunoSitErro: "",
+  alunoSitMensagem: "",
+  finStatusSalvandoId: "",      // id da cobrança que está sendo alternada pendente/pago (Financeiro > Consultar boletos)
+  finStatusErro: "",
+  finCobrancaBusca: "",         // texto digitado na busca de aluno (Financeiro > Lançar cobrança)
   finCobrancaCompetencia: "",
   finCobrancaValor: "",
   finCobrancaVencimento: "",
@@ -1386,15 +1397,6 @@ const state = {
   finCobrancaSalvando: false,
   finCobrancaErro: "",
   finCobrancaMensagem: "",
-
-  // Aba "Financeiro" > "Cobranças dos últimos 30 dias" > dar baixa
-  // (marcar como pago) direto na lista, sem abrir a ficha do aluno.
-  finPagamentoAlunoId: null,
-  finPagamentoMensId: null,
-  finPagamentoForma: "dinheiro",
-  finPagamentoData: "",
-  finPagamentoSalvando: false,
-  finPagamentoErro: "",
 
   // responsáveis vinculados ao aluno aberto na ficha + form de novo responsável
   alunoRespVinculados: null,
@@ -1587,6 +1589,10 @@ function normalizeAluno(id, dados){
     escolaId: dados.escolaId || "",
     idAluno: dados.idAluno || "",   // código sequencial (ver proximoIdAluno) — pode não existir em cadastros antigos ainda não migrados
     sexo: dados.sexo || "",         // "masculino" | "feminino" | "" — define qual foto padrão aparece
+    situacao: ["ativo", "inativo", "cancelado"].includes(dados.situacao) ? dados.situacao : "ativo",
+    situacaoEm: dados.situacaoEm || "",        // "AAAA-MM-DD" em que virou inativo/cancelado
+    motivoSaida: dados.motivoSaida || "",
+    matriculadoEm: dados.matriculadoEm || "",  // "AAAA-MM-DD" da matrícula (vazio em cadastros antigos)
     contratoStatus: dados.contratoStatus || "",          // "assinado" | "pendente" | "" (sem contrato registrado)
     contratoEnviadoEm: dados.contratoEnviadoEm || "",    // "AAAA-MM-DD" do último envio pra assinatura
     foto: dados.foto || (dados.nome || "?").split(" ").map(p=>p[0]).slice(0,2).join("").toUpperCase(),
@@ -1602,6 +1608,7 @@ function normalizeAluno(id, dados){
         : [],
     },
     comunicados: Array.isArray(dados.comunicados) ? dados.comunicados : [],
+    ficha: dados.ficha && typeof dados.ficha === "object" ? dados.ficha : null,   // ficha de saúde/emergência (ver alunoFichaInfo)
   };
 }
 
@@ -1834,8 +1841,8 @@ onAuthStateChanged(auth, async (user) => {
   if(!user){
     state.authUser = null;
     state.perfil = null;
-    state.suporte = suporteNovoEstado();
     state.fichaForm = null;
+    state.alunoFicha = { alunoId: null, form: null, salvando: false, erro: "", mensagem: "" };
     state.cal = calNovoEstado();
     state.aval = avalNovoEstado();
     state.screen = "login";
@@ -1855,6 +1862,7 @@ onAuthStateChanged(auth, async (user) => {
     }
     state.perfil = perfilSnap.data();
     state.fichaForm = null;
+    state.alunoFicha = { alunoId: null, form: null, salvando: false, erro: "", mensagem: "" };
     await carregarDadosDoPerfil();
     state.loginErro = "";
   } catch(err){
@@ -1900,241 +1908,6 @@ function mensagemErroFirebase(code){
     "auth/missing-password": "Informe uma senha provisória.",
   };
   return mapa[code] || "Não foi possível concluir. Tente novamente.";
-}
-
-/* ================================================================== */
-/* Suporte & feedback (aluno, responsável e professor)                  */
-/* ------------------------------------------------------------------
-   Um botão só no menu ("Suporte & feedback") abre uma caixinha que pede
-   nome, a situação e a mensagem. Pra onde a mensagem vai depende da
-   situação escolhida:
-
-     Suporte                        -> secretaria da unidade (abre o
-                                       WhatsApp dela com o texto pronto)
-     Melhoria / Manutenção /
-     Feedback                       -> desenvolvedor (grava na coleção
-                                       "suporteMensagens" do Firestore)
-
-   Toda mensagem — inclusive as de suporte — também é registrada em
-   "suporteMensagens" (destino: "secretaria" | "dev"), com o perfil,
-   a tela e o navegador de quem enviou, pra ajudar a achar o problema.
-   Pra isso funcionar, a regra de segurança do Firestore precisa deixar
-   qualquer usuário logado CRIAR documentos nessa coleção (ver o bloco
-   de regras no fim da explicação que acompanha este arquivo).
-   ------------------------------------------------------------------ */
-const SUPORTE_COLECAO = "suporteMensagens";
-const SUPORTE_MENSAGEM_MAX = 2000;
-const SUPORTE_TIPOS = [
-  { id: "suporte",    rotulo: "Suporte",    desc: "Dúvida ou problema com acesso, notas, dados…", destino: "secretaria" },
-  { id: "melhoria",   rotulo: "Melhoria",   desc: "Uma ideia pra o app ficar melhor",             destino: "dev" },
-  { id: "manutencao", rotulo: "Manutenção", desc: "Algo quebrado ou dando erro no app",           destino: "dev" },
-  { id: "feedback",   rotulo: "Feedback",   desc: "Elogio, crítica ou opinião",                   destino: "dev" },
-];
-const SUPORTE_ROTULO_PERFIL = { aluno: "Aluno(a)", responsavel: "Responsável", professor: "Professor(a)" };
-
-function suporteNovoEstado(){
-  return { aberto: false, nome: "", tipo: "", unidade: "", mensagem: "", enviando: false, erro: "", enviado: null };
-}
-
-/* Alunos/responsáveis: escola do(s) aluno(s). Professor: escolasIds do perfil. */
-function suporteEscolaIds(){
-  const p = state.perfil || {};
-  if(p.role === "aluno") return [state.data.aluno?.escolaId].filter(Boolean);
-  if(p.role === "responsavel"){
-    const alunos = state.data.familiaAlunos || [];
-    const s = alunos.find(a => a.id === state.familiaStudentId) || alunos[0];
-    return [s?.escolaId].filter(Boolean);
-  }
-  return Array.isArray(p.escolasIds) && p.escolasIds.length ? p.escolasIds : (p.escolaId ? [p.escolaId] : []);
-}
-
-/* Tenta adivinhar a secretaria pelo id da escola (ex.: contém "salto" ou
-   "prata"). Se o id for um código sem esse texto, volta "" e a pessoa
-   escolhe a unidade na própria caixinha. */
-function suporteSecretariaSugerida(){
-  const ids = suporteEscolaIds().map(id => String(id).toLowerCase());
-  const achada = SECRETARIA_WHATSAPP.find(sec => ids.some(id => id.includes(sec.id)));
-  return achada ? achada.id : "";
-}
-
-function suporteContexto(){
-  const p = state.perfil || {};
-  const ctx = {
-    role: p.role || "",
-    uid: state.authUser?.uid || "",
-    email: state.authUser?.email || "",
-    escolasIds: suporteEscolaIds(),
-    tela: state.screen === "aluno" ? state.alunoTab : state.screen === "familia" ? state.familiaTab : state.professorTab,
-    navegador: (typeof navigator !== "undefined" ? navigator.userAgent : "") || "",
-  };
-  if(p.role === "aluno" && state.data.aluno){
-    ctx.alunoNome = state.data.aluno.nome || "";
-    ctx.turma = state.data.aluno.turma || "";
-  } else if(p.role === "responsavel"){
-    const alunos = state.data.familiaAlunos || [];
-    const s = alunos.find(a => a.id === state.familiaStudentId) || alunos[0];
-    ctx.alunoNome = s?.nome || "";
-    ctx.turma = s?.turma || "";
-  } else if(p.role === "professor"){
-    ctx.disciplinas = state.data.professorDisciplinas || [];
-  }
-  return ctx;
-}
-
-function suporteAbrir(){
-  const p = state.perfil || {};
-  return {
-    ...suporteNovoEstado(),
-    aberto: true,
-    nome: p.nome || state.data.aluno?.nome || "",
-    unidade: suporteSecretariaSugerida(),
-  };
-}
-
-function suporteTextoWhatsApp(nome, ctx, mensagem){
-  const perfil = SUPORTE_ROTULO_PERFIL[ctx.role] || "Usuário";
-  const linhas = [
-    "*Suporte — Educa+*",
-    `Nome: ${nome}`,
-    `Perfil: ${perfil}${ctx.alunoNome && ctx.role !== "aluno" ? ` (aluno: ${ctx.alunoNome})` : ""}${ctx.turma ? ` · ${ctx.turma}` : ""}`,
-    "",
-    mensagem,
-  ];
-  return linhas.join("\n");
-}
-
-async function suporteEnviar(){
-  const s = state.suporte;
-  if(s.enviando) return;
-  const nome = s.nome.trim();
-  const mensagem = s.mensagem.trim();
-  const tipo = SUPORTE_TIPOS.find(t => t.id === s.tipo);
-  const secretaria = SECRETARIA_WHATSAPP.find(e => e.id === s.unidade);
-
-  s.erro = "";
-  if(!nome) s.erro = "Informe seu nome.";
-  else if(!tipo) s.erro = "Escolha a situação que você quer informar.";
-  else if(tipo.destino === "secretaria" && !secretaria) s.erro = "Escolha a unidade da secretaria.";
-  else if(mensagem.length < 5) s.erro = "Escreva a sua mensagem.";
-  if(s.erro){ render(); return; }
-
-  const ctx = suporteContexto();
-  const registro = {
-    destino: tipo.destino,
-    tipo: tipo.id,
-    nome,
-    mensagem,
-    unidade: tipo.destino === "secretaria" ? secretaria.id : "",
-    status: "novo",
-    criadoEm: new Date().toISOString(),
-    ...ctx,
-  };
-
-  if(tipo.destino === "secretaria"){
-    // O WhatsApp abre AQUI, direto no clique (antes de qualquer await) —
-    // depois de um await o navegador trata como pop-up e bloqueia.
-    window.open(whatsappLinkComTexto(secretaria.numero, suporteTextoWhatsApp(nome, ctx, mensagem)), "_blank", "noopener");
-    s.enviando = true;
-    render();
-    try {
-      await setDoc(doc(collection(db, SUPORTE_COLECAO)), registro);
-    } catch(err){
-      // O registro é só histórico: se falhar, a mensagem já foi pro WhatsApp.
-      console.warn("Não foi possível registrar o pedido de suporte:", err);
-    }
-    s.enviando = false;
-    s.enviado = { destino: "secretaria" };
-    render();
-    return;
-  }
-
-  s.enviando = true;
-  render();
-  try {
-    await setDoc(doc(collection(db, SUPORTE_COLECAO)), registro);
-    s.enviado = { destino: "dev" };
-  } catch(err){
-    console.error(err);
-    s.erro = err?.code === "permission-denied"
-      ? "O servidor não aceitou o envio. Avise a secretaria."
-      : "Não foi possível enviar agora. Verifique sua internet e tente de novo.";
-  }
-  s.enviando = false;
-  render();
-}
-
-function suporteModal(){
-  const s = state.suporte;
-  if(!s || !s.aberto) return "";
-
-  if(s.enviado){
-    const paraSecretaria = s.enviado.destino === "secretaria";
-    return `
-    <div class="aluno-modal-backdrop" data-action="fechar-suporte">
-      <div class="aluno-modal suporte-modal" role="dialog" aria-modal="true" aria-label="Suporte e feedback" data-action="noop">
-        <div class="suporte-ok">
-          <div class="suporte-ok-icone">${ICONS.check}</div>
-          <h2>${paraSecretaria ? "Quase lá!" : "Mensagem enviada!"}</h2>
-          <p>${paraSecretaria
-            ? "Abrimos o WhatsApp da secretaria com a sua mensagem pronta. É só tocar em enviar por lá."
-            : "Sua mensagem chegou para a equipe de desenvolvimento. Obrigado por ajudar o Educa+ a melhorar!"}</p>
-          <button type="button" class="teacher-primary-btn" data-action="fechar-suporte">Fechar</button>
-        </div>
-      </div>
-    </div>`;
-  }
-
-  const tipo = SUPORTE_TIPOS.find(t => t.id === s.tipo);
-  const off = s.enviando ? "disabled" : "";
-
-  const tiposHtml = SUPORTE_TIPOS.map(t => `
-    <button type="button" class="suporte-tipo ${t.id === s.tipo ? "ativo" : ""}" data-action="suporte-tipo" data-tipo="${t.id}" ${off}>
-      <strong>${t.rotulo}</strong>
-      <span>${t.desc}</span>
-    </button>`).join("");
-
-  const destinoHtml = tipo ? `
-    <p class="suporte-destino">${tipo.destino === "secretaria"
-      ? "Esta mensagem vai para a <strong>secretaria</strong>, pelo WhatsApp."
-      : "Esta mensagem vai para a <strong>equipe de desenvolvimento</strong> do app."}</p>` : "";
-
-  const unidadeHtml = tipo && tipo.destino === "secretaria" ? `
-    <label class="teacher-label">Qual unidade?</label>
-    <div class="suporte-unidades">
-      ${SECRETARIA_WHATSAPP.map(sec => `
-        <button type="button" class="suporte-unidade ${sec.id === s.unidade ? "ativo" : ""}" data-action="suporte-unidade" data-unidade="${sec.id}" ${off}>${escapeHtml(sec.nome)}</button>`).join("")}
-    </div>` : "";
-
-  return `
-  <div class="aluno-modal-backdrop" data-action="fechar-suporte">
-    <div class="aluno-modal suporte-modal" role="dialog" aria-modal="true" aria-label="Suporte e feedback" data-action="noop">
-      <div class="aluno-modal-head">
-        <div>
-          <h2>Suporte &amp; feedback</h2>
-          <p class="section-eyebrow" style="margin:4px 0 0;">Conte pra gente o que aconteceu.</p>
-        </div>
-        <button type="button" class="attendance-btn" data-action="fechar-suporte" aria-label="Fechar" ${off}>${ICONS.close}</button>
-      </div>
-
-      <label class="teacher-label" for="suporte-nome">Seu nome</label>
-      <input id="suporte-nome" class="teacher-text-input" data-suporte-campo="nome" value="${escapeHtml(s.nome)}" placeholder="Nome completo" maxlength="120" autocomplete="name" ${off} />
-
-      <label class="teacher-label">Qual situação você quer informar?</label>
-      <div class="suporte-tipos">${tiposHtml}</div>
-      ${destinoHtml}
-      ${unidadeHtml}
-
-      <label class="teacher-label" for="suporte-mensagem">Mensagem</label>
-      <textarea id="suporte-mensagem" class="teacher-text-input suporte-textarea" data-suporte-campo="mensagem" rows="5" maxlength="${SUPORTE_MENSAGEM_MAX}" placeholder="Descreva com o máximo de detalhes que puder…" ${off}>${escapeHtml(s.mensagem)}</textarea>
-
-      ${s.erro ? `<p class="suporte-erro" role="alert">${escapeHtml(s.erro)}</p>` : ""}
-
-      <div class="suporte-acoes">
-        <button type="button" class="attendance-btn" data-action="fechar-suporte" ${off}>Cancelar</button>
-        <button type="button" class="teacher-primary-btn" style="margin-top:0;" data-action="enviar-suporte" ${off}>${s.enviando ? "Enviando…" : (tipo && tipo.destino === "secretaria" ? "Enviar pelo WhatsApp" : "Enviar")}</button>
-      </div>
-    </div>
-  </div>`;
 }
 
 /* ================================================================== */
@@ -2283,7 +2056,7 @@ function renderEscolaPicker(){
 }
 
 /* ---------------- SHELL (sidebar + main) ---------------- */
-function shell({ navItems, active, headerSub, headerTitle, headerFoto, bodyHtml, navAction, schoolBadge, schoolBadgeClickable, suporte }){
+function shell({ navItems, active, headerSub, headerTitle, headerFoto, bodyHtml, navAction, schoolBadge, schoolBadgeClickable }){
   const navBtns = navItems.map(item => `
     <button class="nav-btn ${active===item.key?'active':''}" data-action="${navAction}" data-key="${item.key}">
       ${ICONS[item.icon]} ${item.label}
@@ -2306,7 +2079,6 @@ function shell({ navItems, active, headerSub, headerTitle, headerFoto, bodyHtml,
           : `<div class="sidebar-school">${schoolBadge}</div>`
       ) : ""}
       <nav class="sidebar-nav">${navBtns}</nav>
-      ${suporte ? `<button class="logout-btn suporte-btn" data-action="abrir-suporte">${ICONS.support} Suporte &amp; feedback</button>` : ""}
       <button class="logout-btn" data-action="logout">${ICONS.logout} Sair</button>
     </aside>
     <main class="main">
@@ -2325,8 +2097,7 @@ function shell({ navItems, active, headerSub, headerTitle, headerFoto, bodyHtml,
     <div class="mobile-menu-backdrop ${state.mobileMenuOpen ? "open" : ""}" data-action="close-mobile-menu"></div>
     <nav class="mobile-drawer ${state.mobileMenuOpen ? "open" : ""}" aria-label="Menu principal">
       <div class="mobile-drawer-head"><strong>Menu</strong><button data-action="close-mobile-menu" aria-label="Fechar menu">${ICONS.close}</button></div>
-      <div class="mobile-drawer-nav">${mobileDrawerBtns}${suporte ? `
-        <button class="mobile-drawer-btn mobile-drawer-suporte" data-action="abrir-suporte">${ICONS.support} <span>Suporte &amp; feedback</span></button>` : ""}</div>
+      <div class="mobile-drawer-nav">${mobileDrawerBtns}</div>
       <button class="mobile-drawer-logout" data-action="logout">${ICONS.logout} Sair da conta</button>
     </nav>
   </div>`;
@@ -2342,6 +2113,7 @@ function renderAluno(){
     { key:"presenca", label:"Presença", icon:"clipboard" },
     ...(ehTurmaDeRecreacao(student.turma) ? [] : [{ key:"certificados", label:"Certificados", icon:"award" }]),
     { key:"comunicados", label:"Comunicados", icon:"megaphone" },
+    ...(ehTurmaDeRecreacao(student.turma) ? [] : [{ key:"ficha", label:"Minha ficha", icon:"shield" }]),
   ];
 
   let body = "";
@@ -2351,6 +2123,7 @@ function renderAluno(){
   else if(state.alunoTab === "presenca") body = presencaView(student);
   else if(state.alunoTab === "certificados") body = certificadosView(student, false);
   else if(state.alunoTab === "comunicados") body = comunicadosView(student);
+  else if(state.alunoTab === "ficha") body = alunoFichaView(student, "aluno");
 
   return shell({
     navItems, active: state.alunoTab,
@@ -2358,8 +2131,7 @@ function renderAluno(){
     headerFoto: headerFotoHtml(fotoDoAluno(student), student.nome),
     bodyHtml: classStatusCard(student) + body,
     navAction: "set-aluno-tab",
-    suporte: true,
-  }) + suporteModal();
+  });
 }
 
 /* ---------------- FAMÍLIA (RESPONSÁVEL) DASHBOARD ---------------- */
@@ -2377,6 +2149,7 @@ function renderFamilia(){
     ...(algumFilhoTemCertificado ? [{ key:"certificados", label:"Certificados", icon:"award" }] : []),
     { key:"financeiro", label:"Financeiro", icon:"wallet" },
     { key:"comunicados", label:"Comunicados", icon:"megaphone" },
+    { key:"ficha", label:"Ficha", icon:"shield" },
   ];
 
   let switcher = "";
@@ -2397,6 +2170,7 @@ function renderFamilia(){
   else if(state.familiaTab === "certificados") body = certificadosView(student, true);
   else if(state.familiaTab === "financeiro") body = financeiroFamiliaView(student);
   else if(state.familiaTab === "comunicados") body = comunicadosView(student);
+  else if(state.familiaTab === "ficha") body = alunoFichaView(student, "responsavel");
 
   return shell({
     navItems, active: state.familiaTab,
@@ -2404,8 +2178,7 @@ function renderFamilia(){
     headerFoto: headerFotoHtml(FOTO_PADRAO.responsavel, state.perfil?.nome || "Responsável"),
     bodyHtml: switcher + classStatusCard(student, true) + body,
     navAction: "set-familia-tab",
-    suporte: true,
-  }) + suporteModal();
+  });
 }
 
 function notasView(student){
@@ -2568,28 +2341,9 @@ function financeiroFamiliaView(student){
       ${anexosMensalidadeHtml(m)}
     </div>`;
   }).join("") || `<div style="padding:20px;font-size:14px;color:var(--slate);">Nenhum histórico disponível.</div>`;
-  const pillSituacao = resumo.atrasada ? "pill-red" : "pill-green";
-  const iconeSituacao = resumo.atrasada ? ICONS.clock : ICONS.check;
   return `
     <h2 class="section-title">Financeiro</h2>
-    <p class="section-eyebrow">Mensalidades da matrícula</p>
-    <div class="card" style="margin-bottom:18px;">
-      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:16px;">
-        <div>
-          <div style="font-size:13px;color:var(--slate);">Situação atual</div>
-          <div style="margin-top:4px;"><span class="pill ${pillSituacao}">${iconeSituacao} ${escapeHtml(resumo.status)}</span></div>
-        </div>
-        <div>
-          <div style="font-size:13px;color:var(--slate);">Próxima cobrança</div>
-          <div style="font-size:15px;font-weight:600;color:var(--ink);margin-top:4px;">${escapeHtml(resumo.proxima)}</div>
-        </div>
-        <div>
-          <div style="font-size:13px;color:var(--slate);">Valor</div>
-          <div style="font-size:15px;font-weight:600;color:var(--ink);margin-top:4px;">${escapeHtml(resumo.valor)}</div>
-        </div>
-      </div>
-    </div>
-    <h3 style="font-family:var(--font-display);font-size:17px;color:var(--ink);font-weight:500;">Histórico</h3>
+    <p class="section-eyebrow">Boletos e mensalidades da matrícula</p>
     <div class="card flush">${hist}</div>`;
 }
 
@@ -3054,8 +2808,7 @@ function renderProfessor(){
     headerFoto: headerFotoHtml(fotoDoProfessor({ sexo: state.perfil?.sexo }), state.data.professorNome),
     bodyHtml: body,
     navAction: "set-professor-tab",
-    suporte: true,
-  }) + horarios.modais() + suporteModal();
+  }) + horarios.modais();
 }
 
 
@@ -3255,7 +3008,8 @@ async function abrirFichaUsuario(uid, nome){
   }
 }
 
-function fichaModoLeituraHtml(f){
+function fichaModoLeituraHtml(f, op){
+  op = op || {};
   const vazio = `<span style="color:var(--slate);font-weight:400;">não informado</span>`;
   const tel = (n) => n ? `<a href="tel:${encodeURIComponent(n)}" style="color:var(--ink);">${escapeHtml(n)}</a>` : vazio;
   const txt = (v) => v ? escapeHtml(v) : vazio;
@@ -3267,14 +3021,14 @@ function fichaModoLeituraHtml(f){
     ? ` <a class="aniversario-btn" style="margin-left:6px;" href="${whatsappLink(telefoneValido(f.emergenciaTelefone))}" target="_blank" rel="noopener">WhatsApp</a>` : "";
   return `
     <dl class="perfil-dados ficha-leitura">
-      <div><dt>Telefone</dt><dd>${tel(f.telefone)}</dd></div>
+      ${op.recreacao ? "" : `<div><dt>Telefone</dt><dd>${tel(f.telefone)}</dd></div>`}
       <div><dt>Aniversário</dt><dd>${f.nascimento ? formatarDataBr(f.nascimento) : vazio}</dd></div>
       <div><dt>Localização</dt><dd>${txt(local)}</dd></div>
       <div><dt>Contato de emergência</dt><dd>${emergencia ? emergencia : vazio}</dd></div>
       <div><dt>Telefone de emergência</dt><dd>${tel(f.emergenciaTelefone)}${whats}</dd></div>
-      <div><dt>Tipo sanguíneo</dt><dd>${txt(f.tipoSanguineo)}</dd></div>
+      ${op.recreacao ? "" : `<div><dt>Tipo sanguíneo</dt><dd>${txt(f.tipoSanguineo)}</dd></div>`}
       <div><dt>Alergias</dt><dd>${txt(f.alergias)}</dd></div>
-      <div><dt>Condições / medicamentos</dt><dd>${txt(f.condicoes)}</dd></div>
+      <div><dt>${op.recreacao ? "Medicações" : "Condições / medicamentos"}</dt><dd>${txt(f.condicoes)}</dd></div>
       <div><dt>Observações</dt><dd>${txt(f.observacoes)}</dd></div>
     </dl>`;
 }
@@ -3306,6 +3060,256 @@ function fichaUsuarioModal(){
   </div>`;
 }
 
+/* ---------------- FICHA DO ALUNO ----------------
+   Guardada em alunos/{id}.ficha (mesmos campos da ficha de professor/equipe,
+   mais preenchidaPor e ciencia). Fica no documento do aluno — e não em
+   usuarios/ — porque o aluno da Recreação não tem login.
+
+   Quem preenche:
+     · Recreação ............ só o responsável (sem tipo sanguíneo; só alergias e medicações)
+     · 18 anos ou mais ...... o próprio aluno (o responsável só enxerga)
+     · menor de 18 .......... o aluno pode preencher e o responsável também; quando o
+                              aluno salva, fica "aguardando ciência" até o responsável
+                              revisar e confirmar. Sem data de nascimento = tratado como menor.
+   A idade vem do cadastro (aluno.nascimento); se a secretaria ainda não
+   preencheu, usa a data que a pessoa informou na própria ficha. */
+function idadeEmAnos(iso){
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(iso || "")) return null;
+  const [a, m, d] = iso.split("-").map(Number);
+  const h = new Date(dataDeHojeISO() + "T00:00:00");
+  let idade = h.getFullYear() - a;
+  if(h.getMonth() + 1 < m || (h.getMonth() + 1 === m && h.getDate() < d)) idade--;
+  return idade;
+}
+
+function alunoFichaInfo(aluno){
+  const recreacao = ehTurmaDeRecreacao(aluno.turma);
+  const nascimento = aluno.nascimento || (aluno.ficha && aluno.ficha.nascimento) || "";
+  const idade = idadeEmAnos(nascimento);
+  const maior = !recreacao && idade !== null && idade >= 18;
+  return { recreacao, idade, maior, nascimentoNoCadastro: !!aluno.nascimento };
+}
+
+function alunoFichaPreenchida(aluno){
+  const f = aluno.ficha;
+  return !!f && FICHA_CAMPOS.some(k => typeof f[k] === "string" && f[k].trim());
+}
+
+/* Situação da ficha, pra mostrar na família, no aluno e na secretaria. */
+function alunoFichaStatus(aluno){
+  const info = alunoFichaInfo(aluno);
+  const f = aluno.ficha;
+  if(!alunoFichaPreenchida(aluno)){
+    return { tom: "pendente", texto: info.recreacao ? "Aguardando o responsável preencher"
+      : info.maior ? "Aguardando o aluno preencher" : "Ainda não preenchida" };
+  }
+  if(!info.recreacao && !info.maior && !(f.ciencia && f.ciencia.em)){
+    return { tom: "pendente", texto: "Preenchida pelo aluno — aguardando a ciência do responsável" };
+  }
+  const por = f.preenchidaPor === "responsavel" ? "pelo responsável" : "pelo aluno";
+  const quando = f.atualizadaEm ? ` em ${formatarDataBr(f.atualizadaEm.slice(0, 10))}` : "";
+  const ciente = (!info.recreacao && !info.maior && f.ciencia && f.ciencia.nome) ? ` · responsável ciente: ${f.ciencia.nome}` : "";
+  return { tom: "ok", texto: `Preenchida ${por}${quando}${ciente}` };
+}
+
+function alunoFichaEstado(aluno){
+  const est = state.alunoFicha;
+  if(est.alunoId !== aluno.id){
+    est.alunoId = aluno.id;
+    est.form = null; est.salvando = false; est.erro = ""; est.mensagem = "";
+  }
+  if(!est.form){
+    est.form = {};
+    const f = aluno.ficha || {};
+    FICHA_CAMPOS.forEach(k => { est.form[k] = typeof f[k] === "string" ? f[k] : ""; });
+    if(!est.form.nascimento) est.form.nascimento = aluno.nascimento || "";
+  }
+  return est;
+}
+
+function alunoFichaView(aluno, quem){
+  const info = alunoFichaInfo(aluno);
+  const est = alunoFichaEstado(aluno);
+  const f = est.form;
+  const status = alunoFichaStatus(aluno);
+  const primeiro = (aluno.nome || "").split(" ")[0] || "o aluno";
+  const podeEditar = quem === "responsavel" ? (info.recreacao || !info.maior) : !info.recreacao;
+  const bloqueado = est.salvando ? "disabled" : "";
+
+  const titulo = quem === "aluno" ? "Minha ficha" : `Ficha de ${escapeHtml(primeiro)}`;
+  let intro;
+  if(quem === "responsavel" && info.recreacao){
+    intro = `${escapeHtml(primeiro)} não tem login próprio na Recreação, então quem preenche é você. Só pedimos o essencial para cuidar bem dele(a): contato de emergência, alergias e medicações.`;
+  } else if(quem === "responsavel" && info.maior){
+    intro = `${escapeHtml(primeiro)} é maior de idade e preenche a própria ficha. Você pode apenas consultar.`;
+  } else if(quem === "responsavel"){
+    intro = `${escapeHtml(primeiro)} pode preencher a ficha, mas você precisa acompanhar: revise os dados e confirme em “Li e estou ciente”. Você também pode corrigir qualquer campo.`;
+  } else if(info.maior){
+    intro = "Informações para a escola te ajudar numa emergência e cuidar de você. A secretaria consegue ver estes dados.";
+  } else {
+    intro = "Você pode preencher a sua ficha, mas seu responsável precisa acompanhar e confirmar. Depois de salvar, avise ele(a) para olhar a aba de ficha.";
+  }
+
+  const cabecalho = `
+    <h3>${ICONS.shield} ${titulo}</h3>
+    <p>${intro}</p>
+    <p class="section-eyebrow" style="margin:0 0 4px;"><strong style="color:${status.tom === "ok" ? "var(--green,#2E7D5B)" : "var(--gold,#B7791F)"};">${escapeHtml(status.texto)}</strong></p>`;
+
+  // Somente leitura (responsável de aluno maior de idade)
+  if(!podeEditar){
+    return `
+      <div class="management-card management-card-wide">
+        ${cabecalho}
+        ${alunoFichaPreenchida(aluno) ? fichaModoLeituraHtml(aluno.ficha, { recreacao: info.recreacao }) : ""}
+      </div>`;
+  }
+
+  const input = (k, label, placeholder, tipo) => `
+    <div class="ficha-campo">
+      <label class="teacher-label" for="ficha-aluno-${k}">${label}</label>
+      <input id="ficha-aluno-${k}" type="${tipo || "text"}" class="teacher-text-input" data-ficha-aluno="${k}" maxlength="120" placeholder="${escapeHtml(placeholder || "")}" value="${escapeHtml(f[k] || "")}" ${bloqueado} />
+    </div>`;
+  const area = (k, label, placeholder) => `
+    <div class="ficha-campo ficha-campo-cheio">
+      <label class="teacher-label" for="ficha-aluno-${k}">${label}</label>
+      <textarea id="ficha-aluno-${k}" class="teacher-text-input ficha-textarea" data-ficha-aluno="${k}" maxlength="500" rows="2" placeholder="${escapeHtml(placeholder || "")}" ${bloqueado}>${escapeHtml(f[k] || "")}</textarea>
+    </div>`;
+
+  const dadosPessoais = [
+    info.recreacao ? "" : input("telefone", quem === "aluno" ? "Meu telefone / WhatsApp" : "Telefone / WhatsApp do aluno", "(46) 99999-9999", "tel"),
+    info.nascimentoNoCadastro ? "" : input("nascimento", "Data de nascimento", "", "date"),
+  ].filter(Boolean).join("");
+
+  const saude = info.recreacao
+    ? `${area("alergias", "Alergias", "Alimentos, remédios, picadas… ou escreva “nenhuma”")}
+       ${area("condicoes", "Medicações", "Remédios de uso contínuo ou que precisem ser dados na escola — ou escreva “nenhuma”")}
+       ${area("observacoes", "Outras observações", "Algo mais que a escola deva saber")}`
+    : `<div class="ficha-campo">
+         <label class="teacher-label" for="ficha-aluno-tipoSanguineo">Tipo sanguíneo</label>
+         <select id="ficha-aluno-tipoSanguineo" class="teacher-text-input" data-ficha-aluno="tipoSanguineo" ${bloqueado}>
+           <option value="" ${!f.tipoSanguineo ? "selected" : ""}>Não informar</option>
+           ${TIPOS_SANGUINEOS.map(t => `<option value="${t}" ${f.tipoSanguineo === t ? "selected" : ""}>${t}</option>`).join("")}
+         </select>
+       </div>
+       ${area("alergias", "Alergias", "Medicamentos, alimentos, picadas… ou escreva “nenhuma”")}
+       ${area("condicoes", "Condições de saúde e medicamentos de uso contínuo", "Ex.: asma, diabetes")}
+       ${area("observacoes", "Outras observações", "Algo mais que a escola deva saber")}`;
+
+  const precisaCiencia = quem === "responsavel" && !info.recreacao && !info.maior
+    && alunoFichaPreenchida(aluno) && !(aluno.ficha.ciencia && aluno.ficha.ciencia.em);
+
+  return `
+    <div class="management-card management-card-wide">
+      ${cabecalho}
+      ${dadosPessoais ? `<h4 class="ficha-secao">Dados pessoais</h4><div class="ficha-grid">${dadosPessoais}</div>` : ""}
+
+      <h4 class="ficha-secao">Localização</h4>
+      <div class="ficha-grid">
+        <div class="ficha-campo-cheio">${input("endereco", "Endereço (rua e número)", "Rua das Flores, 123")}</div>
+        ${input("bairro", "Bairro", "")}
+        ${input("cidade", "Cidade", "Salto do Lontra")}
+      </div>
+
+      <h4 class="ficha-secao">Contato de emergência</h4>
+      <div class="ficha-grid">
+        ${input("emergenciaNome", "Nome", "Quem devemos chamar")}
+        ${input("emergenciaParentesco", "Parentesco", "Ex.: mãe, pai, avó")}
+        ${input("emergenciaTelefone", "Telefone", "(46) 99999-9999", "tel")}
+      </div>
+
+      <h4 class="ficha-secao">Saúde</h4>
+      <div class="ficha-grid">${saude}</div>
+
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:6px;">
+        <button class="teacher-primary-btn" data-action="salvar-ficha-aluno" data-quem="${quem}" ${bloqueado}>${est.salvando ? "Salvando…" : (quem === "aluno" ? "Salvar minha ficha" : "Salvar ficha")}</button>
+        ${precisaCiencia ? `<button class="btn-secondary" data-action="ciente-ficha-aluno" ${bloqueado}>${ICONS.shield} Li e estou ciente</button>` : ""}
+      </div>
+      ${est.erro ? `<p class="teacher-error" style="color:var(--red,#C4544A);font-size:12.5px;margin-top:8px;">${escapeHtml(est.erro)}</p>` : ""}
+      ${est.mensagem ? `<p class="teacher-success" style="margin-top:8px;">${escapeHtml(est.mensagem)}</p>` : ""}
+    </div>`;
+}
+
+function mensagemErroFichaAluno(err){
+  return err?.code === "permission-denied"
+    ? "Sem permissão para salvar a ficha. Avise a secretaria (as regras do Firestore precisam liberar o campo “ficha” do aluno)."
+    : "Não foi possível salvar agora. Tente de novo.";
+}
+
+async function salvarFichaDoAluno(aluno, quem){
+  const est = alunoFichaEstado(aluno);
+  const info = alunoFichaInfo(aluno);
+  const limpa = {};
+  FICHA_CAMPOS.forEach(k => { limpa[k] = String(est.form[k] || "").trim().slice(0, 500); });
+  if(info.recreacao){ limpa.tipoSanguineo = ""; limpa.telefone = ""; }
+  est.erro = ""; est.mensagem = "";
+  if(limpa.nascimento && !/^\d{4}-\d{2}-\d{2}$/.test(limpa.nascimento)){
+    est.erro = "Confira a data de nascimento.";
+    render(); return;
+  }
+  if((limpa.emergenciaNome || limpa.emergenciaParentesco) && !limpa.emergenciaTelefone){
+    est.erro = "Informe também o telefone do contato de emergência.";
+    render(); return;
+  }
+  est.salvando = true;
+  render();
+  try {
+    const agora = new Date().toISOString();
+    const ficha = {
+      ...limpa,
+      preenchidaPor: quem === "responsavel" ? "responsavel" : "aluno",
+      atualizadaEm: agora,
+      // responsável salvando já conta como ciente; se foi o aluno menor, volta a aguardar
+      ciencia: quem === "responsavel" ? { nome: state.perfil?.nome || "Responsável", em: agora } : null,
+    };
+    await updateDoc(doc(db, "alunos", aluno.id), { ficha });
+    aluno.ficha = ficha;
+    est.form = null;
+    est.mensagem = quem === "aluno" && !info.maior
+      ? "Ficha salva. Agora peça para o seu responsável olhar e confirmar."
+      : "Ficha salva. A secretaria já consegue ver.";
+  } catch(err){
+    console.error("Erro ao salvar ficha do aluno:", err?.code, err);
+    est.erro = mensagemErroFichaAluno(err);
+  } finally {
+    est.salvando = false;
+    render();
+  }
+}
+
+/* Responsável confirma que acompanhou a ficha que o aluno menor preencheu. */
+async function darCienciaFichaDoAluno(aluno){
+  const est = alunoFichaEstado(aluno);
+  est.erro = ""; est.mensagem = "";
+  est.salvando = true;
+  render();
+  try {
+    const ciencia = { nome: state.perfil?.nome || "Responsável", em: new Date().toISOString() };
+    await updateDoc(doc(db, "alunos", aluno.id), { "ficha.ciencia": ciencia });
+    aluno.ficha = { ...(aluno.ficha || {}), ciencia };
+    est.mensagem = "Obrigado! Ciência registrada.";
+  } catch(err){
+    console.error("Erro ao registrar ciência da ficha:", err?.code, err);
+    est.erro = mensagemErroFichaAluno(err);
+  } finally {
+    est.salvando = false;
+    render();
+  }
+}
+
+/* Secretaria: bloco só de leitura dentro do modal do aluno. */
+function alunoFichaSecretariaHtml(aluno){
+  const info = alunoFichaInfo(aluno);
+  const status = alunoFichaStatus(aluno);
+  return `
+      <div class="aluno-modal-section">
+        <h3 class="teacher-label">Ficha de saúde e emergência</h3>
+        <p class="section-eyebrow" style="margin:0 0 8px;"><strong style="color:${status.tom === "ok" ? "var(--green,#2E7D5B)" : "var(--gold,#B7791F)"};">${escapeHtml(status.texto)}</strong></p>
+        ${alunoFichaPreenchida(aluno)
+          ? fichaModoLeituraHtml(aluno.ficha, { recreacao: info.recreacao })
+          : `<p class="section-eyebrow" style="margin:6px 0;">${info.recreacao ? "O responsável preenche em “Ficha”, no acesso dele." : info.maior ? "O aluno preenche em “Minha ficha”." : "O aluno ou o responsável preenche no acesso da família."}</p>`}
+      </div>`;
+}
+
 /* ---------------- PROFESSOR > MEU PERFIL ---------------- */
 function professorPerfilView(){
   const nome = (state.data.professorNome || state.perfil?.nome || "").trim();
@@ -3316,14 +3320,17 @@ function professorPerfilView(){
     { key: "dados", label: "Meus dados", icon: ICONS.user },
     { key: "senha", label: "Trocar minha senha", icon: ICONS.key },
     { key: "ficha", label: "Minha ficha", icon: ICONS.shield },
+    { key: "manuais", label: "Manuais e materiais", icon: ICONS.book },
   ];
   const ativaProf = perfilSubTabAtiva(abasProf);
+  const manuaisProf = MANUAIS_INSTITUICAO.filter(m => m.professor);
+  const manuaisProfProntos = manuaisProf.filter(m => m.url && m.url !== "#").length;
   const chips = [...disciplinas.map(d => `<span class="perfil-chip">${ICONS.book} ${escapeHtml(d)}</span>`),
                  ...unidades.map(u => `<span class="perfil-chip">${ICONS.pinSmall} ${escapeHtml(u)}</span>`)].join("");
 
   return `
     <h2 class="section-title">Meu perfil</h2>
-    <p class="section-eyebrow">Seus dados de acesso e a ficha que a secretaria usa em caso de emergência.</p>
+    <p class="section-eyebrow">Seus dados de acesso, a ficha que a secretaria usa em caso de emergência e os manuais de apoio.</p>
 
     <section class="perfil-hero">
       <div class="perfil-hero-foto">${avatarHtml(fotoDoProfessor({ sexo: state.perfil?.sexo }), iniciaisDoNome(nome || "Professor"), "avatar-foto-perfil")}</div>
@@ -3347,6 +3354,13 @@ function professorPerfilView(){
         </dl>
       </div>`
     : ativaProf === "senha" ? perfilSenhaCardHtml("Esqueceu a senha atual? Peça para a secretaria definir uma nova.")
+    : ativaProf === "manuais" ? `
+      <div class="manuais-cabecalho">
+        <h2 class="section-title">Manuais e materiais de apoio</h2>
+        <span class="manuais-progresso">${manuaisProfProntos} de ${manuaisProf.length} prontos</span>
+      </div>
+      <p class="section-eyebrow">Toque em um assunto para ver os guias. Os marcados como "Em breve" ainda serão produzidos.</p>
+      ${manuaisAgrupadosHtml("professor")}`
     : fichaFormCardHtml()}`;
 }
 
@@ -4478,10 +4492,14 @@ function responsavelVinculoModal(){
 /* Aba "Meu perfil" da equipe administrativa: cartão de identificação
    (foto, nome, e-mail, unidades), dados e senha, atalhos (Senhas & acessos,
    suporte) e o catálogo de manuais agrupado por assunto. */
-function manuaisAgrupadosHtml(){
+function manuaisAgrupadosHtml(publico = "instituicao"){
+  const ehProf = publico === "professor";
+  const catalogo = ehProf ? MANUAIS_INSTITUICAO.filter(m => m.professor) : MANUAIS_INSTITUICAO;
   return MANUAIS_CATEGORIAS.map(cat => {
-    const itens = MANUAIS_INSTITUICAO.filter(m => m.categoria === cat.key);
+    const itens = catalogo.filter(m => m.categoria === cat.key);
     if(!itens.length) return "";
+    const aberto = !!state.manuaisAbertos[cat.key];
+    const descCat = (ehProf && cat.descricaoProfessor) || cat.descricao;
     const cards = itens.map(m => {
       const pronto = !!(m.url && m.url !== "#");
       const tag = `<span class="manual-tag manual-tag-${escapeHtml(m.tipo)}">${escapeHtml(MANUAIS_TIPOS[m.tipo] || "Guia")}</span>`;
@@ -4497,15 +4515,16 @@ function manuaisAgrupadosHtml(){
         : `<div class="manual-item manual-item-breve">${miolo}</div>`;
     }).join("");
     return `
-      <section class="manual-grupo">
-        <div class="manual-grupo-head">
+      <section class="manual-grupo ${aberto ? "aberto" : ""}">
+        <button type="button" class="manual-grupo-head manual-grupo-toggle" data-action="toggle-manual-grupo" data-key="${escapeHtml(cat.key)}" aria-expanded="${aberto}">
           <span class="manual-grupo-icon">${ICONS[cat.icon] || ICONS.clipboard}</span>
           <div>
             <h3>${escapeHtml(cat.titulo)} <span class="manual-grupo-count">${itens.length}</span></h3>
-            <p>${escapeHtml(cat.descricao)}</p>
+            <p>${escapeHtml(descCat)}</p>
           </div>
-        </div>
-        <div class="card flush manual-list">${cards}</div>
+          <span class="manual-grupo-chevron">${ICONS.chevronRight}</span>
+        </button>
+        ${aberto ? `<div class="card flush manual-list">${cards}</div>` : ""}
       </section>`;
   }).join("");
 }
@@ -4605,7 +4624,7 @@ function perfilInstituicaoView(school){
         <h2 class="section-title">Manuais e materiais de apoio</h2>
         <span class="manuais-progresso">${prontos} de ${totalManuais} prontos</span>
       </div>
-      <p class="section-eyebrow">Guias para o dia a dia da equipe. Os marcados como "Em breve" ainda serão produzidos.</p>
+      <p class="section-eyebrow">Guias para o dia a dia da equipe. Toque em um assunto para ver os guias. Os marcados como "Em breve" ainda serão produzidos.</p>
       ${manuaisAgrupadosHtml()}`;
   }
 
@@ -5448,6 +5467,7 @@ async function criarUsuarioNaInstituicao({ role, nome, email, senha, escolaId, e
     await setDoc(novoAlunoRef, {
       nome, turma: turma || "", escolaId, contato: contato || "",
       idAluno, sexo: sexo || "",
+      situacao: "ativo", matriculadoEm: dataDeHojeISO(),   // alimenta as Estatísticas
       nascimento: nascimento || "",   // usado pela aba "Aniversários"
       email: email || "",   // e-mail de acesso, pra Gestão poder redefinir a senha depois
       foto: "",
@@ -5869,6 +5889,250 @@ function turmaDetalheModal(){
 /* Sub-aba "Estatísticas": indicadores de frequência da unidade — antes
    vivia junto com a lista de turmas, agora fica separada pra não misturar
    "cadastro/gestão de turmas" com "acompanhamento de faltas". */
+/* Soma, na hora, as mensalidades de todos os alunos da unidade (nenhum
+   número fica pronto/guardado — sempre calculado em cima de instAlunos). */
+function calcularFinanceiroDaUnidade(alunos){
+  const competencia = competenciaAtual();
+  let previsto = 0, recebido = 0, inadimplenciaValor = 0;
+  const inadimplentesPorAluno = new Map();
+
+  alunos.forEach(aluno => {
+    (aluno.financeiro?.mensalidades || []).forEach(m => {
+      if(m.competencia === competencia){
+        previsto += m.valor;
+        if(m.status === "pago") recebido += m.valor;
+      }
+      if(mensalidadeEstaAtrasada(m)){
+        inadimplenciaValor += m.valor;
+        const atual = inadimplentesPorAluno.get(aluno.id) || { nome: aluno.nome, valor: 0, atraso: 0 };
+        atual.valor += m.valor;
+        atual.atraso = Math.max(atual.atraso, diasAtraso(m.vencimento));
+        inadimplentesPorAluno.set(aluno.id, atual);
+      }
+    });
+  });
+
+  const inadimplentes = Array.from(inadimplentesPorAluno.values()).sort((a, b) => b.atraso - a.atraso);
+  return {
+    previsto, recebido, inadimplenciaValor,
+    recebidoPct: previsto > 0 ? Math.round((recebido / previsto) * 100) : null,
+    inadimplenciaPct: previsto > 0 ? Math.round((inadimplenciaValor / previsto) * 100) : null,
+    inadimplentes,
+  };
+}
+
+/* Gráfico simples (SVG, sem biblioteca externa) comparando previsto x
+   recebido nos últimos 6 meses, pra dar uma visão rápida da evolução —
+   calculado na hora em cima das mensalidades de todos os alunos. */
+function graficoReceitaSvg(alunos){
+  const hoje = new Date();
+  const meses = [];
+  for(let i = 5; i >= 0; i--){
+    const d = new Date(hoje.getFullYear(), hoje.getMonth() - i, 1);
+    meses.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+  }
+  const porMes = new Map(meses.map(c => [c, { previsto: 0, recebido: 0 }]));
+  alunos.forEach(aluno => {
+    (aluno.financeiro?.mensalidades || []).forEach(m => {
+      const bucket = porMes.get(m.competencia);
+      if(!bucket) return;
+      bucket.previsto += m.valor;
+      if(m.status === "pago") bucket.recebido += m.valor;
+    });
+  });
+
+  const valores = meses.map(c => porMes.get(c));
+  const maiorValor = Math.max(1, ...valores.map(v => v.previsto));
+  const largura = 560, altura = 190, margemBaixo = 26, margemTopo = 10;
+  const alturaUtil = altura - margemBaixo - margemTopo;
+  const larguraGrupo = largura / meses.length;
+  const larguraBarra = Math.min(26, larguraGrupo / 4);
+
+  const barras = meses.map((c, i) => {
+    const v = valores[i];
+    const centroX = larguraGrupo * i + larguraGrupo / 2;
+    const hPrevisto = (v.previsto / maiorValor) * alturaUtil;
+    const hRecebido = (v.recebido / maiorValor) * alturaUtil;
+    const yBase = altura - margemBaixo;
+    return `
+      <rect x="${(centroX - larguraBarra - 2).toFixed(1)}" y="${(yBase - hPrevisto).toFixed(1)}" width="${larguraBarra}" height="${hPrevisto.toFixed(1)}" fill="#d8c9a3" rx="2"></rect>
+      <rect x="${(centroX + 2).toFixed(1)}" y="${(yBase - hRecebido).toFixed(1)}" width="${larguraBarra}" height="${hRecebido.toFixed(1)}" fill="#2f6b4f" rx="2"></rect>
+      <text x="${centroX.toFixed(1)}" y="${altura - 8}" text-anchor="middle" font-size="10.5" fill="#6b7280" font-family="Arial, sans-serif">${escapeHtml(competenciaLabel(c).split("/")[0].slice(0, 3))}</text>`;
+  }).join("");
+
+  return `
+    <div class="card" style="overflow-x:auto;">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:6px;">
+        <span style="font-size:13px;color:var(--slate);">Previsto x recebido · últimos 6 meses</span>
+        <div style="display:flex;gap:14px;font-size:12px;color:var(--slate);">
+          <span><span style="display:inline-block;width:10px;height:10px;background:#d8c9a3;border-radius:2px;margin-right:5px;"></span>Previsto</span>
+          <span><span style="display:inline-block;width:10px;height:10px;background:#2f6b4f;border-radius:2px;margin-right:5px;"></span>Recebido</span>
+        </div>
+      </div>
+      <svg viewBox="0 0 ${largura} ${altura}" style="width:100%;height:auto;min-width:420px;" role="img" aria-label="Gráfico de receita prevista e recebida dos últimos 6 meses">
+        <line x1="0" y1="${altura - margemBaixo}" x2="${largura}" y2="${altura - margemBaixo}" stroke="#e5e0d3" stroke-width="1"></line>
+        ${barras}
+      </svg>
+    </div>`;
+}
+
+/* ------------------------------------------------------------------
+   Estatísticas — visão geral da escola (alunos, contratos, financeiro).
+   Tudo é calculado na hora em cima de state.instAlunos.
+   ------------------------------------------------------------------ */
+const EST_PERIODOS = [
+  { key: "mes", label: "Este mês" },
+  { key: "30", label: "30 dias" },
+  { key: "90", label: "90 dias" },
+  { key: "ano", label: "Este ano" },
+];
+
+function estInicioDoPeriodo(p){
+  const hoje = new Date();
+  const fmt = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  if(p === "30" || p === "90") return fmt(new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate() - Number(p)));
+  if(p === "ano") return `${hoje.getFullYear()}-01-01`;
+  return `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, "0")}-01`;
+}
+
+function estCard(rotulo, valor, sub, cor){
+  return `
+    <div class="card">
+      <div style="font-size:13px;color:var(--slate);margin-bottom:6px;">${escapeHtml(rotulo)}</div>
+      <div style="font-family:var(--font-display);font-size:28px;color:${cor || "var(--ink)"};">${escapeHtml(String(valor))}</div>
+      ${sub ? `<div style="font-size:12.5px;color:var(--slate);margin-top:6px;">${escapeHtml(sub)}</div>` : ""}
+    </div>`;
+}
+
+function estatisticasVisaoGeralHtml(school){
+  if(state.instAlunosCarregando && state.instAlunos === null){
+    return `<h2 class="section-title">Visão geral</h2><div style="padding:20px;font-size:14px;color:var(--slate);">Carregando dados dos alunos…</div>`;
+  }
+  if(state.instAlunosErro){
+    return `<h2 class="section-title">Visão geral</h2><div style="padding:20px;font-size:14px;color:var(--red);">${escapeHtml(state.instAlunosErro)}</div>`;
+  }
+
+  const alunos = state.instAlunos || [];
+  const inicio = estInicioDoPeriodo(state.estPeriodo);
+  const periodoLabel = (EST_PERIODOS.find(p => p.key === state.estPeriodo) || EST_PERIODOS[0]).label.toLowerCase();
+
+  const ativos = alunos.filter(a => a.situacao === "ativo");
+  const inativos = alunos.filter(a => a.situacao === "inativo");
+  const cancelados = alunos.filter(a => a.situacao === "cancelado");
+  const novos = alunos.filter(a => a.matriculadoEm && a.matriculadoEm >= inicio);
+  const cancelamentos = cancelados.filter(a => a.situacaoEm && a.situacaoEm >= inicio);
+  const inativados = inativos.filter(a => a.situacaoEm && a.situacaoEm >= inicio);
+  const semMatricula = alunos.filter(a => !a.matriculadoEm).length;
+  const saldo = novos.length - cancelamentos.length;
+
+  // contratos: considera todo mundo que não cancelou
+  const comContrato = alunos.filter(a => a.situacao !== "cancelado");
+  const assinados = comContrato.filter(a => a.contratoStatus === "assinado");
+  const pendentes = comContrato.filter(a => a.contratoStatus === "pendente");
+  const semContrato = comContrato.filter(a => !a.contratoStatus);
+  const pctAssinado = comContrato.length ? Math.round((assinados.length / comContrato.length) * 100) : null;
+  const pendentesOrdenados = pendentes.slice().sort((a, b) => diasDesde(b.contratoEnviadoEm) - diasDesde(a.contratoEnviadoEm));
+  const pendentes7 = pendentes.filter(a => a.contratoEnviadoEm && diasDesde(a.contratoEnviadoEm) > 7).length;
+
+  const pendentesHtml = pendentesOrdenados.slice(0, 10).map(a => {
+    const d = diasDesde(a.contratoEnviadoEm);
+    const txt = d === Infinity ? "ainda não enviado" : (d === 0 ? "enviado hoje" : `enviado há ${d} dia(s)`);
+    return `
+    <div class="row">
+      <div>
+        <div style="font-size:14.5px;font-weight:600;color:var(--ink);">${escapeHtml(a.nome)}</div>
+        <div style="font-size:12.5px;color:var(--slate);">${escapeHtml(a.turma || "Sem turma")}</div>
+      </div>
+      <span class="pill ${d !== Infinity && d > 7 ? "pill-red" : "pill-gold"}">${ICONS.clock} ${escapeHtml(txt)}</span>
+    </div>`;
+  }).join("") + (pendentesOrdenados.length > 10
+    ? `<div style="padding:10px 14px;font-size:12.5px;color:var(--slate);">+ ${pendentesOrdenados.length - 10} outros na aba Contratos.</div>` : "")
+    || `<div style="padding:20px;font-size:14px;color:var(--slate);">Nenhum contrato aguardando assinatura.</div>`;
+
+  const saidas = [...cancelamentos, ...inativados].sort((a, b) => (b.situacaoEm || "").localeCompare(a.situacaoEm || ""));
+  const saidasHtml = saidas.map(a => `
+    <div class="row">
+      <div>
+        <div style="font-size:14.5px;font-weight:600;color:var(--ink);">${escapeHtml(a.nome)}</div>
+        <div style="font-size:12.5px;color:var(--slate);">${escapeHtml(a.turma || "Sem turma")} · ${escapeHtml(formatarDataBr(a.situacaoEm))}${a.motivoSaida ? ` · ${escapeHtml(a.motivoSaida)}` : ""}</div>
+      </div>
+      <span class="pill ${a.situacao === "cancelado" ? "pill-red" : "pill-gold"}">${a.situacao === "cancelado" ? "Cancelado" : "Inativo"}</span>
+    </div>`).join("") || `<div style="padding:20px;font-size:14px;color:var(--slate);">Nenhuma saída registrada neste período.</div>`;
+
+  // alunos ativos por turma/curso
+  const porTurma = new Map();
+  ativos.forEach(a => { const k = a.turma || "Sem turma"; porTurma.set(k, (porTurma.get(k) || 0) + 1); });
+  const turmasOrd = Array.from(porTurma.entries()).sort((a, b) => b[1] - a[1]);
+  const maxTurma = Math.max(1, ...turmasOrd.map(t => t[1]));
+  const turmasHtml = turmasOrd.map(([nome, qtd]) => `
+    <div class="row" style="flex-direction:column;align-items:stretch;gap:6px;">
+      <div style="display:flex;justify-content:space-between;font-size:14px;color:var(--ink);"><span>${escapeHtml(nome)}</span><span style="font-weight:600;">${qtd}</span></div>
+      <div class="progress-track"><div class="progress-fill" style="width:${Math.round((qtd / maxTurma) * 100)}%;background:linear-gradient(90deg, var(--gold), var(--gold-light));"></div></div>
+    </div>`).join("") || `<div style="padding:20px;font-size:14px;color:var(--slate);">Nenhum aluno ativo ainda.</div>`;
+
+  const mesAtual = String(new Date().getMonth() + 1).padStart(2, "0");
+  const aniversariantes = ativos.filter(a => /^\d{4}-\d{2}-\d{2}$/.test(a.nascimento || "") && a.nascimento.slice(5, 7) === mesAtual).length;
+
+  // financeiro do mês
+  const f = calcularFinanceiroDaUnidade(alunos);
+  const inadHtml = f.inadimplentes.map(x => `
+    <div class="row">
+      <div>
+        <div style="font-size:14.5px;font-weight:600;color:var(--ink);">${escapeHtml(x.nome)}</div>
+        <div style="font-size:12.5px;color:var(--slate);">${escapeHtml(formatarMoeda(x.valor))} em aberto</div>
+      </div>
+      <span class="pill pill-red">${ICONS.clock} ${x.atraso}d de atraso</span>
+    </div>`).join("") || `<div style="padding:20px;font-size:14px;color:var(--slate);">Nenhuma família em atraso.</div>`;
+
+  const periodoBar = `<div class="subtab-bar">${EST_PERIODOS.map(p => `
+    <button type="button" class="subtab-btn ${state.estPeriodo === p.key ? "active" : ""}" data-action="set-est-periodo" data-key="${p.key}"><span>${p.label}</span></button>`).join("")}</div>`;
+
+  return `
+    <h2 class="section-title">Visão geral</h2>
+    <p class="section-eyebrow">${escapeHtml(school.nome)} · período: ${escapeHtml(periodoLabel)} (a partir de ${escapeHtml(formatarDataBr(inicio))})</p>
+    ${periodoBar}
+
+    <h2 class="section-title" style="margin-top:18px;">Alunos</h2>
+    <div class="grid-cards">
+      ${estCard("Alunos ativos", ativos.length, `${alunos.length} cadastrados no total`)}
+      ${estCard("Alunos inativos", inativos.length, inativados.length ? `${inativados.length} ficaram inativos no período` : "Pausaram ou trancaram")}
+      ${estCard("Alunos novos", novos.length, `Matriculados no período`, "var(--green, #2f6b4f)")}
+      ${estCard("Cancelamentos", cancelamentos.length, `${cancelados.length} cancelados no total`, cancelamentos.length ? "var(--red)" : "")}
+      ${estCard("Saldo do período", (saldo > 0 ? "+" : "") + saldo, "Novos menos cancelamentos", saldo < 0 ? "var(--red)" : "")}
+      ${estCard("Aniversariantes do mês", aniversariantes, "Entre os alunos ativos")}
+    </div>
+    ${semMatricula ? `<p class="section-eyebrow" style="margin-top:10px;">${semMatricula} aluno(s) sem data de matrícula não entram em "alunos novos". Preencha em Alunos → ficha → Situação na escola.</p>` : ""}
+
+    <h2 class="section-title" style="margin-top:22px;">Contratos</h2>
+    <div class="grid-cards">
+      ${estCard("Assinados", assinados.length, pctAssinado === null ? "" : `${pctAssinado}% dos alunos (sem contar cancelados)`, "var(--green, #2f6b4f)")}
+      ${estCard("Pendentes de assinatura", pendentes.length, pendentes7 ? `${pendentes7} há mais de 7 dias` : "Nenhum atrasado", pendentes7 ? "var(--red)" : "")}
+      ${estCard("Sem contrato registrado", semContrato.length, "Alunos sem status de contrato")}
+    </div>
+    <h3 style="font-family:var(--font-display);font-size:17px;color:var(--ink);font-weight:500;margin-top:16px;">Aguardando assinatura</h3>
+    <div class="card flush">${pendentesHtml}</div>
+
+    <h2 class="section-title" style="margin-top:22px;">Entradas e saídas</h2>
+    <p class="section-eyebrow">Cancelamentos e alunos que ficaram inativos no período.</p>
+    <div class="card flush">${saidasHtml}</div>
+
+    <h2 class="section-title" style="margin-top:22px;">Alunos ativos por turma</h2>
+    <div class="card flush">${turmasHtml}</div>
+
+    <h2 class="section-title" style="margin-top:22px;">Financeiro do mês</h2>
+    <p class="section-eyebrow">Competência de ${escapeHtml(competenciaLabel(competenciaAtual()))}, somando as cobranças lançadas.</p>
+    <div class="grid-cards">
+      ${estCard("Receita prevista", formatarMoeda(f.previsto))}
+      ${estCard("Recebido", formatarMoeda(f.recebido), f.recebidoPct === null ? "Sem cobranças lançadas ainda" : `${f.recebidoPct}% do previsto`)}
+      ${estCard("Inadimplência (em aberto)", formatarMoeda(f.inadimplenciaValor), `${f.inadimplentes.length} família(s) em atraso`, f.inadimplenciaValor ? "var(--red)" : "")}
+    </div>
+    <div style="margin-top:14px;">${graficoReceitaSvg(alunos)}</div>
+    <h3 style="font-family:var(--font-display);font-size:17px;color:var(--ink);font-weight:500;margin-top:16px;">Famílias em atraso</h3>
+    <div class="card flush">${inadHtml}</div>
+
+  `;
+}
+
 function estatisticasView(school){
   const faltantes = school.faltantes.map(a => `
     <div class="row">
@@ -5929,7 +6193,8 @@ function estatisticasView(school){
   }
 
   return `
-    <h2 class="section-title">Frequência de hoje</h2>
+    ${estatisticasVisaoGeralHtml(school)}
+    <h2 class="section-title" style="margin-top:28px;">Frequência de hoje</h2>
     <p class="section-eyebrow">${escapeHtml(dataDeHojeExtenso())}</p>
     <div class="grid-cards turma-cards-grid">${turmasHtml}</div>
     <h2 class="section-title" style="margin-top:22px;">Alunos com mais faltas</h2>
@@ -5937,108 +6202,15 @@ function estatisticasView(school){
     <div class="card flush">${faltantes}</div>`;
 }
 
-/* Soma, na hora, as mensalidades de todos os alunos da unidade (nenhum
-   número fica pronto/guardado — sempre calculado em cima de instAlunos). */
-function calcularFinanceiroDaUnidade(alunos){
-  const competencia = competenciaAtual();
-  let previsto = 0, recebido = 0, inadimplenciaValor = 0;
-  const inadimplentesPorAluno = new Map();
-
-  alunos.forEach(aluno => {
-    (aluno.financeiro?.mensalidades || []).forEach(m => {
-      if(m.competencia === competencia){
-        previsto += m.valor;
-        if(m.status === "pago") recebido += m.valor;
-      }
-      if(mensalidadeEstaAtrasada(m)){
-        inadimplenciaValor += m.valor;
-        const atual = inadimplentesPorAluno.get(aluno.id) || { nome: aluno.nome, valor: 0, atraso: 0 };
-        atual.valor += m.valor;
-        atual.atraso = Math.max(atual.atraso, diasAtraso(m.vencimento));
-        inadimplentesPorAluno.set(aluno.id, atual);
-      }
-    });
-  });
-
-  const inadimplentes = Array.from(inadimplentesPorAluno.values()).sort((a, b) => b.atraso - a.atraso);
-  return {
-    previsto, recebido, inadimplenciaValor,
-    recebidoPct: previsto > 0 ? Math.round((recebido / previsto) * 100) : null,
-    inadimplenciaPct: previsto > 0 ? Math.round((inadimplenciaValor / previsto) * 100) : null,
-    inadimplentes,
-  };
-}
-
-/* Todas as mensalidades de todos os alunos da unidade lançadas (campo
-   criadoEm) nos últimos 30 dias, já com o aluno dono anexado — pra
-   listar e dar baixa direto na aba Financeiro, sem abrir a ficha.
-   Cobranças antigas, gravadas antes de existir o campo criadoEm, não
-   entram aqui (não tem como saber quando foram lançadas). */
-function cobrancasRecentes(alunos){
+/* Todas as cobranças de todos os alunos da unidade, já com o aluno dono
+   anexado — pra consultar boletos e dar baixa direto na aba Financeiro, sem
+   abrir a ficha. Ordenadas pelo vencimento, da mais recente pra mais antiga. */
+function todasCobrancas(alunos){
   const lista = [];
   alunos.forEach(aluno => {
-    (aluno.financeiro?.mensalidades || []).forEach(m => {
-      if(m.criadoEm && diasDesde(m.criadoEm) <= 30){
-        lista.push({ aluno, mensalidade: m });
-      }
-    });
+    (aluno.financeiro?.mensalidades || []).forEach(m => lista.push({ aluno, mensalidade: m }));
   });
-  return lista.sort((a, b) => (b.mensalidade.criadoEm || "").localeCompare(a.mensalidade.criadoEm || ""));
-}
-
-/* Gráfico simples (SVG, sem biblioteca externa) comparando previsto x
-   recebido nos últimos 6 meses, pra dar uma visão rápida da evolução —
-   calculado na hora em cima das mensalidades de todos os alunos. */
-function graficoReceitaSvg(alunos){
-  const hoje = new Date();
-  const meses = [];
-  for(let i = 5; i >= 0; i--){
-    const d = new Date(hoje.getFullYear(), hoje.getMonth() - i, 1);
-    meses.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
-  }
-  const porMes = new Map(meses.map(c => [c, { previsto: 0, recebido: 0 }]));
-  alunos.forEach(aluno => {
-    (aluno.financeiro?.mensalidades || []).forEach(m => {
-      const bucket = porMes.get(m.competencia);
-      if(!bucket) return;
-      bucket.previsto += m.valor;
-      if(m.status === "pago") bucket.recebido += m.valor;
-    });
-  });
-
-  const valores = meses.map(c => porMes.get(c));
-  const maiorValor = Math.max(1, ...valores.map(v => v.previsto));
-  const largura = 560, altura = 190, margemBaixo = 26, margemTopo = 10;
-  const alturaUtil = altura - margemBaixo - margemTopo;
-  const larguraGrupo = largura / meses.length;
-  const larguraBarra = Math.min(26, larguraGrupo / 4);
-
-  const barras = meses.map((c, i) => {
-    const v = valores[i];
-    const centroX = larguraGrupo * i + larguraGrupo / 2;
-    const hPrevisto = (v.previsto / maiorValor) * alturaUtil;
-    const hRecebido = (v.recebido / maiorValor) * alturaUtil;
-    const yBase = altura - margemBaixo;
-    return `
-      <rect x="${(centroX - larguraBarra - 2).toFixed(1)}" y="${(yBase - hPrevisto).toFixed(1)}" width="${larguraBarra}" height="${hPrevisto.toFixed(1)}" fill="#d8c9a3" rx="2"></rect>
-      <rect x="${(centroX + 2).toFixed(1)}" y="${(yBase - hRecebido).toFixed(1)}" width="${larguraBarra}" height="${hRecebido.toFixed(1)}" fill="#2f6b4f" rx="2"></rect>
-      <text x="${centroX.toFixed(1)}" y="${altura - 8}" text-anchor="middle" font-size="10.5" fill="#6b7280" font-family="Arial, sans-serif">${escapeHtml(competenciaLabel(c).split("/")[0].slice(0, 3))}</text>`;
-  }).join("");
-
-  return `
-    <div class="card" style="overflow-x:auto;">
-      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:6px;">
-        <span style="font-size:13px;color:var(--slate);">Previsto x recebido · últimos 6 meses</span>
-        <div style="display:flex;gap:14px;font-size:12px;color:var(--slate);">
-          <span><span style="display:inline-block;width:10px;height:10px;background:#d8c9a3;border-radius:2px;margin-right:5px;"></span>Previsto</span>
-          <span><span style="display:inline-block;width:10px;height:10px;background:#2f6b4f;border-radius:2px;margin-right:5px;"></span>Recebido</span>
-        </div>
-      </div>
-      <svg viewBox="0 0 ${largura} ${altura}" style="width:100%;height:auto;min-width:420px;" role="img" aria-label="Gráfico de receita prevista e recebida dos últimos 6 meses">
-        <line x1="0" y1="${altura - margemBaixo}" x2="${largura}" y2="${altura - margemBaixo}" stroke="#e5e0d3" stroke-width="1"></line>
-        ${barras}
-      </svg>
-    </div>`;
+  return lista.sort((a, b) => (b.mensalidade.vencimento || "").localeCompare(a.mensalidade.vencimento || ""));
 }
 
 function financeiroInstituicaoView(school){
@@ -6050,7 +6222,7 @@ function financeiroInstituicaoView(school){
   }
 
   const subTabs = [
-    { key: "visao", label: "Visão geral", icon: ICONS.wallet },
+    { key: "consultar", label: "Consultar boletos", icon: ICONS.wallet },
     { key: "lancar", label: "Lançar cobrança", icon: ICONS.fileText },
   ];
   const subNav = `<div class="subtab-bar">${subTabs.map(t => `
@@ -6060,13 +6232,65 @@ function financeiroInstituicaoView(school){
 
   const corpo = state.finSubTab === "lancar"
     ? financeiroLancarCobrancaView()
-    : financeiroVisaoGeralView();
+    : financeiroConsultarView();
 
   return `
     <h2 class="section-title">Financeiro</h2>
     ${subNav}
     ${corpo}
     ${state.instituicaoMensagem ? `<p class="teacher-success institution-success">${escapeHtml(state.instituicaoMensagem)}</p>` : ""}`;
+}
+
+/* Busca de aluno (Financeiro > Lançar cobrança). Sem escolha feita: campo de
+   busca + lista filtrada. Com aluno escolhido: mostra o nome e "Trocar". */
+function semAcento(t){
+  return String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+}
+
+function financeiroResultadosBuscaHtml(){
+  const termo = semAcento(state.finCobrancaBusca).trim();
+  if(!termo){
+    return `<div style="padding:12px;font-size:13px;color:var(--slate);">Digite o nome do aluno (ou da turma) para buscar.</div>`;
+  }
+  const achados = (state.instAlunos || [])
+    .filter(a => semAcento(a.nome).includes(termo) || semAcento(a.turma).includes(termo))
+    .sort((a, b) => a.nome.localeCompare(b.nome));
+  if(achados.length === 0){
+    return `<div style="padding:12px;font-size:13px;color:var(--slate);">Nenhum aluno encontrado.</div>`;
+  }
+  return achados.slice(0, 30).map(a => `
+    <button type="button" class="row aluno-row" data-action="escolher-fin-aluno" data-id="${escapeHtml(a.id)}">
+      <span class="linha-com-foto-info">
+        <span class="linha-nome">${escapeHtml(a.nome)}</span>
+        ${a.turma ? `<span class="linha-sub">${escapeHtml(a.turma)}</span>` : ""}
+      </span>
+    </button>`).join("") + (achados.length > 30
+      ? `<div style="padding:10px 12px;font-size:12.5px;color:var(--slate);">Mostrando 30 de ${achados.length}. Continue digitando para filtrar.</div>`
+      : "");
+}
+
+/* Atualiza só a lista de resultados, sem re-renderizar a tela (senão o
+   cursor sai do campo a cada letra digitada). */
+function atualizarResultadosBuscaFin(){
+  const el = document.getElementById("fin-cobranca-resultados");
+  if(el) el.innerHTML = financeiroResultadosBuscaHtml();
+}
+
+function financeiroEscolhaAlunoHtml(){
+  const escolhido = (state.instAlunos || []).find(a => a.id === state.finCobrancaAlunoId);
+  if(escolhido){
+    return `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:10px 12px;border:1px solid var(--line, #e5e0d3);border-radius:10px;margin-bottom:8px;">
+        <div>
+          <div style="font-size:14.5px;font-weight:600;color:var(--ink);">${escapeHtml(escolhido.nome)}</div>
+          ${escolhido.turma ? `<div style="font-size:12.5px;color:var(--slate);">${escapeHtml(escolhido.turma)}</div>` : ""}
+        </div>
+        <button type="button" class="btn-secondary" style="margin:0;" data-action="trocar-fin-aluno">Trocar aluno</button>
+      </div>`;
+  }
+  return `
+    <input id="fin-cobranca-busca" type="search" class="teacher-text-input" style="margin:0 0 6px;" placeholder="Buscar aluno pelo nome ou turma…" autocomplete="off" value="${escapeHtml(state.finCobrancaBusca)}" />
+    <div id="fin-cobranca-resultados" class="card flush" style="max-height:240px;overflow-y:auto;margin-bottom:8px;">${financeiroResultadosBuscaHtml()}</div>`;
 }
 
 /* Sub-aba "Lançar cobrança" dentro de Financeiro: mesmo lançamento da
@@ -6076,11 +6300,6 @@ function financeiroInstituicaoView(school){
    como a cobrança foi de fato paga continua sendo registrada só na
    hora de "dar baixa". */
 function financeiroLancarCobrancaView(){
-  const alunosOrdenados = (state.instAlunos || []).slice().sort((a, b) => a.nome.localeCompare(b.nome));
-  const opcoesAlunos = `<option value="">— escolha o aluno —</option>` + alunosOrdenados
-    .map(a => `<option value="${escapeHtml(a.id)}" ${state.finCobrancaAlunoId === a.id ? "selected" : ""}>${escapeHtml(a.nome)}${a.turma ? ` (${escapeHtml(a.turma)})` : ""}</option>`)
-    .join("");
-
   const forma = state.finCobrancaForma || "boleto";
   const camposForma = camposFormaPagamentoHtml("fin-cobranca", forma, {
     pix: state.finCobrancaPix,
@@ -6096,8 +6315,8 @@ function financeiroLancarCobrancaView(){
     <p class="section-eyebrow">Lance aqui mesmo, sem abrir a ficha do aluno — ou pela ficha (aba "Alunos" → toque no aluno → "Financeiro"), como já era.</p>
     <div class="card" style="margin-top:10px;">
       <p class="teacher-label" style="margin-bottom:6px;">Nova cobrança</p>
+      ${financeiroEscolhaAlunoHtml()}
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
-        <select id="fin-cobranca-aluno" class="teacher-text-input" style="flex:1 1 220px;margin:0;">${opcoesAlunos}</select>
         <input id="fin-cobranca-competencia" type="month" class="teacher-text-input" style="flex:1 1 140px;margin:0;" value="${escapeHtml(state.finCobrancaCompetencia)}" title="Mês de referência" />
         <input id="fin-cobranca-valor" type="number" min="0" step="0.01" class="teacher-text-input" style="flex:1 1 120px;margin:0;" placeholder="Valor (R$)" value="${escapeHtml(state.finCobrancaValor)}" />
         <input id="fin-cobranca-vencimento" type="date" class="teacher-text-input" style="flex:1 1 140px;margin:0;" value="${escapeHtml(state.finCobrancaVencimento)}" title="Vencimento" />
@@ -6115,21 +6334,8 @@ function financeiroLancarCobrancaView(){
     </div>`;
 }
 
-function financeiroVisaoGeralView(){
-  const f = calcularFinanceiroDaUnidade(state.instAlunos || []);
-
-  const inad = f.inadimplentes.map(x => `
-    <div class="row">
-      <div>
-        <div style="font-size:14.5px;font-weight:600;color:var(--ink);">${escapeHtml(x.nome)}</div>
-        <div style="font-size:12.5px;color:var(--slate);">${escapeHtml(formatarMoeda(x.valor))} em aberto</div>
-      </div>
-      <span class="pill pill-red">${ICONS.clock} ${x.atraso}d de atraso</span>
-    </div>`).join("") || `<div style="padding:20px;font-size:14px;color:var(--slate);">Nenhuma família em atraso.</div>`;
-
-  const grafico = graficoReceitaSvg(state.instAlunos || []);
-
-  const recentes = cobrancasRecentes(state.instAlunos || []);
+function financeiroConsultarView(){
+  const recentes = todasCobrancas(state.instAlunos || []);
   const recentesHtml = recentes.map(({ aluno, mensalidade: m }) => {
     const atrasada = mensalidadeEstaAtrasada(m);
     const pillClasse = m.status === "pago" ? "pill-green" : (atrasada ? "pill-red" : "pill-gold");
@@ -6139,65 +6345,27 @@ function financeiroVisaoGeralView(){
     const detalhePagamento = m.status === "pago"
       ? `<div style="font-size:12px;color:var(--slate);margin-top:2px;">${escapeHtml(formaPagamentoLabel(m.formaPagamento))}${m.dataPagamento ? ` · pago em ${escapeHtml(formatarDataBr(m.dataPagamento))}` : ""}</div>`
       : "";
-    const formAberto = state.finPagamentoAlunoId === aluno.id && state.finPagamentoMensId === m.id;
-    const formPagamento = formAberto ? `
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px;">
-        <select id="fin-pagamento-forma" class="teacher-text-input" style="margin:0;flex:1 1 160px;">
-          <option value="dinheiro" ${state.finPagamentoForma === "dinheiro" ? "selected" : ""}>Dinheiro</option>
-          <option value="pix" ${state.finPagamentoForma === "pix" ? "selected" : ""}>Pix (chave da escola)</option>
-          <option value="cartao" ${state.finPagamentoForma === "cartao" ? "selected" : ""}>Cartão</option>
-        </select>
-        <input id="fin-pagamento-data" type="date" class="teacher-text-input" style="margin:0;flex:1 1 140px;" value="${escapeHtml(state.finPagamentoData)}" />
-        <button type="button" class="teacher-primary-btn" style="margin:0;" data-action="confirmar-fin-pagamento" data-aluno-id="${escapeHtml(aluno.id)}" data-mens-id="${escapeHtml(m.id)}" ${state.finPagamentoSalvando ? "disabled" : ""}>${state.finPagamentoSalvando ? "Salvando…" : "Confirmar"}</button>
-        <button type="button" class="btn-secondary" style="margin:0;" data-action="cancelar-fin-pagamento">Cancelar</button>
-      </div>
-      ${state.finPagamentoErro ? `<p class="teacher-error" style="color:var(--red);font-size:12.5px;margin-top:8px;">${escapeHtml(state.finPagamentoErro)}</p>` : ""}` : "";
-
     return `
       <div class="row" style="flex-direction:column;align-items:stretch;">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
           <div>
             <div style="font-size:14.5px;font-weight:600;color:var(--ink);">${escapeHtml(aluno.nome)} · ${escapeHtml(competenciaLabel(m.competencia))}</div>
-            <div style="font-size:12.5px;color:var(--slate);">${escapeHtml(formatarMoeda(m.valor))} · vence em ${escapeHtml(formatarDataBr(m.vencimento))} · lançada em ${escapeHtml(formatarDataBr(m.criadoEm))}</div>
+            <div style="font-size:12.5px;color:var(--slate);">${escapeHtml(formatarMoeda(m.valor))} · vence em ${escapeHtml(formatarDataBr(m.vencimento))}${m.criadoEm ? ` · lançada em ${escapeHtml(formatarDataBr(m.criadoEm))}` : ""}</div>
             ${detalhePagamento}
             ${anexosMensalidadeHtml(m)}
           </div>
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
             <span class="pill ${pillClasse}">${pillTexto}</span>
-            ${m.status !== "pago"
-              ? `<button type="button" class="btn-secondary" data-action="abrir-fin-pagamento" data-aluno-id="${escapeHtml(aluno.id)}" data-mens-id="${escapeHtml(m.id)}">Dar baixa</button>`
-              : `<button type="button" class="btn-secondary" data-action="desfazer-fin-pagamento" data-aluno-id="${escapeHtml(aluno.id)}" data-mens-id="${escapeHtml(m.id)}" ${state.finPagamentoSalvando ? "disabled" : ""}>Desfazer</button>`}
+            ${m.status !== "pago" ? `<button type="button" class="btn-secondary" data-action="marcar-cobranca-paga" data-aluno-id="${escapeHtml(aluno.id)}" data-mens-id="${escapeHtml(m.id)}" ${state.finStatusSalvandoId === m.id ? "disabled" : ""}>${state.finStatusSalvandoId === m.id ? "Salvando…" : "Marcar como pago"}</button>` : ""}
           </div>
         </div>
-        ${formPagamento}
       </div>`;
-  }).join("") || `<div style="padding:20px;font-size:14px;color:var(--slate);">Nenhuma cobrança lançada nos últimos 30 dias.</div>`;
+  }).join("") || `<div style="padding:20px;font-size:14px;color:var(--slate);">Nenhuma cobrança lançada ainda.</div>`;
 
   return `
-    <p class="section-eyebrow">Competência de ${escapeHtml(competenciaLabel(competenciaAtual()))}, somando as cobranças lançadas na ficha de cada aluno.</p>
-    <div class="grid-cards">
-      <div class="card">
-        <div style="font-size:13px;color:var(--slate);margin-bottom:6px;">Receita prevista no mês</div>
-        <div style="font-family:var(--font-display);font-size:26px;color:var(--ink);">${escapeHtml(formatarMoeda(f.previsto))}</div>
-      </div>
-      <div class="card">
-        <div style="font-size:13px;color:var(--slate);margin-bottom:6px;">Recebido no mês</div>
-        <div style="font-family:var(--font-display);font-size:26px;color:var(--ink);">${escapeHtml(formatarMoeda(f.recebido))}</div>
-        <div style="font-size:12.5px;color:var(--slate);margin-top:6px;">${f.recebidoPct === null ? "Sem cobranças lançadas ainda" : `${f.recebidoPct}% do previsto`}</div>
-      </div>
-      <div class="card">
-        <div style="font-size:13px;color:var(--slate);margin-bottom:6px;">Inadimplência (total em aberto)</div>
-        <div style="font-family:var(--font-display);font-size:26px;color:var(--red);">${escapeHtml(formatarMoeda(f.inadimplenciaValor))}</div>
-        <div style="font-size:12.5px;color:var(--red);margin-top:6px;">${f.inadimplentes.length} família(s) em atraso</div>
-      </div>
-    </div>
-    ${grafico}
-    <h2 class="section-title" style="margin-top:18px;">Cobranças dos últimos 30 dias</h2>
-    <p class="section-eyebrow">Todos os alunos, ordenado da cobrança lançada mais recente pra mais antiga · dê baixa direto por aqui.</p>
-    <div class="card flush">${recentesHtml}</div>
-    <h2 class="section-title" style="margin-top:18px;">Famílias em atraso</h2>
-    <p class="section-eyebrow">Ordenado por dias de atraso</p>
-    <div class="card flush">${inad}</div>`;
+    <p class="section-eyebrow">Todas as cobranças da unidade, do vencimento mais recente para o mais antigo. Nas pendentes, use o botão "Marcar como pago".</p>
+    ${state.finStatusErro ? `<p class="teacher-error" style="color:var(--red);font-size:12.5px;margin-top:8px;">${escapeHtml(state.finStatusErro)}</p>` : ""}
+    <div class="card flush" style="margin-top:10px;">${recentesHtml}</div>`;
 }
 
 function alunosView(school){
@@ -6429,18 +6597,6 @@ function financeiroAlunoSection(aluno){
     const detalhePagamento = m.status === "pago"
       ? `<div style="font-size:12px;color:var(--slate);margin-top:2px;">${escapeHtml(formaPagamentoLabel(m.formaPagamento))}${m.dataPagamento ? ` · pago em ${escapeHtml(formatarDataBr(m.dataPagamento))}` : ""}</div>`
       : "";
-    const formPagamento = state.alunoFinPagamentoAbertoId === m.id ? `
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px;">
-        <select id="aluno-fin-pagamento-forma" class="teacher-text-input" style="margin:0;flex:1 1 130px;">
-          <option value="dinheiro" ${state.alunoFinPagamentoForma === "dinheiro" ? "selected" : ""}>Dinheiro</option>
-          <option value="pix" ${state.alunoFinPagamentoForma === "pix" ? "selected" : ""}>Pix</option>
-          <option value="cartao" ${state.alunoFinPagamentoForma === "cartao" ? "selected" : ""}>Cartão</option>
-        </select>
-        <input id="aluno-fin-pagamento-data" type="date" class="teacher-text-input" style="margin:0;flex:1 1 140px;" value="${escapeHtml(state.alunoFinPagamentoData)}" />
-        <button type="button" class="teacher-primary-btn" style="margin:0;" data-action="confirmar-pagamento-mensalidade" data-mens-id="${escapeHtml(m.id)}" ${state.alunoFinSalvando ? "disabled" : ""}>${state.alunoFinSalvando ? "Salvando…" : "Confirmar"}</button>
-        <button type="button" class="btn-secondary" style="margin:0;" data-action="cancelar-pagamento-mensalidade">Cancelar</button>
-      </div>` : "";
-
     return `
       <div class="row" style="flex-direction:column;align-items:stretch;">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
@@ -6452,13 +6608,9 @@ function financeiroAlunoSection(aluno){
           </div>
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
             <span class="pill ${pillClasse}">${pillTexto}</span>
-            ${m.status !== "pago"
-              ? `<button type="button" class="btn-secondary" data-action="abrir-pagamento-mensalidade" data-mens-id="${escapeHtml(m.id)}">Marcar como pago</button>`
-              : `<button type="button" class="btn-secondary" data-action="desfazer-pagamento-mensalidade" data-mens-id="${escapeHtml(m.id)}" ${state.alunoFinSalvando ? "disabled" : ""}>Desfazer</button>`}
             <button type="button" class="attendance-btn" data-action="excluir-mensalidade" data-mens-id="${escapeHtml(m.id)}" aria-label="Excluir cobrança" title="Excluir cobrança">${ICONS.trash}</button>
           </div>
         </div>
-        ${formPagamento}
       </div>`;
   }).join("") || `<div style="padding:20px;font-size:14px;color:var(--slate);">Nenhuma cobrança lançada ainda.</div>`;
 
@@ -6594,6 +6746,25 @@ function alunoDetalheModal(){
       </div>
 
       <div class="aluno-modal-section">
+        <h3 class="teacher-label">Situação na escola</h3>
+        <select id="aluno-sit-situacao" class="teacher-text-input">
+          <option value="ativo" ${state.alunoSitSituacao === "ativo" ? "selected" : ""}>Ativo</option>
+          <option value="inativo" ${state.alunoSitSituacao === "inativo" ? "selected" : ""}>Inativo (pausou ou trancou)</option>
+          <option value="cancelado" ${state.alunoSitSituacao === "cancelado" ? "selected" : ""}>Cancelado (saiu da escola)</option>
+        </select>
+        <label class="teacher-label" for="aluno-sit-matricula" style="display:block;margin-top:10px;">Matriculado em</label>
+        <input id="aluno-sit-matricula" type="date" class="teacher-text-input" value="${escapeHtml(state.alunoSitMatricula)}" />
+        ${state.alunoSitSituacao !== "ativo" ? `
+        <label class="teacher-label" for="aluno-sit-data" style="display:block;margin-top:10px;">${state.alunoSitSituacao === "cancelado" ? "Data do cancelamento" : "Inativo desde"}</label>
+        <input id="aluno-sit-data" type="date" class="teacher-text-input" value="${escapeHtml(state.alunoSitData)}" />
+        <input id="aluno-sit-motivo" class="teacher-text-input" style="margin-top:8px;" placeholder="Motivo (opcional)" value="${escapeHtml(state.alunoSitMotivo)}" />` : ""}
+        <p class="section-eyebrow" style="margin:6px 0 0;">Alimenta a aba Estatísticas (alunos novos, ativos, inativos e cancelamentos).</p>
+        <button type="button" class="teacher-primary-btn" data-action="salvar-situacao-aluno" ${state.alunoSitSalvando ? "disabled" : ""}>${state.alunoSitSalvando ? "Salvando…" : "Salvar situação"}</button>
+        ${state.alunoSitErro ? `<p class="teacher-error" style="color:var(--red);font-size:12.5px;margin-top:8px;">${escapeHtml(state.alunoSitErro)}</p>` : ""}
+        ${state.alunoSitMensagem ? `<p class="teacher-success" style="margin-top:8px;">${escapeHtml(state.alunoSitMensagem)}</p>` : ""}
+      </div>
+
+      <div class="aluno-modal-section">
         <h3 class="teacher-label">Turmas</h3>
         ${turmasHtml}
         ${state.alunoTurmaErro ? `<p class="teacher-error" style="color:var(--red);font-size:12.5px;margin-top:8px;">${escapeHtml(state.alunoTurmaErro)}</p>` : ""}
@@ -6605,6 +6776,8 @@ function alunoDetalheModal(){
         <p class="section-eyebrow" style="margin:0 0 8px;">${aluno.email ? `Entra com <strong style="color:var(--ink);">${escapeHtml(aluno.email)}</strong>` : "E-mail de acesso não registrado neste cadastro."}</p>
         <button type="button" class="btn-secondary" data-action="abrir-acesso-usuario" data-tipo="aluno" data-id="${escapeHtml(aluno.id)}" data-uid="${escapeHtml(aluno.uid || "")}" data-nome="${escapeHtml(aluno.nome)}" data-email="${escapeHtml(aluno.email || "")}">${ICONS.key} Trocar senha / gerenciar acesso</button>
       </div>
+
+      ${alunoFichaSecretariaHtml(aluno)}
 
       <div class="aluno-modal-section">
         <h3 class="teacher-label">Resumo</h3>
@@ -6825,7 +6998,13 @@ async function carregarBoletinsDaTurma(turma){
   a.erro = "";
   render();
   try {
-    const snap = await getDocs(query(collection(db, "boletinsIngles"), where("turmaId", "==", turma.id)));
+    /* A regra de leitura de boletinsIngles exige provar, pela própria consulta,
+       que o professor é o dono (professorId) ou que a pessoa é da unidade
+       (escolaId). Só com turmaId o Firestore recusa (permission-denied). */
+    const filtroAcesso = state.screen === "professor"
+      ? where("professorId", "==", state.authUser.uid)
+      : where("escolaId", "==", turma.escolaId);
+    const snap = await getDocs(query(collection(db, "boletinsIngles"), where("turmaId", "==", turma.id), filtroAcesso));
     if(a.turmaId !== turma.id) return;   // a pessoa já trocou de turma
     a.lista = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     a.listaTurmaId = turma.id;
@@ -7282,11 +7461,6 @@ function bindEvents(){
 
   app.addEventListener("input", (e) => {
     const t = e.target;
-    // Caixinha de Suporte & feedback: guarda o texto sem re-renderizar, pro cursor não pular.
-    if(t.dataset && t.dataset.suporteCampo){
-      state.suporte[t.dataset.suporteCampo] = t.value;
-      return;
-    }
     // Aba Horários: guarda o valor sem re-renderizar, pro cursor não pular.
     if(t.dataset && t.dataset.hor){ horarios.input(t); return; }
     // Aba Avaliações: campos do boletim e comentário da avaliação institucional
@@ -7339,6 +7513,11 @@ function bindEvents(){
       fichaFormAtual()[t.dataset.ficha] = t.value;
       return;
     }
+    if(t.dataset && t.dataset.fichaAluno){
+      const alunoDaFicha = calAlunoAtual();
+      if(alunoDaFicha) alunoFichaEstado(alunoDaFicha).form[t.dataset.fichaAluno] = t.value;
+      return;
+    }
     if(t.dataset && t.dataset.observation){
       state.professorObservacoes[t.dataset.observation] = t.value;
       return;
@@ -7372,14 +7551,16 @@ function bindEvents(){
     if(t.id === "aluno-detalhe-contato"){ state.alunoDetalheContatoInput = t.value; return; }
     if(t.id === "aluno-resp-nome"){ state.alunoRespNome = t.value; return; }
     if(t.id === "aluno-resp-contato"){ state.alunoRespContato = t.value; return; }
+    if(t.id === "aluno-sit-matricula"){ state.alunoSitMatricula = t.value; return; }
+    if(t.id === "aluno-sit-data"){ state.alunoSitData = t.value; return; }
+    if(t.id === "aluno-sit-motivo"){ state.alunoSitMotivo = t.value; return; }
     if(t.id === "aluno-fin-competencia"){ state.alunoFinCompetencia = t.value; return; }
     if(t.id === "aluno-fin-valor"){ state.alunoFinValor = t.value; return; }
     if(t.id === "aluno-fin-vencimento"){ state.alunoFinVencimento = t.value; return; }
     if(t.id === "aluno-fin-pix"){ state.alunoFinPix = t.value; return; }
     if(t.id === "aluno-fin-codigo-barras"){ state.alunoFinCodigoBarras = t.value; return; }
     if(t.id === "aluno-fin-link-cartao"){ state.alunoFinLinkCartao = t.value; return; }
-    if(t.id === "aluno-fin-pagamento-data"){ state.alunoFinPagamentoData = t.value; return; }
-    if(t.id === "fin-pagamento-data"){ state.finPagamentoData = t.value; return; }
+    if(t.id === "fin-cobranca-busca"){ state.finCobrancaBusca = t.value; atualizarResultadosBuscaFin(); return; }
     if(t.id === "fin-cobranca-competencia"){ state.finCobrancaCompetencia = t.value; return; }
     if(t.id === "fin-cobranca-valor"){ state.finCobrancaValor = t.value; return; }
     if(t.id === "fin-cobranca-vencimento"){ state.finCobrancaVencimento = t.value; return; }
@@ -7442,12 +7623,10 @@ function bindEvents(){
       state.alunoTurmaSelecionada = t.value;
       return;
     }
-    if(t.id === "aluno-fin-pagamento-forma"){
-      state.alunoFinPagamentoForma = t.value;
-      return;
-    }
-    if(t.id === "fin-pagamento-forma"){
-      state.finPagamentoForma = t.value;
+    if(t.id === "aluno-sit-situacao"){
+      state.alunoSitSituacao = t.value;
+      if(t.value !== "ativo" && !state.alunoSitData) state.alunoSitData = dataDeHojeISO();
+      render();
       return;
     }
     if(t.id === "aluno-fin-forma"){
@@ -7510,10 +7689,6 @@ function bindEvents(){
         state.alunoFinBoletoLendo = false;
         render();
       }
-      return;
-    }
-    if(t.id === "fin-cobranca-aluno"){
-      state.finCobrancaAlunoId = t.value;
       return;
     }
     if(t.dataset && t.dataset.finCobrancaBoleto){
@@ -7752,6 +7927,7 @@ function bindEvents(){
 
       case "set-aluno-tab":
         state.alunoTab = el.dataset.key;
+        state.alunoFicha.erro = ""; state.alunoFicha.mensagem = "";
         state.cal.diaAberto = null;
         render();
         if(state.alunoTab === "calendario") carregarCalendarioDoAluno(state.data.aluno);
@@ -7761,6 +7937,7 @@ function bindEvents(){
         break;
       case "set-familia-tab":
         state.familiaTab = el.dataset.key;
+        state.alunoFicha.erro = ""; state.alunoFicha.mensagem = "";
         state.cal.diaAberto = null;
         render();
         if(state.familiaTab === "calendario") carregarCalendarioDoAluno(calAlunoAtual());
@@ -7800,7 +7977,7 @@ function bindEvents(){
             carregarFrequenciaDaInstituicao(state.escolaSelecionadaId);
           }
         }
-        if((state.instTab === "alunos" || state.instTab === "financeiro") && state.escolaSelecionadaId
+        if((state.instTab === "alunos" || state.instTab === "financeiro" || state.instTab === "estatisticas") && state.escolaSelecionadaId
           && (state.instAlunos === null || state.instAlunosEscolaId !== state.escolaSelecionadaId)
           && !state.instAlunosCarregando){
           carregarAlunosDaInstituicao(state.escolaSelecionadaId);
@@ -7847,6 +8024,7 @@ function bindEvents(){
           // limpa o formulário toda vez que entra na sub-aba, como fazia
           // o antigo botão "Lançar cobrança" ao abrir.
           state.finCobrancaAlunoId = "";
+          state.finCobrancaBusca = "";
           state.finCobrancaCompetencia = competenciaAtual();
           state.finCobrancaValor = "";
           state.finCobrancaVencimento = "";
@@ -7860,6 +8038,41 @@ function bindEvents(){
           state.finCobrancaErro = "";
           state.finCobrancaMensagem = "";
         }
+        render();
+        break;
+
+      case "marcar-cobranca-paga": {
+        const aluno = (state.instAlunos || []).find(a => a.id === el.dataset.alunoId);
+        const mensId = el.dataset.mensId;
+        const atual = aluno && (aluno.financeiro.mensalidades || []).find(m => m.id === mensId);
+        if(!atual || atual.status === "pago" || state.finStatusSalvandoId) break;
+        state.finStatusSalvandoId = mensId;
+        state.finStatusErro = "";
+        render();
+        try {
+          const mensalidades = (aluno.financeiro.mensalidades || []).map(m =>
+            m.id === mensId ? { ...m, status: "pago", dataPagamento: dataDeHojeISO() } : m);
+          await updateDoc(doc(db, "alunos", aluno.id), { "financeiro.mensalidades": mensalidades });
+          aluno.financeiro.mensalidades = mensalidades;
+        } catch(err){
+          state.finStatusErro = "Não foi possível marcar a cobrança como paga agora. Tente de novo.";
+        } finally {
+          state.finStatusSalvandoId = "";
+          render();
+        }
+        break;
+      }
+
+      case "escolher-fin-aluno":
+        state.finCobrancaAlunoId = el.dataset.id;
+        state.finCobrancaBusca = "";
+        state.finCobrancaErro = "";
+        state.finCobrancaMensagem = "";
+        render();
+        break;
+
+      case "trocar-fin-aluno":
+        state.finCobrancaAlunoId = "";
         render();
         break;
 
@@ -8907,6 +9120,10 @@ function bindEvents(){
         break;
       }
 
+      case "toggle-manual-grupo":
+        state.manuaisAbertos[el.dataset.key] = !state.manuaisAbertos[el.dataset.key];
+        render();
+        break;
       case "set-perfil-subtab":
         state.perfilSubTab = el.dataset.key;
         state.perfilSenhaErro = ""; state.perfilSenhaMensagem = "";
@@ -8916,6 +9133,16 @@ function bindEvents(){
       case "salvar-minha-ficha":
         await salvarMinhaFicha();
         break;
+      case "salvar-ficha-aluno": {
+        const alunoDaFicha = calAlunoAtual();
+        if(alunoDaFicha) await salvarFichaDoAluno(alunoDaFicha, el.dataset.quem === "responsavel" ? "responsavel" : "aluno");
+        break;
+      }
+      case "ciente-ficha-aluno": {
+        const alunoDaFicha = calAlunoAtual();
+        if(alunoDaFicha) await darCienciaFichaDoAluno(alunoDaFicha);
+        break;
+      }
       case "abrir-ficha-usuario":
         await abrirFichaUsuario(el.dataset.id, el.dataset.nome);
         break;
@@ -9191,36 +9418,6 @@ function bindEvents(){
         render();
         break;
 
-      case "abrir-suporte":
-        state.mobileMenuOpen = false;
-        state.suporte = suporteAbrir();
-        render();
-        break;
-
-      case "fechar-suporte":
-        if(state.suporte.enviando) break;
-        state.suporte.aberto = false;
-        render();
-        break;
-
-      case "suporte-tipo":
-        if(state.suporte.enviando) break;
-        state.suporte.tipo = el.dataset.tipo;
-        state.suporte.erro = "";
-        render();
-        break;
-
-      case "suporte-unidade":
-        if(state.suporte.enviando) break;
-        state.suporte.unidade = el.dataset.unidade;
-        state.suporte.erro = "";
-        render();
-        break;
-
-      case "enviar-suporte":
-        await suporteEnviar();
-        break;
-
       case "whatsapp-secretaria": {
         const escola = SECRETARIA_WHATSAPP.find(e => e.id === el.dataset.escola);
         if(escola){
@@ -9269,6 +9466,12 @@ function bindEvents(){
         state.alunoDetalheContatoInput = aluno ? (aluno.contato || "") : "";
         state.alunoDetalheNascimentoInput = aluno ? (aluno.nascimento || "") : "";
         state.alunoDetalheSexoInput = aluno ? (aluno.sexo || "") : "";
+        state.alunoSitSituacao = aluno ? aluno.situacao : "ativo";
+        state.alunoSitMatricula = aluno ? (aluno.matriculadoEm || "") : "";
+        state.alunoSitData = aluno ? (aluno.situacaoEm || "") : "";
+        state.alunoSitMotivo = aluno ? (aluno.motivoSaida || "") : "";
+        state.alunoSitErro = "";
+        state.alunoSitMensagem = "";
         state.alunoDetalheErro = "";
         state.alunoDetalheMensagem = "";
         state.alunoExcluirConfirmando = false;
@@ -9285,9 +9488,6 @@ function bindEvents(){
         state.alunoFinBoletoLendo = false;
         state.alunoFinErro = "";
         state.alunoFinMensagem = "";
-        state.alunoFinPagamentoAbertoId = null;
-        state.alunoFinPagamentoForma = "dinheiro";
-        state.alunoFinPagamentoData = "";
         state.alunoRespVinculados = null;
         state.alunoRespNome = "";
         state.alunoRespContato = "";
@@ -9414,6 +9614,7 @@ function bindEvents(){
           aluno.financeiro.mensalidades = mensalidades;
           state.finCobrancaMensagem = `Cobrança lançada para ${aluno.nome}.`;
           state.finCobrancaAlunoId = "";
+          state.finCobrancaBusca = "";
           state.finCobrancaCompetencia = competenciaAtual();
           state.finCobrancaValor = "";
           state.finCobrancaVencimento = "";
@@ -9489,142 +9690,39 @@ function bindEvents(){
         break;
       }
 
-      case "abrir-pagamento-mensalidade": {
+      case "salvar-situacao-aluno": {
         const aluno = (state.instAlunos || []).find(a => a.id === state.alunoDetalheId);
-        const m = aluno && (aluno.financeiro.mensalidades || []).find(x => x.id === el.dataset.mensId);
-        const formaEsperada = m && ["dinheiro", "pix", "cartao"].includes(m.formaPagamento) ? m.formaPagamento : "dinheiro";
-        state.alunoFinPagamentoAbertoId = el.dataset.mensId;
-        state.alunoFinPagamentoForma = formaEsperada;
-        state.alunoFinPagamentoData = dataDeHojeISO();
-        state.alunoFinErro = "";
-        state.alunoFinMensagem = "";
-        render();
-        break;
-      }
-
-      case "cancelar-pagamento-mensalidade":
-        state.alunoFinPagamentoAbertoId = null;
-        render();
-        break;
-
-      case "confirmar-pagamento-mensalidade": {
-        const aluno = (state.instAlunos || []).find(a => a.id === state.alunoDetalheId);
-        if(!aluno) break;
-        const mensId = el.dataset.mensId;
-        const formaPagamento = document.getElementById("aluno-fin-pagamento-forma")?.value || "dinheiro";
-        const dataPagamento = (document.getElementById("aluno-fin-pagamento-data")?.value || "").trim() || dataDeHojeISO();
-        state.alunoFinSalvando = true;
-        state.alunoFinErro = "";
+        if(!aluno || state.alunoSitSalvando) break;
+        const situacao = state.alunoSitSituacao;
+        const naoAtivo = situacao !== "ativo";
+        const dados = {
+          situacao,
+          matriculadoEm: (state.alunoSitMatricula || "").trim(),
+          situacaoEm: naoAtivo ? ((state.alunoSitData || "").trim() || dataDeHojeISO()) : "",
+          motivoSaida: naoAtivo ? (state.alunoSitMotivo || "").trim() : "",
+        };
+        state.alunoSitSalvando = true;
+        state.alunoSitErro = "";
+        state.alunoSitMensagem = "";
         render();
         try {
-          const mensalidades = (aluno.financeiro.mensalidades || []).map(m =>
-            m.id === mensId ? { ...m, status: "pago", formaPagamento, dataPagamento } : m);
-          await updateDoc(doc(db, "alunos", aluno.id), { "financeiro.mensalidades": mensalidades });
-          aluno.financeiro.mensalidades = mensalidades;
-          state.alunoFinPagamentoAbertoId = null;
-          state.alunoFinMensagem = "Pagamento registrado.";
+          await updateDoc(doc(db, "alunos", aluno.id), dados);
+          Object.assign(aluno, dados);
+          state.alunoSitData = dados.situacaoEm;
+          state.alunoSitMensagem = "Situação salva.";
         } catch(err){
-          state.alunoFinErro = "Não foi possível registrar o pagamento agora. Tente de novo.";
+          state.alunoSitErro = `Não foi possível salvar a situação agora${err.code ? ` (${err.code})` : ""}. Tente de novo.`;
         } finally {
-          state.alunoFinSalvando = false;
+          state.alunoSitSalvando = false;
           render();
         }
         break;
       }
 
-      case "desfazer-pagamento-mensalidade": {
-        const aluno = (state.instAlunos || []).find(a => a.id === state.alunoDetalheId);
-        if(!aluno) break;
-        const mensId = el.dataset.mensId;
-        state.alunoFinSalvando = true;
-        state.alunoFinErro = "";
-        render();
-        try {
-          const mensalidades = (aluno.financeiro.mensalidades || []).map(m =>
-            m.id === mensId ? { ...m, status: "pendente", formaPagamento: "", dataPagamento: "" } : m);
-          await updateDoc(doc(db, "alunos", aluno.id), { "financeiro.mensalidades": mensalidades });
-          aluno.financeiro.mensalidades = mensalidades;
-          state.alunoFinMensagem = "Pagamento desfeito.";
-        } catch(err){
-          state.alunoFinErro = "Não foi possível desfazer o pagamento agora. Tente de novo.";
-        } finally {
-          state.alunoFinSalvando = false;
-          render();
-        }
-        break;
-      }
-
-      /* Mesma dar-baixa acima, só que a partir da lista "Cobranças dos
-         últimos 30 dias" na aba Financeiro — aqui o aluno vem do
-         data-aluno-id da linha, não da ficha aberta (state.alunoDetalheId). */
-      case "abrir-fin-pagamento": {
-        const aluno = (state.instAlunos || []).find(a => a.id === el.dataset.alunoId);
-        const m = aluno && (aluno.financeiro.mensalidades || []).find(x => x.id === el.dataset.mensId);
-        const formaEsperada = m && ["dinheiro", "pix", "cartao"].includes(m.formaPagamento) ? m.formaPagamento : "dinheiro";
-        state.finPagamentoAlunoId = el.dataset.alunoId;
-        state.finPagamentoMensId = el.dataset.mensId;
-        state.finPagamentoForma = formaEsperada;
-        state.finPagamentoData = dataDeHojeISO();
-        state.finPagamentoErro = "";
+      case "set-est-periodo":
+        state.estPeriodo = el.dataset.key;
         render();
         break;
-      }
-
-      case "cancelar-fin-pagamento":
-        state.finPagamentoAlunoId = null;
-        state.finPagamentoMensId = null;
-        render();
-        break;
-
-      case "confirmar-fin-pagamento": {
-        const alunoId = el.dataset.alunoId;
-        const mensId = el.dataset.mensId;
-        const aluno = (state.instAlunos || []).find(a => a.id === alunoId);
-        if(!aluno) break;
-        const formaPagamento = document.getElementById("fin-pagamento-forma")?.value || "dinheiro";
-        const dataPagamento = (document.getElementById("fin-pagamento-data")?.value || "").trim() || dataDeHojeISO();
-        state.finPagamentoSalvando = true;
-        state.finPagamentoErro = "";
-        render();
-        try {
-          const mensalidades = (aluno.financeiro.mensalidades || []).map(m =>
-            m.id === mensId ? { ...m, status: "pago", formaPagamento, dataPagamento } : m);
-          await updateDoc(doc(db, "alunos", aluno.id), { "financeiro.mensalidades": mensalidades });
-          aluno.financeiro.mensalidades = mensalidades;
-          state.finPagamentoAlunoId = null;
-          state.finPagamentoMensId = null;
-          state.finCobrancaMensagem = "Pagamento registrado.";
-        } catch(err){
-          state.finPagamentoErro = "Não foi possível registrar o pagamento agora. Tente de novo.";
-        } finally {
-          state.finPagamentoSalvando = false;
-          render();
-        }
-        break;
-      }
-
-      case "desfazer-fin-pagamento": {
-        const alunoId = el.dataset.alunoId;
-        const mensId = el.dataset.mensId;
-        const aluno = (state.instAlunos || []).find(a => a.id === alunoId);
-        if(!aluno) break;
-        state.finPagamentoSalvando = true;
-        state.finPagamentoErro = "";
-        render();
-        try {
-          const mensalidades = (aluno.financeiro.mensalidades || []).map(m =>
-            m.id === mensId ? { ...m, status: "pendente", formaPagamento: "", dataPagamento: "" } : m);
-          await updateDoc(doc(db, "alunos", aluno.id), { "financeiro.mensalidades": mensalidades });
-          aluno.financeiro.mensalidades = mensalidades;
-          state.finCobrancaMensagem = "Pagamento desfeito.";
-        } catch(err){
-          state.finPagamentoErro = "Não foi possível desfazer o pagamento agora. Tente de novo.";
-        } finally {
-          state.finPagamentoSalvando = false;
-          render();
-        }
-        break;
-      }
 
       case "excluir-mensalidade": {
         const aluno = (state.instAlunos || []).find(a => a.id === state.alunoDetalheId);

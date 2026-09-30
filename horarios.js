@@ -285,6 +285,9 @@ export function criarHorarios(ctx){
 
   async function carregarAlunos(escolaId){
     if(!escolaId || H.alunosCarregando) return;
+    // O documento `alunos` guarda financeiro e contato: só a secretaria lê.
+    // O professor cria a turma sem escolher alunos; a secretaria vincula depois.
+    if(eu().papel === "professor"){ H.alunos = []; H.alunosEscolaId = escolaId; H.alunosErro = ""; return; }
     if(H.alunos && H.alunosEscolaId === escolaId) return;
     H.alunosCarregando = true;
     H.alunosErro = "";
@@ -911,6 +914,10 @@ export function criarHorarios(ctx){
               <input type="checkbox" data-hor="aluno" data-nome="${esc(n)}" ${f.alunos.includes(n) ? "checked" : ""} />
               <span>${esc(n)}${turmaDe.get(n) ? ` · ${esc(turmaDe.get(n))}` : ""}</span>
             </label>`).join("")}</div>`;
+    const ehProf = e.papel === "professor";
+    const alunosProfHtml = f.alunos.length
+      ? `<div class="hor-alunos-chips">${[...f.alunos].sort((a, b) => a.localeCompare(b, "pt-BR")).map(n => `<span>${esc(n)}</span>`).join("")}</div>`
+      : `<p class="hor-vazio-txt">Nenhum aluno ainda.</p>`;
     const multiEscola = e.escolasIds.length > 1;
     return moldura(m.editId ? "Editar turma" : "Nova turma", e.papel === "professor" ? "Você será o(a) professor(a) desta turma." : "", `
       ${campo("Nome da turma", inp("nome", f.nome, `placeholder="Ex.: Inglês — Turma A"`))}
@@ -930,10 +937,16 @@ export function criarHorarios(ctx){
         </select>`) : ""}
       <span class="teacher-label" style="margin-top:12px;display:block;">Dias e horários</span>
       ${encontrosEditorHtml(f)}
-      <span id="hor-alunos-contagem" class="teacher-label" style="margin-top:14px;display:block;">Alunos (${f.alunos.length} selecionado${f.alunos.length === 1 ? "" : "s"})</span>
-      ${listaAlunos.length > 8 ? `<input class="teacher-text-input" data-hor="busca-aluno" placeholder="Buscar aluno" aria-label="Buscar aluno" style="margin-bottom:8px;" />` : ""}
-      ${alunosHtml}
-      ${H.alunosErro ? `<p class="hor-vazio-txt" style="color:var(--red);">${esc(H.alunosErro)}</p>` : ""}
+      ${ehProf ? `
+        <span class="teacher-label" style="margin-top:14px;display:block;">Alunos (${f.alunos.length})</span>
+        ${alunosProfHtml}
+        <p class="hor-vazio-txt" style="margin-top:8px;">Quem vincula os alunos à turma é a secretaria (na ficha de cada aluno).</p>
+      ` : `
+        <span id="hor-alunos-contagem" class="teacher-label" style="margin-top:14px;display:block;">Alunos (${f.alunos.length} selecionado${f.alunos.length === 1 ? "" : "s"})</span>
+        ${listaAlunos.length > 8 ? `<input class="teacher-text-input" data-hor="busca-aluno" placeholder="Buscar aluno" aria-label="Buscar aluno" style="margin-bottom:8px;" />` : ""}
+        ${alunosHtml}
+        ${H.alunosErro ? `<p class="hor-vazio-txt" style="color:var(--red);">${esc(H.alunosErro)}</p>` : ""}
+      `}
       ${rodapeForm(f, m.editId ? "Salvar alterações" : "Criar turma", "hor-salvar-turma")}`, { largo: true });
   }
 
@@ -1163,10 +1176,12 @@ export function criarHorarios(ctx){
       escola: nomeDaEscola(escolaId), escolaId, disciplina: f.disciplina,
       professorId: e.papel === "professor" ? e.uid : f.professorId, alunos: f.alunos,
     };
+    if(e.papel === "professor") dados.alunos = m.editId ? (turmaPorId(m.editId)?.alunos || []) : [];
     f.erro = ""; f.salvando = true; render();
     try {
       if(m.editId){
         const { escola, escolaId: _e, ...alteraveis } = dados;   // escola da turma não muda na edição
+        if(e.papel === "professor"){ delete alteraveis.alunos; delete alteraveis.professorId; }   // só a secretaria mexe nesses dois
         await updateDoc(doc(db, "turmas", m.editId), alteraveis);
         atualizarTurmaLocal(m.editId, alteraveis);
         H.aviso = `Turma ${nome} atualizada.`;
