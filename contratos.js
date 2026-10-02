@@ -215,6 +215,12 @@ function listaDias(dias){
    texto que a escola já usa hoje; os outros seguem a mesma fôrma. */
 function tituloContrato(curso){
   const c = (curso || "").toLowerCase();
+  // modalidade (combo): lista os cursos no título em vez de escolher um só
+  if(c.includes("+")){
+    const nomes = String(curso).split("+").map(x => x.trim().toUpperCase()).filter(Boolean);
+    const lista = nomes.length > 1 ? nomes.slice(0, -1).join(", ") + " E " + nomes[nomes.length - 1] : nomes[0];
+    return `CONTRATO DE PRESTAÇÃO DE SERVIÇOS DE ENSINO DE ${lista}`;
+  }
   if(c.includes("inglês") || c.includes("ingles")) return "CONTRATO DE PRESTAÇÃO DE SERVIÇOS DE ENSINO DA LÍNGUA INGLESA";
   if(c.includes("recrea")) return "CONTRATO DE PRESTAÇÃO DE SERVIÇOS DE RECREAÇÃO";
   if(c.includes("rob")) return "CONTRATO DE PRESTAÇÃO DE SERVIÇOS DE ENSINO DE ROBÓTICA";
@@ -232,11 +238,10 @@ export const DOMINIO_RESPONSAVEL = "responsaveleduca.app";
 
 /* Cursos cujo aluno NÃO recebe login próprio (criança pequena demais —
    quem acompanha é o responsável). */
-const CURSOS_SEM_LOGIN_DO_ALUNO = ["recreação", "recreacao"];
-
 export function contratoPrecisaLoginAluno(c){
   const curso = (c.curso || "").toLowerCase();
-  return !!curso && !CURSOS_SEM_LOGIN_DO_ALUNO.includes(curso);
+  // só a Recreação avulsa fica sem login; modalidade (combo) com Recreação tem login
+  return !!curso && (curso.includes("+") || !curso.includes("recrea"));
 }
 
 function semAcento(txt){
@@ -298,12 +303,26 @@ export function senhaProvisoria(){
    limpa o campo antes de chamar de novo. */
 export function contratoSugerirAcessos(c, emailsUsados = []){
   if(c.alunoNome){
-    if(!c.emailAluno) c.emailAluno = escolherEmailLivre(c.alunoNome, DOMINIO_ALUNO, emailsUsados);
+    if(!c.emailAluno) c.emailAluno = escolherEmailLivre(c.alunoNome, DOMINIO_ALUNO, [...emailsUsados, c.emailAluno2]);
     if(!c.senhaAluno) c.senhaAluno = senhaProvisoria();
   }
+  if(c.segundoAluno && c.aluno2Nome){
+    if(!c.emailAluno2) c.emailAluno2 = escolherEmailLivre(c.aluno2Nome, DOMINIO_ALUNO, [...emailsUsados, c.emailAluno]);
+    if(!c.senhaAluno2) c.senhaAluno2 = senhaProvisoria();
+  }
   if(!c.semResponsavel && c.respNome){
-    if(!c.emailResp) c.emailResp = escolherEmailLivre(c.respNome, DOMINIO_RESPONSAVEL, [...emailsUsados, c.emailAluno]);
+    if(!c.emailResp) c.emailResp = escolherEmailLivre(c.respNome, DOMINIO_RESPONSAVEL, [...emailsUsados, c.emailAluno, c.emailAluno2]);
     if(!c.senhaResp) c.senhaResp = senhaProvisoria();
+  }
+  if(!c.semResponsavel){
+    (c.respsExtras || []).forEach((e, k, todos) => {
+      if(!String(e.nome || "").trim()) return;
+      if(!e.email){
+        const jaEscolhidos = todos.filter((_, j) => j !== k).map(o => o.email);
+        e.email = escolherEmailLivre(e.nome, DOMINIO_RESPONSAVEL, [...emailsUsados, c.emailAluno, c.emailAluno2, c.emailResp, ...jaEscolhidos]);
+      }
+      if(!e.senha) e.senha = senhaProvisoria();
+    });
   }
   return c;
 }
@@ -320,11 +339,19 @@ export function contratoEstadoInicial(){
     alunoNome: "", alunoCpf: "", alunoRg: "", alunoNascimento: "",
     alunoEndereco: "", alunoNumero: "", alunoBairro: "", alunoCidade: "", alunoUf: "PARANÁ",
     contatoAluno: "",          // WhatsApp do aluno (usado no aniversário)
+    // segundo aluno (irmãos no MESMO contrato): usa o mesmo endereço, curso,
+    // horário e valores do primeiro; só os dados pessoais mudam
+    segundoAluno: false,
+    aluno2Nome: "", aluno2Cpf: "", aluno2Rg: "", aluno2Nascimento: "", contatoAluno2: "",
     // responsável
     semResponsavel: false,
     respNome: "", respCpf: "", respRg: "",
     respEndereco: "", respNumero: "", respBairro: "", respCidade: "",
     contatoResp: "",           // WhatsApp do responsável
+    respParentesco: "",        // "mae" | "pai" | "responsavel_legal" | ""
+    // outros responsáveis do mesmo aluno (cada um com cadastro e acesso próprios):
+    // [{ nome, parentesco, contato, email, senha }]
+    respsExtras: [],
     // curso
     curso: "", cargaHoraria: "2",
     turmaId: "",               // turma (coleção "turmas") em que o aluno já entra ao salvar o cadastro — opcional
@@ -352,10 +379,25 @@ export function contratoEstadoInicial(){
     // acessos ao app criados junto com o contrato
     criarAcessos: true,
     emailAluno: "", senhaAluno: "",
+    emailAluno2: "", senhaAluno2: "",
     emailResp: "", senhaResp: "",
     salvandoAcessos: false,
     resultadoAcessos: null,    // { aluno, responsavel, avisos: [] }
   };
+}
+
+/* O contrato tem um segundo aluno de verdade (marcado E com nome)? */
+export function contratoTemSegundoAluno(c){
+  return !!c.segundoAluno && !!(c.aluno2Nome || "").trim();
+}
+
+/* "Eduardo Jubelli e Luiz Henrique Jubelli" (ou, com curto=true, só os
+   primeiros nomes: "Eduardo e Luiz"). Com um aluno só, devolve o nome dele. */
+export function contratoNomesAlunos(c, curto = false){
+  const nomes = [c.alunoNome, contratoTemSegundoAluno(c) ? c.aluno2Nome : ""]
+    .map(n => String(n || "").trim()).filter(Boolean)
+    .map(n => curto ? n.split(/\s+/)[0] : n);
+  return nomes.join(" e ");
 }
 
 /* Meses efetivos (resolve a opção "personalizado") */
@@ -425,6 +467,7 @@ export function contratoAplicarEmpresa(c, cnpj){
 export function contratoValidar(c){
   if(!c.cnpj) return "Escolha o CNPJ da empresa que vai assinar o contrato.";
   if(!c.alunoNome.trim()) return "Informe o nome do aluno.";
+  if(c.segundoAluno && !(c.aluno2Nome || "").trim()) return "Informe o nome do segundo aluno ou desmarque \"contrato com dois alunos\".";
   if(!c.curso) return "Escolha o curso.";
   if(!contratoMeses(c)) return "Informe a duração do contrato em meses.";
   if(!c.dataInicio) return "Informe a data de início do pacote.";
@@ -509,15 +552,23 @@ export function contratoHtml(c, logoUrl){
   const blocoResponsavel = c.semResponsavel ? "" : `
     <p class="parte"><b>RESPONSÁVEL CONTRATANTE/ RESPRESENTE LEGAL:</b> ${esc((c.respNome || "").toUpperCase())}, CPF: ${esc(c.respCpf || "__________")}${c.respRg ? `, RG: ${esc(c.respRg)}` : ""}, RESIDENTE E DOMICILIADA NA ${enderecoResp}.</p>`;
 
+  const doisAlunos = contratoTemSegundoAluno(c);
+
+  // Segundo aluno: mesmo parágrafo do primeiro, mesmo endereço (irmãos).
+  const blocoAluno2 = doisAlunos ? `
+      <p class="parte"><b>ALUNO CONTRATANTE:</b> ${esc((c.aluno2Nome || "").toUpperCase())}, CPF: ${esc(c.aluno2Cpf || "__________")}${c.aluno2Rg ? `, RG: ${esc(c.aluno2Rg)}` : ""}, DATA DE NASCIMENTO: ${dataBr(c.aluno2Nascimento)}, RESIDENTE E DOMICILIADO NA ${enderecoAluno}.</p>` : "";
+
   const trechoPartes = c.semResponsavel
-    ? "o aluno acima qualificado, adiante simplesmente designado CONTRATANTE"
+    ? (doisAlunos
+      ? "os alunos acima qualificados, adiante simplesmente designados CONTRATANTE"
+      : "o aluno acima qualificado, adiante simplesmente designado CONTRATANTE")
     : "o responsável contratante e\\ou representante legal, em conjunto com aluno, acima qualificados, este representado\\assistido (se o caso) e aquele por si, adiante simplesmente designados CONTRATANTE";
 
   return `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>${esc(titulo)} — ${esc(c.alunoNome)}</title>
+<title>${esc(titulo)} — ${esc(contratoNomesAlunos(c))}</title>
 <style>
   @page { size: A4; margin: 18mm 16mm; }
   * { box-sizing: border-box; }
@@ -575,6 +626,7 @@ export function contratoHtml(c, logoUrl){
       <p class="parte"><b>CONTRATADA</b>: ${esc(empresa.razaoSocial)}, ${esc(empresa.fantasia)}, CNPJ: ${esc(empresa.cnpj)}, LOCALIZADA NA ${esc(empresa.endereco)}, NA CIDADE DE ${esc(empresa.cidade)}, ${esc(empresa.uf)}, REPRESENTADA PELA SOCIA ADMINISTRADORA Sr. ${esc(empresa.socia)}, PORTADORA DO CPF: ${esc(empresa.sociaCpf)} E RG: ${esc(empresa.sociaRg)}, RESIDENTE E DOMICILIADA NA ${esc(empresa.sociaEndereco)}, NA CIDADE DE ${esc(empresa.sociaCidade)}, ${esc(empresa.uf)}.</p>
 
       <p class="parte"><b>ALUNO CONTRATANTE:</b> ${esc((c.alunoNome || "").toUpperCase())}, CPF: ${esc(c.alunoCpf || "__________")}${c.alunoRg ? `, RG: ${esc(c.alunoRg)}` : ""}, DATA DE NASCIMENTO: ${dataBr(c.alunoNascimento)}, RESIDENTE E DOMICILIADO NA ${enderecoAluno}.</p>
+      ${blocoAluno2}
       ${blocoResponsavel}
     </div>
   </div>
@@ -679,6 +731,12 @@ export function contratoHtml(c, logoUrl){
       <div>ALUNO \\ RESPONSÁVEL</div>
       ${c.semResponsavel ? `<div>${esc((c.alunoNome || "").toUpperCase())}</div>` : `<div>${esc((c.respNome || "").toUpperCase())}</div>`}
     </div>
+    ${c.semResponsavel && doisAlunos ? `
+    <div class="linha-assinatura">
+      <div class="traco"></div>
+      <div>ALUNO</div>
+      <div>${esc((c.aluno2Nome || "").toUpperCase())}</div>
+    </div>` : ""}
 
     <div class="linha-assinatura">
       <div class="traco"></div>
@@ -813,25 +871,55 @@ export function interpretarContratoTexto(texto){
     avisos.push("Não reconheci o CNPJ da contratada — escolha manualmente.");
   }
 
-  // --- aluno ---
-  const blocoAluno = blocoEntre(tPlano, "ALUNO CONTRATANTE:", "RESPONS[ÁA]VEL CONTRATANTE");
-  if(blocoAluno){
-    const nome = blocoAluno.split(",")[0]?.trim();
-    if(nome) c.alunoNome = nome.replace(/\s+/g, " ")
-      .toLowerCase().replace(/(^|\s)\p{L}/gu, l => l.toUpperCase());
-    const mCpf = blocoAluno.match(/CPF:\s*([\d.\-]+)/i);
-    if(mCpf) c.alunoCpf = mCpf[1];
-    const mRg = blocoAluno.match(/RG:\s*([^,]+?)(?:,\s*DATA|,\s*RESIDENTE|$)/i);
-    if(mRg) c.alunoRg = mRg[1].trim();
-    const mNasc = blocoAluno.match(/DATA DE NASCIMENTO:\s*(\d{2}\/\d{2}\/\d{4})/i);
-    if(mNasc) c.alunoNascimento = dataBrParaIso(mNasc[1]);
-    const mEndereco = blocoAluno.match(/RESIDENTE E DOMICILIAD[OA]\s*NA\s*(.+?),?\s*NA CIDADE DE\s*([^,]+)/i);
+  // --- aluno(s) ---
+  // O contrato pode ter dois "ALUNO CONTRATANTE:" (irmãos). Cada bloco vai
+  // até o próximo aluno, o responsável ou o "Pelo presente instrumento".
+  const blocosAluno = [];
+  const reAluno = /ALUNO CONTRATANTE:([\s\S]*?)(?=ALUNO CONTRATANTE:|RESPONS[ÁA]VEL CONTRATANTE|Pelo presente instrumento|$)/gi;
+  let mAl;
+  while((mAl = reAluno.exec(tPlano)) !== null){
+    if(mAl[1].trim()) blocosAluno.push(mAl[1].trim());
+  }
+
+  const nomeProprio = txt => txt.replace(/\s+/g, " ").toLowerCase().replace(/(^|\s)\p{L}/gu, l => l.toUpperCase());
+  const lerBlocoAluno = (bloco) => {
+    const dados = { nome: "", cpf: "", rg: "", nascimento: "", endereco: null };
+    const nome = bloco.split(",")[0]?.trim();
+    if(nome) dados.nome = nomeProprio(nome);
+    const mCpf = bloco.match(/CPF:\s*(\d{3}\.?\d{3}\.?\d{3}\s*-?\s*\d{2})/i);
+    if(mCpf) dados.cpf = mCpf[1].replace(/\s+/g, "");
+    const mRg = bloco.match(/RG:?\s*([^,]+?)(?:,\s*DATA|,\s*RESIDENTE|$)/i);
+    if(mRg) dados.rg = mRg[1].trim();
+    const mNasc = bloco.match(/DATA DE NASCIMENTO:\s*(\d{2}\/\d{2}\/\d{4})/i);
+    if(mNasc) dados.nascimento = dataBrParaIso(mNasc[1]);
+    const mEndereco = bloco.match(/RESIDENTE E DOMICILIAD[OA]\s*NA\s*(.+?),?\s*NA CIDADE DE\s*([^,]+)/i);
     if(mEndereco){
       const partes = separarEndereco(mEndereco[1]);
-      c.alunoEndereco = partes.rua;
-      c.alunoNumero = partes.numero;
-      c.alunoBairro = partes.bairro;
-      c.alunoCidade = mEndereco[2].trim();
+      dados.endereco = { rua: partes.rua, numero: partes.numero, bairro: partes.bairro, cidade: mEndereco[2].trim() };
+    }
+    return dados;
+  };
+
+  if(blocosAluno.length){
+    const a1 = lerBlocoAluno(blocosAluno[0]);
+    if(a1.nome) c.alunoNome = a1.nome;
+    c.alunoCpf = a1.cpf; c.alunoRg = a1.rg; c.alunoNascimento = a1.nascimento;
+    if(a1.endereco){
+      c.alunoEndereco = a1.endereco.rua;
+      c.alunoNumero = a1.endereco.numero;
+      c.alunoBairro = a1.endereco.bairro;
+      c.alunoCidade = a1.endereco.cidade;
+    }
+    if(blocosAluno.length >= 2){
+      const a2 = lerBlocoAluno(blocosAluno[1]);
+      if(a2.nome){
+        c.segundoAluno = true;
+        c.aluno2Nome = a2.nome;
+        c.aluno2Cpf = a2.cpf; c.aluno2Rg = a2.rg; c.aluno2Nascimento = a2.nascimento;
+      }
+    }
+    if(blocosAluno.length > 2){
+      avisos.push("Este contrato tem mais de dois alunos — só os dois primeiros foram lidos.");
     }
   } else {
     avisos.push("Não encontrei os dados do aluno neste PDF.");
@@ -846,9 +934,9 @@ export function interpretarContratoTexto(texto){
       c.respNome = nome.replace(/\s+/g, " ").toLowerCase().replace(/(^|\s)\p{L}/gu, l => l.toUpperCase());
       c.semResponsavel = false;
     }
-    const mCpf = blocoResp.match(/CPF:\s*([\d.\-]+)/i);
-    if(mCpf) c.respCpf = mCpf[1];
-    const mRg = blocoResp.match(/RG:\s*([^,]+?)(?:,\s*RESIDENTE|$)/i);
+    const mCpf = blocoResp.match(/CPF:\s*(\d{3}\.?\d{3}\.?\d{3}\s*-?\s*\d{2})/i);
+    if(mCpf) c.respCpf = mCpf[1].replace(/\s+/g, "");
+    const mRg = blocoResp.match(/RG:?\s*([^,]+?)(?:,\s*DATA|,\s*RESIDENTE|$)/i);
     if(mRg) c.respRg = mRg[1].trim();
     const mEndereco = blocoResp.match(/RESIDENTE E DOMICILIAD[OA]\s*NA\s*(.+?),?\s*NA CIDADE DE\s*([^,]+)/i);
     if(mEndereco){
@@ -921,7 +1009,7 @@ export function interpretarContratoTexto(texto){
   if(mForma) c.formaPagamento = mForma[1].toUpperCase();
 
   // --- assinatura (data e cidade, no rodapé do contrato) ---
-  const mAssinatura = tPlano.match(/(\d{1,2})\s*de\s*([a-zçãéô]+)\s*de\s*(\d{4}),\s*([^–\-]+?)\s*[–\-]\s*PR/i);
+  const mAssinatura = tPlano.match(/(\d{1,2})\s*de\s*([a-zçãéô]+)\s*de\s*(\d{4}),\s*([^–—\-]+?)\s*[–—\-]\s*PR/i);
   if(mAssinatura){
     c.dataAssinatura = dataExtensoParaIso(mAssinatura[1], mAssinatura[2], mAssinatura[3]);
     c.cidadeAssinatura = mAssinatura[4].trim();
@@ -959,7 +1047,11 @@ function campo(label, field, valor, { tipo = "text", placeholder = "", largura =
 function opcoesTurmaHtml(turmas, curso, selecionada){
   const lista = [...(turmas || [])].sort((a, b) => String(a.nome || "").localeCompare(String(b.nome || "")));
   const alvo = String(curso || "").toLowerCase().trim();
-  const doCurso = alvo ? lista.filter(t => String(t.disciplina || "").toLowerCase().trim() === alvo) : [];
+  const alvos = alvo.split("+").map(x => x.trim()).filter(Boolean);
+  const doCurso = alvo ? lista.filter(t => {
+    const d = String(t.disciplina || "").toLowerCase().trim();
+    return d === alvo || alvos.includes(d);
+  }) : [];
   const outras = lista.filter(t => !doCurso.includes(t));
   const opt = (t, comDisciplina) => `<option value="${esc(t.id)}" ${t.id === selecionada ? "selected" : ""}>${esc(
     `${t.nome}${comDisciplina && t.disciplina ? ` (${t.disciplina})` : ""}${t.horario ? ` · ${t.horario}` : ""}`
@@ -986,7 +1078,7 @@ function selectCampo(label, field, valor, opcoes, { largura = "" } = {}){
    unidade, que o sistema não tem como enxergar daqui). */
 function credencial(rotulo, email, senha, quem, nome){
   if(!nome || !nome.trim()){
-    return `<p class="section-eyebrow" style="margin:0 0 8px;">Preencha o nome ${rotulo === "Aluno" ? "do aluno" : "do responsável"} para o login ser gerado.</p>`;
+    return `<p class="section-eyebrow" style="margin:0 0 8px;">Preencha o nome ${rotulo === "Responsável" ? "do responsável" : "do aluno"} para o login ser gerado.</p>`;
   }
   return `
     <div class="contrato-credencial">
@@ -1021,7 +1113,7 @@ export function contratoModal(c, { cursos = [], alunos = [], turmas = [] } = {})
   const resultadoHtml = r ? `
     <div class="aluno-modal-section">
       <p class="teacher-success" style="margin:0 0 6px;">Contrato gerado na outra aba.</p>
-      ${(r.aluno || r.responsavel) ? `<ul class="contrato-acessos-lista">${linhaAcesso("Aluno", r.aluno, "aluno", c.contatoAluno)}${linhaAcesso("Responsável", r.responsavel, "resp", c.contatoResp)}</ul>` : ""}
+      ${(r.aluno || r.aluno2 || r.responsavel || (r.extras || []).length) ? `<ul class="contrato-acessos-lista">${linhaAcesso(c.segundoAluno ? "Aluno 1" : "Aluno", r.aluno, "aluno", c.contatoAluno)}${linhaAcesso("Aluno 2", r.aluno2, "aluno2", c.contatoAluno2)}${linhaAcesso("Responsável", r.responsavel, "resp", c.contatoResp)}${(r.extras || []).map((x, k) => linhaAcesso(`Responsável (${x.nome})`, x.acesso, `extra-${k}`, x.contato)).join("")}</ul>` : ""}
       ${(r.avisos || []).map(a => `<p class="section-eyebrow" style="margin:4px 0 0;">${esc(a)}</p>`).join("")}
     </div>` : (c.salvandoAcessos ? `
     <div class="aluno-modal-section"><p class="section-eyebrow" style="margin:0;">Criando os cadastros e os logins…</p></div>` : "");
@@ -1033,6 +1125,18 @@ export function contratoModal(c, { cursos = [], alunos = [], turmas = [] } = {})
   const opcoesAluno = [{ valor: "", texto: "— digitar manualmente —" }].concat(
     alunos.map(a => ({ valor: a.nome, texto: a.nome + (a.turma ? ` · ${a.turma}` : "") }))
   );
+
+  const blocoAluno2Form = c.segundoAluno ? `
+        <p class="form-secao" style="margin:12px 0 4px;">Segundo aluno</p>
+        ${alunos.length ? `<div class="contrato-linha">${selectCampo("Puxar de um aluno já cadastrado", "aluno2Cadastrado", "", opcoesAluno, { largura: "320px" })}</div>` : ""}
+        <div class="contrato-linha">
+          ${campo("Nome completo", "aluno2Nome", c.aluno2Nome, { largura: "260px" })}
+          ${campo("CPF", "aluno2Cpf", c.aluno2Cpf, { largura: "140px", placeholder: "000.000.000-00" })}
+          ${campo("RG", "aluno2Rg", c.aluno2Rg, { largura: "130px" })}
+          ${campo("Nascimento", "aluno2Nascimento", c.aluno2Nascimento, { tipo: "date", largura: "150px" })}
+          ${campo("WhatsApp do aluno", "contatoAluno2", c.contatoAluno2, { largura: "170px", placeholder: "(46) 99999-9999" })}
+        </div>
+        <p class="section-eyebrow" style="margin:6px 0 0;">O segundo aluno usa o mesmo endereço, curso, horário e valores do primeiro. O valor do contrato é o total dos dois.</p>` : "";
 
   const opcoesCurso = [{ valor: "", texto: "— escolha o curso —" }].concat(
     (cursos.length ? cursos : ["Inglês", "Recreação", "Robótica", "Informática"]).map(x => ({ valor: x, texto: x }))
@@ -1058,7 +1162,9 @@ export function contratoModal(c, { cursos = [], alunos = [], turmas = [] } = {})
       ${campo("Bairro", "respBairro", c.respBairro, { largura: "140px" })}
       ${campo("Cidade", "respCidade", c.respCidade, { largura: "160px" })}
       ${campo("WhatsApp do responsável", "contatoResp", c.contatoResp, { largura: "180px", placeholder: "(46) 99999-9999" })}
-    </div>`;
+      ${selectCampo("É mãe, pai ou responsável legal?", "respParentesco", c.respParentesco, [{ valor: "", texto: "— escolha —" }].concat(PARENTESCOS_CONTRATO.map(p => ({ valor: p.key, texto: p.label }))), { largura: "190px" })}
+    </div>
+    ${respsExtrasHtml(c, "contrato")}`;
 
   const blocoValores = c.formatoValor === "curso-material" ? `
     <div class="contrato-linha">
@@ -1114,6 +1220,11 @@ export function contratoModal(c, { cursos = [], alunos = [], turmas = [] } = {})
           ${campo("WhatsApp do aluno", "contatoAluno", c.contatoAluno, { largura: "170px", placeholder: "(46) 99999-9999" })}
         </div>
         <p class="section-eyebrow" style="margin:6px 0 0;">O WhatsApp e a data de nascimento alimentam a aba "Aniversários". Sem o número do aluno, a mensagem vai para o responsável.</p>
+        <label class="responsavel-vinculo-item" style="margin-top:10px;">
+          <input type="checkbox" data-action="contrato-segundo-aluno" ${c.segundoAluno ? "checked" : ""} />
+          <span>Contrato com dois alunos (irmãos)</span>
+        </label>
+        ${blocoAluno2Form}
       </div>
 
       <div class="aluno-modal-section">
@@ -1207,8 +1318,9 @@ export function contratoModal(c, { cursos = [], alunos = [], turmas = [] } = {})
           <span>Cadastrar o aluno e criar os logins junto com o contrato</span>
         </label>
         ${c.criarAcessos ? `
-          ${precisaLoginAluno ? credencial("Aluno", c.emailAluno, c.senhaAluno, "aluno", c.alunoNome) : `
+          ${precisaLoginAluno ? credencial(c.segundoAluno ? "Aluno 1" : "Aluno", c.emailAluno, c.senhaAluno, "aluno", c.alunoNome) : `
             <p class="section-eyebrow" style="margin:0 0 8px;">${c.curso ? `Aluno de <b>${esc(c.curso)}</b> não recebe login próprio — só o responsável acompanha pelo app.` : "Escolha o curso para saber se o aluno recebe login."}</p>`}
+          ${precisaLoginAluno && c.segundoAluno ? credencial("Aluno 2", c.emailAluno2, c.senhaAluno2, "aluno2", c.aluno2Nome) : ""}
           ${c.semResponsavel ? "" : credencial("Responsável", c.emailResp, c.senhaResp, "resp", c.respNome)}
           <p class="section-eyebrow" style="margin:6px 0 0;">Login e senha saem prontos, montados a partir do nome. A senha tem 6 dígitos e é de uso único: dite pra família e oriente a trocar no primeiro acesso, em "Meu perfil".</p>
         ` : `<p class="section-eyebrow" style="margin:0;">Desmarcado: o contrato sai normalmente, mas nenhum cadastro ou login é criado.</p>`}
@@ -1251,6 +1363,69 @@ const ICONS_IMPORT = {
   upload: `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M5 16v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3"/></svg>`,
 };
 
+/* ---------------- Parentesco e outros responsáveis ---------------- */
+
+/* As chaves precisam bater com PARENTESCOS do script.js (guardado em
+   responsaveis/{id}.parentesco). A ordem aqui é a da tela. */
+const PARENTESCOS_CONTRATO = [
+  { key: "mae", label: "Mãe" },
+  { key: "pai", label: "Pai" },
+  { key: "responsavel_legal", label: "Responsável legal" },
+];
+function parentescoOpcoesHtml(valor, vazio = "Parentesco"){
+  return `<option value="">${esc(vazio)}</option>`
+    + PARENTESCOS_CONTRATO.map(p => `<option value="${p.key}" ${valor === p.key ? "selected" : ""}>${p.label}</option>`).join("");
+}
+export function parentescoRotulo(chave){
+  const p = PARENTESCOS_CONTRATO.find(x => x.key === chave);
+  return p ? p.label : "";
+}
+
+/* Linhas dos "outros responsáveis" + o botão de adicionar. Serve tanto pro
+   formulário do contrato (escopo "contrato") quanto pra prévia da
+   importação (escopo "import", com o número da linha). */
+function respsExtrasHtml(c, escopo, row = 0){
+  const extras = c.respsExtras || [];
+  const attrs = (campo, k) => `data-resp-extra="${campo}" data-escopo="${escopo}" data-row="${row}" data-idx="${k}"`;
+  const linhas = extras.map((e, k) => `
+    <div class="contrato-linha resp-extra-linha">
+      <input class="teacher-text-input" style="flex:1 1 200px;" placeholder="Nome do outro responsável" value="${esc(e.nome)}" ${attrs("nome", k)} />
+      <input class="teacher-text-input import-campo ${e.nome && !telefoneOk(e.contato) ? "is-faltando" : ""}" data-importante="2" style="flex:1 1 170px;" placeholder="WhatsApp" value="${esc(e.contato)}" ${attrs("contato", k)} />
+      <select class="teacher-text-input import-campo ${e.nome && !e.parentesco ? "is-faltando" : ""}" data-importante="2" style="flex:0 1 170px;" ${attrs("parentesco", k)} aria-label="Parentesco">${parentescoOpcoesHtml(e.parentesco)}</select>
+      <button type="button" class="resp-extra-remover" data-action="resp-extra-remove" data-escopo="${escopo}" data-row="${row}" data-idx="${k}" title="Remover este responsável" aria-label="Remover este responsável">${ICONS_IMPORT.close}</button>
+    </div>`).join("");
+  return `${linhas}
+    <div class="resp-extra-add">
+      <button type="button" class="aniversario-btn" data-action="resp-extra-add" data-escopo="${escopo}" data-row="${row}">+ Adicionar outro responsável</button>
+      <span class="section-eyebrow" style="margin:0;">Este aluno tem mais um responsável (mãe, pai ou outro)? Cada um ganha cadastro e acesso próprios ao app.</span>
+    </div>`;
+}
+
+/* O aluno é menor de idade — ou não dá pra saber? (sem data de nascimento) */
+function alunoMenorOuIncerto(c){
+  const m = String(c.alunoNascimento || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if(!m) return true;
+  const hoje = new Date();
+  let idade = hoje.getFullYear() - Number(m[1]);
+  if(hoje.getMonth() + 1 < Number(m[2]) || (hoje.getMonth() + 1 === Number(m[2]) && hoje.getDate() < Number(m[3]))) idade--;
+  return idade < 18;
+}
+
+/* O que a leitura do PDF deveria ter trazido e não trouxe. Aparece na
+   prévia pra secretaria preencher na hora, em vez de descobrir só depois.
+   `obrigatorio` = sem isso o contrato não é importado. */
+export function camposFaltandoLeitura(c){
+  const f = [];
+  if(!String(c.alunoNome || "").trim()) f.push({ campo: "alunoNome", rotulo: "nome do aluno", obrigatorio: true });
+  if(!c.curso) f.push({ campo: "curso", rotulo: "curso", obrigatorio: true });
+  if(!c.cnpj) f.push({ campo: "cnpj", rotulo: "CNPJ da contratada", obrigatorio: true });
+  if(!c.alunoNascimento) f.push({ campo: "alunoNascimento", rotulo: "data de nascimento", obrigatorio: false });
+  if(!String(c.respNome || "").trim() && (!c.semResponsavel || alunoMenorOuIncerto(c))){
+    f.push({ campo: "respNome", rotulo: "nome do responsável", obrigatorio: false });
+  }
+  return f;
+}
+
 /* Uma linha da prévia — um PDF já lido, com os campos que deram pra
    reconhecer. Fica compacto (só o essencial) porque pode vir junto
    com dezenas de outros; qualquer ajuste fino sobra pra editar depois
@@ -1279,12 +1454,26 @@ function itemImportacaoHtml(item, i, cursosDisponiveis, turmas = []){
         ? `<button type="button" class="aniversario-btn" data-action="import-contrato-enviar-acesso" data-row="${i}" data-quem="${quem}">${ICONS_IMPORT.send} Enviar acesso no WhatsApp</button>`
         : `<span class="section-eyebrow" style="margin:0;">sem WhatsApp cadastrado</span>`}
     </li>` : "";
-  const acessosHtml = item.status === "ok" && item.acessos && (item.acessos.aluno || item.acessos.responsavel) ? `
+  const acessosHtml = item.status === "ok" && item.acessos && (item.acessos.aluno || item.acessos.aluno2 || item.acessos.responsavel || (item.acessos.extras || []).length) ? `
     <ul class="contrato-acessos-lista">
-      ${linhaAcessoImport("Aluno", item.acessos.aluno, "aluno", c.contatoAluno)}
+      ${linhaAcessoImport(c.segundoAluno ? "Aluno 1" : "Aluno", item.acessos.aluno, "aluno", c.contatoAluno)}
+      ${linhaAcessoImport("Aluno 2", item.acessos.aluno2, "aluno2", c.contatoAluno2)}
       ${linhaAcessoImport("Responsável", item.acessos.responsavel, "resp", c.contatoResp)}
+      ${(item.acessos.extras || []).map((x, k) => linhaAcessoImport(`Responsável (${x.nome})`, x.acesso, `extra-${k}`, x.contato)).join("")}
     </ul>` : "";
   const envioMsgHtml = item.envioMsg ? `<p class="section-eyebrow" style="margin:0;">${esc(item.envioMsg)}</p>` : "";
+
+  const faltando = camposFaltandoLeitura(c);
+  const falta = {};
+  faltando.forEach(f => { falta[f.campo] = f.obrigatorio ? "1" : "2"; });
+  const nivelCampo = campo => (campo === "alunoNome" || campo === "curso" || campo === "cnpj") ? "1" : "2";
+  const mc = campo => `import-campo${falta[campo] ? " is-faltando" : ""}`;           // classes
+  const ma = campo => `data-importante="${falta[campo] || nivelCampo(campo)}"`;      // atributo
+  const faltandoHtml = faltando.length && item.status !== "ok" ? `
+    <div class="import-contrato-faltando">
+      ${ICONS_IMPORT.warn}
+      <span>Não achei no PDF: <b>${faltando.map(f => esc(f.rotulo)).join(", ")}</b>. Preencha nos campos marcados abaixo${faltando.some(f => f.obrigatorio) ? " — sem os obrigatórios este contrato não é importado" : ""}.</span>
+    </div>` : "";
 
   const avisosHtml = item.avisos.length ? `
     <div class="import-contrato-avisos">
@@ -1298,23 +1487,32 @@ function itemImportacaoHtml(item, i, cursosDisponiveis, turmas = []){
       </label>
       <div class="import-contrato-campos">
         <div class="import-contrato-arquivo">${esc(item.arquivoNome)}</div>
+        ${faltandoHtml}
         <div class="contrato-linha">
-          <input class="teacher-text-input" style="flex:1 1 220px;" placeholder="Nome do aluno" value="${esc(c.alunoNome)}" data-import-campo="alunoNome" data-row="${i}" />
-          <input type="date" class="teacher-text-input" style="flex:1 1 150px;" value="${esc(c.alunoNascimento)}" data-import-campo="alunoNascimento" data-row="${i}" />
-          <select class="teacher-text-input" style="flex:1 1 150px;" data-import-campo="curso" data-row="${i}">${opcoesCurso.map(o => `<option value="${esc(o.valor)}" ${c.curso === o.valor ? "selected" : ""}>${esc(o.texto)}</option>`).join("")}</select>
+          <input class="teacher-text-input ${mc("alunoNome")}" ${ma("alunoNome")} style="flex:1 1 220px;" placeholder="Nome do aluno" value="${esc(c.alunoNome)}" data-import-campo="alunoNome" data-row="${i}" />
+          <input type="date" class="teacher-text-input ${mc("alunoNascimento")}" ${ma("alunoNascimento")} style="flex:1 1 150px;" value="${esc(c.alunoNascimento)}" data-import-campo="alunoNascimento" data-row="${i}" aria-label="Data de nascimento" />
+          <select class="teacher-text-input ${mc("curso")}" ${ma("curso")} style="flex:1 1 150px;" data-import-campo="curso" data-row="${i}">${opcoesCurso.map(o => `<option value="${esc(o.valor)}" ${c.curso === o.valor ? "selected" : ""}>${esc(o.texto)}</option>`).join("")}</select>
           <select class="teacher-text-input" style="flex:1 1 190px;" data-import-campo="turmaId" data-row="${i}" ${turmas.length ? "" : "disabled"} aria-label="Turma do aluno">
             ${turmas.length ? opcoesTurmaHtml(turmas, c.curso, c.turmaId) : `<option value="">— nenhuma turma criada —</option>`}
           </select>
-          <select class="teacher-text-input" style="flex:0 1 140px;" data-import-campo="cnpj" data-row="${i}">
+          <select class="teacher-text-input ${mc("cnpj")}" ${ma("cnpj")} style="flex:0 1 140px;" data-import-campo="cnpj" data-row="${i}">
             <option value="">— CNPJ —</option>
             ${EMPRESAS.map(e => `<option value="${esc(e.cnpj)}" ${c.cnpj === e.cnpj ? "selected" : ""}>${esc(e.cnpj)}</option>`).join("")}
           </select>
         </div>
+        ${c.segundoAluno ? `
         <div class="contrato-linha">
-          <input class="teacher-text-input" style="flex:1 1 200px;" placeholder="${c.semResponsavel ? "Sem responsável (maior de idade)" : "Nome do responsável"}" value="${esc(c.respNome)}" data-import-campo="respNome" data-row="${i}" />
+          <input class="teacher-text-input" style="flex:1 1 220px;" placeholder="Nome do segundo aluno" value="${esc(c.aluno2Nome)}" data-import-campo="aluno2Nome" data-row="${i}" />
+          <input type="date" class="teacher-text-input" style="flex:1 1 150px;" value="${esc(c.aluno2Nascimento)}" data-import-campo="aluno2Nascimento" data-row="${i}" />
+          <input class="teacher-text-input" style="flex:1 1 170px;" placeholder="WhatsApp do segundo aluno" value="${esc(c.contatoAluno2)}" data-import-campo="contatoAluno2" data-row="${i}" />
+        </div>` : ""}
+        <div class="contrato-linha">
+          <input class="teacher-text-input ${mc("respNome")}" ${ma("respNome")} style="flex:1 1 200px;" placeholder="${c.semResponsavel ? "Sem responsável (maior de idade)" : "Nome do responsável"}" value="${esc(c.respNome)}" data-import-campo="respNome" data-row="${i}" />
           <input class="teacher-text-input" style="flex:1 1 170px;" placeholder="WhatsApp do aluno" value="${esc(c.contatoAluno)}" data-import-campo="contatoAluno" data-row="${i}" />
-          <input class="teacher-text-input" style="flex:1 1 170px;" placeholder="WhatsApp do responsável" value="${esc(c.contatoResp)}" data-import-campo="contatoResp" data-row="${i}" />
+          <input class="teacher-text-input import-campo${c.respNome && !telefoneOk(c.contatoResp) ? " is-faltando" : ""}" data-importante="2" style="flex:1 1 170px;" placeholder="WhatsApp do responsável" value="${esc(c.contatoResp)}" data-import-campo="contatoResp" data-row="${i}" />
+          <select class="teacher-text-input import-campo${c.respNome && !c.respParentesco ? " is-faltando" : ""}" data-importante="2" style="flex:0 1 190px;" data-import-campo="respParentesco" data-row="${i}" aria-label="Mãe, pai ou responsável legal">${parentescoOpcoesHtml(c.respParentesco, "Mãe, pai ou resp. legal?")}</select>
         </div>
+        ${respsExtrasHtml(c, "import", i)}
         <div class="import-contrato-assinatura" role="group" aria-label="Situação da assinatura">
           <span class="import-contrato-assinatura-rotulo">Este contrato já foi assinado?</span>
           <div class="import-assinatura-opcoes">
@@ -1343,6 +1541,10 @@ export function importarContratosModal(state_, { cursos = [], turmas = [] } = {}
   if(!state_.importContratosModalAberto) return "";
   const itens = state_.importContratosItens;
   const selecionados = itens.filter(it => it.selecionado && it.status !== "ok").length;
+  const comFalta = itens.filter(it => it.selecionado && it.status !== "ok" && camposFaltandoLeitura(it.contrato).length);
+  const bloqueados = comFalta.filter(it => camposFaltandoLeitura(it.contrato).some(f => f.obrigatorio)).length;
+  const bannerFaltaHtml = comFalta.length ? `
+      <p class="import-contrato-faltando" style="margin:0 0 10px;">${ICONS_IMPORT.warn}<span><b>${comFalta.length}</b> contrato(s) com campos que não consegui ler — estão destacados abaixo pra você preencher.${bloqueados ? ` <b>${bloqueados}</b> sem dado obrigatório (não serão importados até preencher).` : ""}</span></p>` : "";
 
   const areaUploadHtml = `
     <div class="aluno-modal-section">
@@ -1352,7 +1554,7 @@ export function importarContratosModal(state_, { cursos = [], turmas = [] } = {}
         <span class="upload-dropzone-icon">${state_.importContratosLendo ? ICONS_IMPORT.spinner : ICONS_IMPORT.upload}</span>
         <span class="upload-dropzone-text">
           <strong>${state_.importContratosLendo ? "Lendo os PDFs…" : "Toque pra escolher os contratos"}</strong>
-          <span>Pode selecionar vários arquivos PDF de uma vez</span>
+          <span>${state_.importContratosLendo && state_.importContratosOcrAndamento ? esc(state_.importContratosOcrAndamento) : "Pode selecionar vários PDFs de uma vez — digitais ou escaneados"}</span>
         </span>
         <input type="file" id="import-contratos-pdf-files" accept="application/pdf" multiple style="display:none;" ${state_.importContratosLendo ? "disabled" : ""} />
       </label>
@@ -1360,7 +1562,7 @@ export function importarContratosModal(state_, { cursos = [], turmas = [] } = {}
 
   const listaHtml = itens.length ? `
     <div class="aluno-modal-section">
-      <h3 class="teacher-label">${itens.length} contrato(s) lido(s) — confira antes de importar</h3>
+      <h3 class="teacher-label">${itens.length} contrato(s) lido(s) — confira antes de importar</h3>${bannerFaltaHtml}
       <div class="import-contrato-bulk">
         <span>Assinatura de todos:</span>
         <button type="button" class="import-assinatura-btn is-assinado" data-action="import-contrato-assinatura-todos" data-valor="assinado">Já assinados</button>

@@ -1,7 +1,7 @@
 /* ==================================================================
    Educa+ — Cloud Functions administrativas
    ------------------------------------------------------------------
-   Duas funções, e só duas:
+   Quatro funções:
 
      definirSenhaUsuario({ uid, senha })  — define a senha de outra
        pessoa na hora (o caso do aluno que não tem e-mail de verdade e
@@ -10,6 +10,16 @@
      excluirUsuarioAuth({ uid })          — apaga o login da pessoa no
        Firebase Authentication, pra ela não continuar entrando depois
        de o cadastro ter sido excluído.
+
+     atualizarEmailUsuario({ uid, email }) — troca o e-mail de LOGIN de
+       outra pessoa (Authentication + usuarios/{uid}.email). Usada na
+       edição de responsáveis da Gestão.
+
+     removerLoginAluno({ alunoId })       — tira só o ACESSO do aluno
+       (login no Authentication + usuarios/{uid}) e limpa uid/e-mail do
+       cadastro, mantendo o aluno, a turma e o histórico. Descobre o uid
+       sozinha (pelo alunoId ou pelo e-mail), o que o navegador não
+       consegue fazer nos cadastros antigos.
 
    Por que isso precisa de backend: o SDK do Firebase que roda no
    navegador só consegue mexer na conta que está logada naquele
@@ -142,5 +152,96 @@ exports.excluirUsuarioAuth = onCall({ region: REGIAO }, async (request) => {
     if (err.code !== "auth/user-not-found") throw err;
   }
 
+  return { ok: true };
+});
+
+/* ------------------------------------------------------------------
+   Remove só o login de um aluno, mantendo o cadastro dele.
+   Tudo aqui roda com o Admin SDK (ignora as regras do Firestore), mas
+   só depois de conferir que o aluno é de uma unidade de quem chamou.
+   ------------------------------------------------------------------ */
+exports.removerLoginAluno = onCall({ region: REGIAO }, async (request) => {
+  const alunoId = (request.data && request.data.alunoId) || "";
+  if (!alunoId) {
+    throw new HttpsError("invalid-argument", "Informe o aluno.");
+  }
+
+  const minhas = await escolasDoChamador(request);
+  const ref = db.doc(`alunos/${alunoId}`);
+  const snap = await ref.get();
+  if (!snap.exists) {
+    throw new HttpsError("not-found", "Cadastro do aluno não encontrado.");
+  }
+  const aluno = snap.data();
+  if (!minhas.includes(aluno.escolaId)) {
+    throw new HttpsError("permission-denied", "Este aluno não é da sua unidade.");
+  }
+
+  // 1) Acha o(s) uid(s): o gravado no aluno, quem aponta pra ele em
+  //    usuarios (cadastros antigos não guardavam o uid) e, por último,
+  //    o e-mail de acesso no Authentication.
+  const uids = new Set();
+  if (aluno.uid) uids.add(aluno.uid);
+  const porAluno = await db.collection("usuarios").where("alunoId", "==", alunoId).get();
+  porAluno.forEach((d) => uids.add(d.id));
+  if (uids.size === 0 && aluno.email) {
+    try {
+      const u = await admin.auth().getUserByEmail(aluno.email);
+      uids.add(u.uid);
+    } catch (err) {
+      if (err.code !== "auth/user-not-found") throw err;
+    }
+  }
+
+  // 2) Apaga o login e o perfil de cada um.
+  for (const uid of uids) {
+    try {
+      await admin.auth().deleteUser(uid);
+    } catch (err) {
+      if (err.code !== "auth/user-not-found") throw err;
+    }
+    await db.doc(`usuarios/${uid}`).delete();
+  }
+
+  // 3) Limpa o acesso no cadastro do aluno.
+  await ref.update({
+    uid: admin.firestore.FieldValue.delete(),
+    email: "",
+  });
+
+  return { ok: true, removido: uids.size > 0 || !!aluno.email };
+});
+
+/* ------------------------------------------------------------------
+   Troca o e-mail de login de outra pessoa da mesma unidade.
+   O app grava o e-mail em responsaveis/{id} depois que esta função
+   responde ok; aqui cuidamos do Authentication e de usuarios/{uid}.
+   ------------------------------------------------------------------ */
+exports.atualizarEmailUsuario = onCall({ region: REGIAO }, async (request) => {
+  const uid = (request.data && request.data.uid) || "";
+  const email = String((request.data && request.data.email) || "").trim().toLowerCase();
+
+  if (!uid) {
+    throw new HttpsError("invalid-argument", "Informe o usuário.");
+  }
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    throw new HttpsError("invalid-argument", "E-mail inválido.");
+  }
+
+  await garantirMesmaUnidade(request, uid);
+
+  try {
+    await admin.auth().updateUser(uid, { email, emailVerified: false });
+  } catch (err) {
+    if (err.code === "auth/email-already-exists") {
+      throw new HttpsError("already-exists", "Já existe outra conta com esse e-mail.");
+    }
+    if (err.code === "auth/invalid-email") {
+      throw new HttpsError("invalid-argument", "E-mail inválido.");
+    }
+    throw err;
+  }
+
+  await db.doc(`usuarios/${uid}`).update({ email });
   return { ok: true };
 });

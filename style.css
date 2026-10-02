@@ -279,6 +279,14 @@ button {
 }
 
 .sidebar {
+    position: sticky;
+    top: 0;
+    align-self: flex-start;
+    height: 100vh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, .18) transparent;
     width: 240px;
     flex-shrink: 0;
     background: var(--navy-deep);
@@ -363,21 +371,39 @@ button {
     flex-direction: column;
     gap: 3px;
     flex: 1;
+    margin-bottom: 16px;
 }
 
 .nav-btn {
     display: flex;
     align-items: center;
     gap: 11px;
+    width: 100%;
     padding: 10px 12px;
     border-radius: 9px;
     border: none;
     cursor: pointer;
     text-align: left;
+    font-family: inherit;
     font-size: 14px;
     font-weight: 500;
+    line-height: 1.25;
     background: transparent;
     color: rgba(255, 255, 255, 0.72);
+    transition: background .15s ease, color .15s ease;
+}
+
+.nav-btn:hover {
+    background: rgba(255, 255, 255, 0.07);
+    color: #fff;
+}
+
+.nav-btn:focus-visible,
+.logout-btn:focus-visible,
+.mobile-drawer-btn:focus-visible,
+.mobile-drawer-logout:focus-visible {
+    outline: 2px solid var(--gold);
+    outline-offset: 2px;
 }
 
 .nav-btn svg, .logout-btn svg {
@@ -389,12 +415,17 @@ button {
 .nav-btn.active {
     background: rgba(201, 162, 74, 0.16);
     color: var(--gold-light);
+    font-weight: 600;
+    box-shadow: inset 3px 0 0 var(--gold);
 }
 
 .logout-btn {
     display: flex;
     align-items: center;
     gap: 11px;
+    width: 100%;
+    font-family: inherit;
+    transition: background .15s ease, color .15s ease;
     padding: 10px 12px;
     border-radius: 9px;
     border: 1px solid rgba(255, 255, 255, 0.1);
@@ -402,6 +433,11 @@ button {
     color: rgba(255, 255, 255, 0.6);
     font-size: 13.5px;
     cursor: pointer;
+}
+
+.logout-btn:hover {
+    background: rgba(255, 255, 255, 0.07);
+    color: #fff;
 }
 
 .main {
@@ -537,6 +573,8 @@ button {
 }
 
 .turma-card {
+    min-width: 0;
+    overflow: hidden;
     display: flex;
     flex-direction: column;
     gap: 14px;
@@ -600,7 +638,9 @@ button {
     color: var(--slate);
     font-size: 12px;
     font-weight: 600;
-    white-space: nowrap;
+    max-width: 100%;
+    white-space: normal;
+    line-height: 1.3;
 }
 
 .turma-card-tag svg {
@@ -922,9 +962,11 @@ button {
         border-radius: 50%;
         color: var(--gold-light);
         font: inherit;
-        font-size: 9px;
+        font-size: 10px;
+        font-weight: 600;
         cursor: pointer;
         box-shadow: 0 8px 24px rgba(0,0,0,.25);
+        -webkit-tap-highlight-color: transparent;
         z-index: 22;
     }
 
@@ -934,6 +976,7 @@ button {
         inset: 0;
         background: rgba(8,21,36,.45);
         z-index: 20;
+        animation: menuFadeIn .2s ease;
     }
 
     .mobile-drawer.open {
@@ -949,15 +992,24 @@ button {
         color: #fff;
         box-shadow: -12px 0 36px rgba(0,0,0,.25);
         z-index: 21;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        animation: menuSlideIn .22s ease;
     }
+
+    @keyframes menuFadeIn { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes menuSlideIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
 
     .mobile-drawer-head { display: flex; align-items: center; justify-content: space-between; padding: 0 4px 18px; color: var(--gold-light); font-size: 18px; }
     .mobile-drawer-head button { display: grid; place-items: center; padding: 5px; border: 0; color: rgba(255,255,255,.8); background: transparent; cursor: pointer; }
-    .mobile-drawer-nav { display: flex; flex-direction: column; gap: 5px; }
+    .mobile-drawer-nav { display: flex; flex-direction: column; gap: 4px; margin-bottom: 16px; }
     .mobile-drawer-btn, .mobile-drawer-logout { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px; border: 0; border-radius: 9px; background: transparent; color: rgba(255,255,255,.72); text-align: left; font: inherit; font-size: 14px; cursor: pointer; }
     .mobile-drawer-btn svg, .mobile-drawer-logout svg { width: 18px; height: 18px; flex-shrink: 0; }
-    .mobile-drawer-btn.active { color: var(--gold-light); background: rgba(201,162,74,.16); }
-    .mobile-drawer-logout { margin-top: auto; border: 1px solid rgba(255,255,255,.13); color: rgba(255,255,255,.7); }
+    .mobile-drawer-btn { min-height: 46px; -webkit-tap-highlight-color: transparent; }
+    .mobile-drawer-btn:active { background: rgba(255,255,255,.07); }
+    .mobile-drawer-btn.active { color: var(--gold-light); background: rgba(201,162,74,.16); font-weight: 600; box-shadow: inset 3px 0 0 var(--gold); }
+    .mobile-drawer .sidebar-school { margin: 0 4px 14px; }
+    .mobile-drawer-logout { flex-shrink: 0; margin-top: auto; border: 1px solid rgba(255,255,255,.13); color: rgba(255,255,255,.7); }
     }
 
 .class-status {
@@ -2542,3 +2594,96 @@ textarea.teacher-text-input { resize: vertical; font-family: inherit; }
     .suporte-acoes { flex-direction: column-reverse; align-items: stretch; }
     .suporte-acoes .teacher-primary-btn, .suporte-acoes .attendance-btn { width: 100%; justify-content: center; }
 }
+
+
+/* ---- Importação de contratos: campos que a leitura não achou ---- */
+.import-campo.is-faltando[data-importante="1"] {
+  border-color: #c4544a;
+  background: #fdf1ef;
+  box-shadow: 0 0 0 2px rgba(196, 84, 74, .12);
+}
+.import-campo.is-faltando[data-importante="2"] {
+  border-color: #d9b45a;
+  background: #fffaf0;
+}
+.import-contrato-faltando {
+  display: flex; align-items: flex-start; gap: 7px;
+  padding: 8px 10px; border-radius: 10px;
+  background: #fff6e3; border: 1px solid #ecd9a6;
+  font-size: 12.5px; line-height: 1.4; color: #5b4a1e;
+}
+.import-contrato-faltando svg { width: 14px; height: 14px; flex-shrink: 0; margin-top: 1px; color: #c9a24a; }
+
+/* ---- Outros responsáveis do mesmo aluno ---- */
+.resp-extra-linha { align-items: center; }
+.resp-extra-remover {
+  background: transparent; border: 0; cursor: pointer; color: var(--slate);
+  padding: 4px; line-height: 0; border-radius: 8px; flex: 0 0 auto;
+}
+.resp-extra-remover svg { width: 18px; height: 18px; }
+.resp-extra-remover:hover { background: rgba(18, 32, 50, .06); }
+.resp-extra-add { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 2px; }
+
+
+/* ---------- Alunos e Responsáveis: listas ---------- */
+.lista-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 16px; margin-bottom: 16px; }
+.lista-toolbar .search-wrap { flex: 1 1 260px; max-width: 380px; margin-bottom: 0; }
+.lista-toolbar .search-input { padding: 11px 12px 11px 36px; background: #fff; transition: border-color .15s ease, box-shadow .15s ease; }
+.lista-toolbar .search-wrap svg { top: 13px; }
+.lista-toolbar .search-input:focus { outline: none; border-color: var(--gold); box-shadow: 0 0 0 3px rgba(201, 162, 74, .18); }
+.lista-contador { margin-left: auto; color: var(--slate); font-size: 13px; }
+.lista-contador strong { color: var(--ink); font-size: 15px; font-weight: 700; }
+
+.lista-pessoas { overflow: hidden; box-shadow: 0 1px 2px rgba(18, 32, 50, .04); }
+.lista-vazia { padding: 28px 20px; text-align: center; color: var(--slate); font-size: 14px; }
+
+.pessoa-row { display: flex; align-items: center; gap: 14px; padding: 12px 18px; flex-wrap: nowrap; transition: background .15s ease; }
+.lista-pessoas .pessoa-row + .pessoa-row { border-top: 1px solid rgba(18, 32, 50, .07); }
+.pessoa-row:hover { background: rgba(201, 162, 74, .07); }
+.pessoa-row .avatar-foto,
+.pessoa-row .student-avatar { width: 42px; height: 42px; font-size: 14px; }
+
+.pessoa-principal { flex: 1; min-width: 0; display: flex; align-items: center; gap: 14px; padding: 0; border: 0; background: none; text-align: left; font: inherit; cursor: pointer; }
+.pessoa-info { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; }
+.pessoa-nome { max-width: 100%; color: var(--ink); font-size: 14.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pessoa-sub { max-width: 100%; color: var(--slate); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pessoa-meta { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.pessoa-meta .id-aluno-tag { margin-top: 0; }
+.pessoa-chevron { display: flex; color: rgba(18, 32, 50, .3); transition: transform .15s ease, color .15s ease; }
+.pessoa-row:hover .pessoa-chevron { color: var(--gold-deep); transform: translateX(2px); }
+
+.status-pill { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; white-space: nowrap; }
+.status-pill-aviso { color: var(--gold-deep); background: rgba(201, 162, 74, .16); }
+
+.icon-acao { display: inline-grid; place-items: center; width: 34px; height: 34px; padding: 0; border: 1px solid rgba(18, 32, 50, .12); border-radius: 9px; background: #fff; color: var(--slate); cursor: pointer; transition: border-color .15s ease, color .15s ease, background .15s ease; }
+.icon-acao:hover { border-color: var(--gold); color: var(--gold-deep); background: rgba(201, 162, 74, .08); }
+.icon-acao-perigo:hover { border-color: rgba(177, 74, 61, .45); color: var(--red); background: rgba(177, 74, 61, .08); }
+.icon-acao:focus-visible, .pessoa-principal:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; border-radius: 9px; }
+
+@media (max-width: 760px) {
+    .lista-toolbar .search-wrap { max-width: none; flex-basis: 100%; }
+    .lista-contador { margin-left: 0; }
+    .pessoa-row { gap: 12px; padding: 12px 14px; }
+    .pessoa-row .avatar-foto, .pessoa-row .student-avatar { width: 38px; height: 38px; }
+    .pessoa-row .id-aluno-tag { display: none; }
+}
+
+.icon-acao:disabled { opacity: .5; cursor: not-allowed; }
+
+@media (max-width: 760px) {
+    /* professores têm 4 botões: eles descem para uma linha própria em vez de apertar o nome */
+    .pessoa-row-quebra { flex-wrap: wrap; }
+    .pessoa-row-quebra .pessoa-principal { flex: 1 1 100%; }
+    .pessoa-row-quebra .pessoa-meta { width: 100%; justify-content: flex-end; }
+}
+
+
+/* ---------- pop-up de avisos novos (aluno e responsável) ---------- */
+.avisos-popup { max-width: 480px; }
+.avisos-popup-lista { display: flex; flex-direction: column; gap: 10px; max-height: min(52vh, 420px); overflow-y: auto; margin: 6px 0 4px; padding-right: 2px; }
+.avisos-popup-item { padding: 12px 14px; border: 1px solid rgba(18, 32, 50, .09); border-left: 3px solid var(--gold); border-radius: 10px; background: var(--cream); }
+.avisos-popup-data { color: var(--gold-deep); font-size: 11.5px; font-weight: 700; letter-spacing: .2px; text-transform: uppercase; }
+.avisos-popup-topo { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 6px; color: var(--ink); font-size: 14.5px; }
+.avisos-popup-desc { margin: 6px 0 0; color: var(--ink); font-size: 13.5px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+.avisos-popup-meta { margin-top: 6px; color: var(--slate); font-size: 12px; }
+.avisos-popup-ok { width: 100%; justify-content: center; margin-top: 14px; padding: 12px 15px; }

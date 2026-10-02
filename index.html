@@ -13,6 +13,9 @@
 <!-- PDF.js: usado só pra ler o texto de dentro de um PDF (na Gestão > Professores > Importar turmas),
      direto no navegador, sem mandar o arquivo pra nenhum servidor. Carregado antes do script.js. -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<!-- Tesseract.js: OCR (reconhecimento de texto em imagem) rodando no navegador. Só é usado quando o
+     PDF é escaneado (sem texto selecionável) — na Gestão > Contratos > Importar. -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.1.1/tesseract.min.js"></script>
 <script type="module" src="script.js"></script>
 </body>
 </html>
