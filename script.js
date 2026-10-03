@@ -848,6 +848,10 @@ const MANUAIS_INSTITUICAO = [
   // ---- Financeiro
   { categoria: "financeiro", tipo: "passo", titulo: "Lançar mensalidades", descricao: "Competência, valor e vencimento — pela aba Financeiro ou direto na ficha do aluno.", url: "manuais/financeiro.html#lancar" },
   { categoria: "financeiro", tipo: "passo", titulo: "Anexar Pix copia e cola, código de barras e boleto", descricao: "O que dá para anexar em cada cobrança, limite de tamanho do PDF e como o responsável vê isso.", url: "manuais/financeiro.html#anexos" },
+  { categoria: "financeiro", tipo: "visual", titulo: "Boletos e cobranças: visão geral", descricao: "Onde fica a aba Financeiro, como a secretaria só lança e o que a família vê, mês a mês, com vencimento e forma de pagamento.", url: "manuais/financeiro-boletos.html" },
+  { categoria: "financeiro", tipo: "automatico", titulo: "Leitura automática do PDF do boleto", descricao: "Ao anexar o PDF, o app preenche código de barras, Pix, valor e vencimento sozinho. O que ele lê e quando precisa digitar à mão.", url: "manuais/financeiro-boletos.html#leitura" },
+  { categoria: "financeiro", tipo: "automatico", titulo: "Cobrança nova no dia 01 e aviso na tela", descricao: "A família vê a cobrança a partir do dia 01 do mês de referência e recebe um aviso ao entrar no app. Sem mensagem da secretaria.", url: "manuais/financeiro-boletos.html#dia-01" },
+  { categoria: "financeiro", tipo: "automatico", titulo: "Vencimentos no calendário do responsável", descricao: "O dia de vencimento de cada boleto aparece marcado com \"$\" no calendário, com valor e forma de pagamento.", url: "manuais/financeiro-boletos.html#calendario" },
   
   // ---- Contratos
   { categoria: "contratos", tipo: "passo", titulo: "Gerar um contrato pronto para assinar", descricao: "Escolher o CNPJ (que define unidade, endereço e sócia), preencher aluno, curso, horário e valores, e imprimir ou salvar em PDF.", url: "manuais/contratos.html#gerar" },
@@ -1289,6 +1293,7 @@ const state = {
   instTab: "turmas",
   gestaoSubTab: "cadastro",   // cadastro | acessos — sub-abas dentro de "Gestão"
   finSubTab: "consultar",     // consultar | lancar — sub-abas dentro de "Financeiro"
+  finConsultaBusca: "",         // texto da busca (aluno/turma/IDALUNO) em Financeiro > Consultar
   alunosBusca: "",
   respBusca: "",
   avisosPopup: { aberto: false, itens: [], vistos: [] },   // pop-up de avisos novos (aluno/família)
@@ -1448,7 +1453,11 @@ const state = {
 
   // Gestão > sub-aba "Senhas & acessos"
   gestaoAcessosBusca: "",
-  gestaoAcessosGrupo: "todos",    // todos | alunos | professores | responsaveis
+  gestaoAcessosGrupo: "todos",    // todos | alunos | professores | responsaveis | semlogin
+  geracaoLoteConfirmando: false,  // aba Senhas & acessos > Sem login: confirmação do "gerar login de todos"
+  geracaoLoteRodando: false,
+  geracaoLoteProgresso: "",       // texto "3 de 20…"
+  geracaoLoteResultado: null,     // { criados: [{nome,tipo,email,senha}], falhas: [{nome,motivo}] }
 
   // modal "Gerenciar acesso de {pessoa}" — troca de senha e exclusão
   acessoModalAberto: false,
@@ -1457,6 +1466,7 @@ const state = {
   acessoUid: null,                // uid no Firebase Authentication (pode ser null se a pessoa não tem login)
   acessoNome: "",
   acessoEmail: "",                // e-mail de acesso conhecido (pode estar vazio em cadastros antigos)
+  acessoSenhaSugerida: "",        // senha provisória já sugerida ao abrir quem está sem login
   acessoDefinindoSenha: false,
   acessoCriandoLogin: false,
   acessoExcluindo: false,
@@ -1487,6 +1497,16 @@ const state = {
   instFrequenciaEscolaId: null,
   instFrequenciaCarregando: false,
   instFrequenciaErro: "",
+
+  // Contratos salvos no sistema (PDF guardado) — ver "Contratos guardados no sistema"
+  contratosInst: { escolaId: null, itens: [], carregando: false, carregado: false, erro: "" },  // equipe: todos da unidade
+  contratosFam: {},                     // responsável: { [alunoId]: { itens, carregando, carregado, erro } }
+  contratoUpStatus: "pendente",         // situação dos PDFs que a secretaria vai anexar na ficha
+  contratoUpEnviando: false,
+  contratoUpMsg: "",
+  contratoUpErro: "",
+  contratoOcupado: {},                  // { [contratoId]: true } enquanto envia/atualiza
+  contratoVis: null,                    // visualizador de contrato dentro do app
 
   // ficha do aluno (modal aberto ao clicar num aluno da lista)
   alunoDetalheId: null,
@@ -1745,6 +1765,7 @@ function normalizeAluno(id, dados){
     matriculadoEm: dados.matriculadoEm || "",  // "AAAA-MM-DD" da matrícula (vazio em cadastros antigos)
     contratoStatus: dados.contratoStatus || "",          // "assinado" | "pendente" | "" (sem contrato registrado)
     contratoEnviadoEm: dados.contratoEnviadoEm || "",    // "AAAA-MM-DD" do último envio pra assinatura
+    contratosSalvos: Number(dados.contratosSalvos) || 0, // quantos PDFs de contrato estão guardados (coleção `contratos`)
     foto: dados.foto || (dados.nome || "?").split(" ").map(p=>p[0]).slice(0,2).join("").toUpperCase(),
     notas: Array.isArray(dados.notas) ? dados.notas : [],
     presenca: {
@@ -1818,6 +1839,226 @@ function lerArquivoComoDataUrl(file){
     reader.onerror = () => reject(reader.error || new Error("Falha ao ler o arquivo."));
     reader.readAsDataURL(file);
   });
+}
+
+/* ------------------------------------------------------------------
+   Leitura automática do PDF do boleto.
+   Ao anexar o PDF, o app lê o arquivo no próprio navegador (nada vai pra
+   servidor) e tenta achar:
+     • a linha digitável / código de barras (47 dígitos de boleto bancário
+       ou 48 de convênio/arrecadação) — com conferência dos dígitos
+       verificadores, pra saber se a leitura veio certa;
+     • o Pix copia e cola (texto que começa com 000201 e termina com o CRC
+       "6304XXXX"), conferindo o CRC; se o PDF só tiver o QR Code do Pix
+       (sem o texto), o QR é decodificado com o jsQR;
+     • o valor e o vencimento, que vêm embutidos na linha digitável de 47
+       dígitos (só preenche se os campos estiverem vazios).
+   PDF escaneado (só imagem) cai no OCR, que erra mais — nesse caso a tela
+   avisa pra conferir. Nada é gravado até a secretaria clicar em "Lançar".
+   ------------------------------------------------------------------ */
+function dvMod10(num){
+  let soma = 0, mult = 2;
+  for(let i = num.length - 1; i >= 0; i--){
+    const p = Number(num[i]) * mult;
+    soma += p > 9 ? Math.floor(p / 10) + (p % 10) : p;
+    mult = mult === 2 ? 1 : 2;
+  }
+  return (10 - (soma % 10)) % 10;
+}
+
+function linhaDigitavel47Valida(d){
+  if(d.length !== 47) return false;
+  return [[0, 9, 9], [10, 20, 20], [21, 31, 31]].every(([ini, fim, dv]) => dvMod10(d.slice(ini, fim)) === Number(d[dv]));
+}
+
+function linhaDigitavel48Valida(d){
+  if(d.length !== 48) return false;
+  // blocos de 11 dígitos + DV. Mod 10 vale pra identificadores 6 e 7; os
+  // demais usam mod 11, que não conferimos aqui (aceitamos como "ok").
+  if(!["6", "7"].includes(d[2])) return true;
+  return [0, 12, 24, 36].every(i => dvMod10(d.slice(i, i + 11)) === Number(d[i + 11]));
+}
+
+function acharLinhaDigitavel(texto){
+  const t = String(texto || "");
+  const candidatos = [];
+  const re47 = /(\d{5})[.\s]?(\d{5})\s+(\d{5})[.\s]?(\d{6})\s+(\d{5})[.\s]?(\d{6})\s+(\d)\s+(\d{14})/g;
+  const re48 = /(\d{11})[-\s]?(\d)\s+(\d{11})[-\s]?(\d)\s+(\d{11})[-\s]?(\d)\s+(\d{11})[-\s]?(\d)/g;
+  const reSolta = /\d[\d.\s-]{44,62}\d/g;
+  let m;
+  while((m = re47.exec(t))) candidatos.push(m[0].replace(/\D/g, ""));
+  while((m = re48.exec(t))) candidatos.push(m[0].replace(/\D/g, ""));
+  while((m = reSolta.exec(t))) candidatos.push(m[0].replace(/\D/g, ""));
+  const validos = candidatos.filter(d => (d.length === 47 && linhaDigitavel47Valida(d)) || (d.length === 48 && linhaDigitavel48Valida(d)));
+  if(validos.length) return { digitos: validos[0], valida: true };
+  const qualquer = candidatos.find(d => d.length === 47 || d.length === 48);
+  return qualquer ? { digitos: qualquer, valida: false } : { digitos: "", valida: false };
+}
+
+/* O vencimento do boleto vem como "fator" (dias desde 07/10/1997). Em
+   fev/2025 o fator voltou pra 1000, então um mesmo número pode ser de dois
+   ciclos: escolhemos a data mais próxima de hoje. */
+function vencimentoDoFator(fator){
+  const n = Number(fator);
+  if(!n) return "";
+  const DIA = 86400000;
+  const c1 = Date.UTC(1997, 9, 7) + n * DIA;
+  const c2 = c1 + 9000 * DIA;
+  const agora = Date.now();
+  const alvo = Math.abs(c1 - agora) <= Math.abs(c2 - agora) ? c1 : c2;
+  return new Date(alvo).toISOString().slice(0, 10);
+}
+
+function crc16Pix(str){
+  let crc = 0xFFFF;
+  for(let i = 0; i < str.length; i++){
+    crc ^= str.charCodeAt(i) << 8;
+    for(let b = 0; b < 8; b++){
+      crc = (crc & 0x8000) ? ((crc << 1) ^ 0x1021) : (crc << 1);
+      crc &= 0xFFFF;
+    }
+  }
+  return crc.toString(16).toUpperCase().padStart(4, "0");
+}
+
+/* O Pix pode ter espaços de verdade (nome do recebedor, cidade), e quando o
+   código quebra de linha no PDF não há espaço nenhum na quebra. Por isso
+   tentamos primeiro só sem as quebras de linha e, se o CRC não fechar,
+   sem nenhum espaço. O CRC garante que só devolvemos um código íntegro. */
+function acharPixNoTexto(texto){
+  const variantes = [
+    String(texto || "").replace(/[\r\n]+/g, ""),
+    String(texto || "").replace(/\s+/g, ""),
+  ];
+  for(const t of variantes){
+    let i = t.indexOf("000201");
+    while(i !== -1){
+      let j = t.indexOf("6304", i + 6);
+      while(j !== -1 && (j - i) <= 700){
+        const cand = t.slice(i, j + 8);
+        if(cand.length === (j - i) + 8 && crc16Pix(cand.slice(0, -4)) === cand.slice(-4).toUpperCase()) return cand;
+        j = t.indexOf("6304", j + 1);
+      }
+      i = t.indexOf("000201", i + 1);
+    }
+  }
+  return "";
+}
+
+async function lerQrPixDoPdf(file){
+  if(!window.jsQR || !window.pdfjsLib) return "";
+  const buffer = await file.arrayBuffer();
+  const pdf = await window.pdfjsLib.getDocument({ data: buffer }).promise;
+  const paginas = Math.min(pdf.numPages, 2);
+  for(let p = 1; p <= paginas; p++){
+    const page = await pdf.getPage(p);
+    for(const escala of [2, 3]){
+      const viewport = page.getViewport({ scale: escala });
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(viewport.width);
+      canvas.height = Math.round(viewport.height);
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      await page.render({ canvasContext: ctx, viewport }).promise;
+      const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const r = window.jsQR(img.data, canvas.width, canvas.height);
+      canvas.width = canvas.height = 0;
+      if(r && r.data){
+        const pix = acharPixNoTexto(r.data);
+        if(pix) return pix;
+      }
+    }
+  }
+  return "";
+}
+
+/* Devolve { codigoBarras, pix, valor, vencimento, avisos[] }. Nunca lança
+   erro por causa da leitura em si: se não achou nada, volta tudo vazio. */
+async function lerDadosDoBoletoPdf(file){
+  const avisos = [];
+  let texto = "";
+  try { texto = await extrairTextoDoPdf(file); } catch(e){ texto = ""; }
+
+  let linha = acharLinhaDigitavel(texto);
+  let pix = acharPixNoTexto(texto);
+
+  const semTexto = texto.replace(/\s+/g, "").length < 80;
+  if(semTexto && !linha.digitos){
+    try {
+      const r = await extrairTextoContrato(file);
+      texto = r.texto;
+      linha = acharLinhaDigitavel(texto);
+      if(!pix) pix = acharPixNoTexto(texto);
+      avisos.push("PDF escaneado, lido por OCR — confira os números com o boleto.");
+    } catch(e){ /* OCR indisponível: segue sem */ }
+  }
+  if(!pix){
+    try { pix = await lerQrPixDoPdf(file); } catch(e){ pix = ""; }
+  }
+
+  if(linha.digitos && !linha.valida){
+    avisos.push("A linha digitável lida não passou na conferência dos dígitos — confira com o boleto.");
+  }
+
+  let valor = 0, vencimento = "";
+  if(linha.digitos.length === 47){
+    valor = Number(linha.digitos.slice(37, 47)) / 100;
+    vencimento = vencimentoDoFator(linha.digitos.slice(33, 37));
+  }
+  return { codigoBarras: linha.digitos, pix, valor, vencimento, avisos };
+}
+
+/* Joga o que foi lido nos campos do formulário (da aba Financeiro ou da
+   ficha do aluno). Valor e vencimento só entram se estiverem vazios. */
+function aplicarDadosDoBoleto(prefixo, lido){
+  const k = prefixo === "aluno-fin"
+    ? { cod: "alunoFinCodigoBarras", pix: "alunoFinPix", comPix: "alunoFinBoletoComPix", valor: "alunoFinValor", venc: "alunoFinVencimento", msg: "alunoFinMensagem" }
+    : { cod: "finCobrancaCodigoBarras", pix: "finCobrancaPix", comPix: "finCobrancaBoletoComPix", valor: "finCobrancaValor", venc: "finCobrancaVencimento", msg: "finCobrancaMensagem" };
+  if(!lido){
+    state[k.msg] = "PDF anexado, mas não consegui ler os códigos — digite o código de barras e o Pix à mão.";
+    return;
+  }
+  const achou = [];
+  if(lido.codigoBarras){ state[k.cod] = lido.codigoBarras; achou.push("código de barras"); }
+  if(lido.pix){ state[k.pix] = lido.pix; state[k.comPix] = true; achou.push("Pix copia e cola"); }
+  if(lido.valor > 0 && !String(state[k.valor] || "").trim()){ state[k.valor] = lido.valor.toFixed(2); achou.push("valor"); }
+  if(lido.vencimento && !String(state[k.venc] || "").trim()){ state[k.venc] = lido.vencimento; achou.push("vencimento"); }
+  if(achou.length){
+    state[k.msg] = `Lido do PDF: ${achou.join(", ")}.${lido.avisos.length ? " " + lido.avisos.join(" ") : ""}`;
+  } else {
+    state[k.msg] = `PDF anexado, mas não achei código de barras nem Pix nele — digite à mão.${lido.avisos.length ? " " + lido.avisos.join(" ") : ""}`;
+  }
+}
+
+function resetarFormCobrancaFin(){
+  state.finCobrancaAlunoId = "";
+  state.finCobrancaBusca = "";
+  state.finCobrancaCompetencia = competenciaAtual();
+  state.finCobrancaValor = "";
+  state.finCobrancaVencimento = "";
+  state.finCobrancaForma = "boleto";
+  state.finCobrancaPixTipo = "copiaCola";
+  state.finCobrancaBoletoComPix = false;
+  state.finCobrancaLinkCartao = "";
+  state.finCobrancaPix = "";
+  state.finCobrancaCodigoBarras = "";
+  state.finCobrancaBoletoArquivo = null;
+  state.finCobrancaErro = "";
+  state.finCobrancaMensagem = "";
+}
+
+/* Quando a família passa a ver uma cobrança: a partir do dia 01 do mês de
+   referência (competência). A secretaria pode lançar antes — só aparece
+   pra família (aba Financeiro, calendário e pop-up) no dia 01. Cobrança
+   lançada depois do dia 01 aparece na hora. */
+function cobrancaDisponivelParaFamilia(m){
+  if(!/^\d{4}-\d{2}$/.test(m.competencia || "")) return true;
+  return hojeISO() >= `${m.competencia}-01`;
+}
+
+function cobrancasDisponiveisDoAluno(aluno){
+  return (aluno?.financeiro?.mensalidades || []).filter(cobrancaDisponivelParaFamilia);
 }
 
 /* Botões de "Baixar boleto" / "Copiar Pix" / "Copiar código de barras"
@@ -1923,7 +2164,7 @@ function camposFormaPagamentoHtml(prefix, forma, v){
           ${ICONS.upload} <span>${v.boletoArquivo ? escapeHtml(v.boletoArquivo.nome) : "Anexar PDF do boleto (opcional)"}</span>
           <input type="file" accept="application/pdf" data-${prefix}-boleto="1" style="display:none;" ${v.boletoLendo ? "disabled" : ""} />
         </label>
-        ${v.boletoLendo ? `<span style="font-size:12px;color:var(--slate);">Lendo arquivo…</span>` : ""}
+        ${v.boletoLendo ? `<span style="font-size:12px;color:var(--slate);">Lendo o boleto (código de barras e Pix)…</span>` : ""}
       </div>
       <label style="display:flex;align-items:center;gap:6px;margin-top:10px;font-size:13px;color:var(--ink);cursor:pointer;">
         <input type="checkbox" data-action="toggle-${prefix}-boleto-pix" ${comPix ? "checked" : ""} />
@@ -1989,6 +2230,7 @@ function resumoFinanceiroAluno(financeiro){
 /* ================================================================== */
 onAuthStateChanged(auth, async (user) => {
   if(!user){
+    contratosResetar();
     state.authUser = null;
     state.perfil = null;
     state.fichaForm = null;
@@ -2001,6 +2243,7 @@ onAuthStateChanged(auth, async (user) => {
     render();
     return;
   }
+  contratosResetar();
   state.authUser = user;
   state.cal = calNovoEstado();
     state.aval = avalNovoEstado();
@@ -2305,6 +2548,7 @@ function renderFamilia(){
     { key:"presenca", label:"Presença", icon:"clipboard" },
     ...(algumFilhoTemCertificado ? [{ key:"certificados", label:"Certificados", icon:"award" }] : []),
     { key:"financeiro", label:"Financeiro", icon:"wallet" },
+    { key:"contratos", label:"Contratos", icon:"fileText" },
     { key:"comunicados", label:"Comunicados", icon:"megaphone" },
     { key:"ficha", label:"Ficha", icon:"shield" },
   ];
@@ -2326,6 +2570,7 @@ function renderFamilia(){
   else if(state.familiaTab === "presenca") body = presencaView(student);
   else if(state.familiaTab === "certificados") body = certificadosView(student, true);
   else if(state.familiaTab === "financeiro") body = financeiroFamiliaView(student);
+  else if(state.familiaTab === "contratos") body = contratosFamiliaView(student);
   else if(state.familiaTab === "comunicados") body = comunicadosView(student);
   else if(state.familiaTab === "ficha") body = alunoFichaView(student, "responsavel");
 
@@ -2335,7 +2580,7 @@ function renderFamilia(){
     headerFoto: headerFotoHtml(FOTO_PADRAO.responsavel, state.perfil?.nome || "Responsável"),
     bodyHtml: switcher + classStatusCard(student, true) + body,
     navAction: "set-familia-tab",
-  }) + avisosPopupHtml();
+  }) + avisosPopupHtml() + contratoVisualizadorModal();
 }
 
 function notasView(student){
@@ -2484,23 +2729,17 @@ function presencaView(student){
 
 function financeiroFamiliaView(student){
   const resumo = resumoFinanceiroAluno(student.financeiro);
-  const hist = resumo.historico.map(m => {
-    const atrasada = mensalidadeEstaAtrasada(m);
-    const pillClasse = m.status === "pago" ? "pill-green" : (atrasada ? "pill-red" : "pill-gold");
-    const pillTexto = m.status === "pago" ? "Pago" : (atrasada ? `Atrasada há ${diasAtraso(m.vencimento)}d` : "Pendente");
-    return `
+  const hist = resumo.historico.filter(cobrancaDisponivelParaFamilia).map(m => `
     <div class="row" style="font-size:14px;flex-direction:column;align-items:stretch;gap:4px;">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
-        <span style="color:var(--ink);">${escapeHtml(competenciaLabel(m.competencia))}</span>
-        <span style="color:var(--slate);">${escapeHtml(formatarMoeda(m.valor))} · vence ${escapeHtml(formatarDataBr(m.vencimento))}</span>
-        <span class="pill ${pillClasse}">${escapeHtml(pillTexto)}</span>
+        <span style="color:var(--ink);font-weight:600;">${escapeHtml(competenciaLabel(m.competencia))}</span>
+        <span style="color:var(--slate);">${escapeHtml(formatarMoeda(m.valor))} · vence ${escapeHtml(formatarDataBr(m.vencimento))} · ${escapeHtml(formaPagamentoLabel(m.formaPagamento))}</span>
       </div>
       ${anexosMensalidadeHtml(m)}
-    </div>`;
-  }).join("") || `<div style="padding:20px;font-size:14px;color:var(--slate);">Nenhum histórico disponível.</div>`;
+    </div>`).join("") || `<div style="padding:20px;font-size:14px;color:var(--slate);">Nenhum boleto disponível.</div>`;
   return `
     <h2 class="section-title">Financeiro</h2>
-    <p class="section-eyebrow">Boletos e mensalidades da matrícula</p>
+    <p class="section-eyebrow">Boletos e mensalidades da matrícula, mês a mês</p>
     <div class="card flush">${hist}</div>`;
 }
 
@@ -2615,7 +2854,24 @@ function avisosNovosParaMostrar(){
     });
   });
 
+  // Cobranças novas (só responsável): já disponíveis (dia 01 do mês) e ainda não vistas.
+  if(ehFamilia){
+    alunos.forEach(al => {
+      cobrancasDisponiveisDoAluno(al).forEach(m => {
+        const id = `cob:${al.id}:${m.id}`;
+        if(vistos.has(id) || porId.has(id)) return;
+        if(m.vencimento && m.vencimento < hoje) return;   // já venceu: não é "novidade"
+        porId.set(id, {
+          id, escopo: "cobranca", data: m.vencimento || "", competencia: m.competencia,
+          valor: m.valor, formaPagamento: m.formaPagamento, criadoEm: m.criadoEm || "",
+          _aluno: alunos.length > 1 ? String(al.nome || "").split(" ")[0] : "",
+        });
+      });
+    });
+  }
+
   return [...porId.values()].sort((a, b) =>
+    (a.escopo === "cobranca" ? 0 : 1) - (b.escopo === "cobranca" ? 0 : 1) ||
     String(a.data).localeCompare(String(b.data)) || String(a.criadoEm || "").localeCompare(String(b.criadoEm || "")));
 }
 
@@ -2632,6 +2888,14 @@ function avisosPopupHtml(){
   const p = state.avisosPopup;
   if(!p.aberto || !p.itens.length) return "";
   const cards = p.itens.map(e => {
+    if(e.escopo === "cobranca"){
+      return `
+      <div class="avisos-popup-item">
+        <div class="avisos-popup-topo"><span class="pill pill-gold">Financeiro</span><strong>Cobrança nova disponível — ${escapeHtml(competenciaLabel(e.competencia))}</strong></div>
+        <p class="avisos-popup-desc">${escapeHtml(formatarMoeda(e.valor))} · vence ${escapeHtml(formatarDataBr(e.data))} · ${escapeHtml(formaPagamentoLabel(e.formaPagamento))}</p>
+        <div class="avisos-popup-meta">Veja o boleto na aba Financeiro${e._aluno ? ` · ${escapeHtml(e._aluno)}` : ""}</div>
+      </div>`;
+    }
     let pill, meta;
     if(e.escopo === "escola"){
       const info = TIPOS_INSTITUICAO[e.tipo] || TIPOS_INSTITUICAO.outro;
@@ -2658,7 +2922,7 @@ function avisosPopupHtml(){
         <div class="aluno-modal-head">
           <div>
             <h2>${n === 1 ? "Você tem 1 aviso novo" : `Você tem ${n} avisos novos`}</h2>
-            <p class="section-eyebrow" style="margin:2px 0 0;">Da escola e dos professores</p>
+            <p class="section-eyebrow" style="margin:2px 0 0;">${p.itens.every(e => e.escopo === "cobranca") ? "Financeiro" : "Da escola, dos professores e do financeiro"}</p>
           </div>
           <button type="button" class="secretaria-modal-close" style="color:var(--slate);" data-action="avisos-popup-fechar" aria-label="Fechar">${ICONS.close}</button>
         </div>
@@ -2694,7 +2958,7 @@ async function carregarCalendarioDoAluno(student, forcar = false){
     cache.erro = mensagemErroCalendario(err);
   } finally {
     cache.carregando = false;
-    if(!cache.erro) verificarAvisosNovos();
+    verificarAvisosNovos();
     render();
   }
 }
@@ -2880,13 +3144,30 @@ async function carregarEventosDoProfessor(forcar = false){
   }
 }
 
+/* Dias de vencimento das cobranças (só pro responsável — o aluno não tem
+   a aba Financeiro). Entram no calendário quando a cobrança já está
+   disponível pra família (dia 01 do mês de referência). */
+function vencimentosParaCalendario(student, papel){
+  if(papel !== "responsavel") return [];
+  return cobrancasDisponiveisDoAluno(student)
+    .filter(m => /^\d{4}-\d{2}-\d{2}$/.test(m.vencimento || ""))
+    .map(m => ({
+      id: `venc:${student.id}:${m.id}`,
+      data: m.vencimento,
+      titulo: `Vencimento — ${competenciaLabel(m.competencia)}`,
+      valor: formatarMoeda(m.valor),
+      forma: formaPagamentoLabel(m.formaPagamento),
+      aluno: (state.data.familiaAlunos || []).length > 1 ? student.nome : "",
+    }));
+}
+
 function calendarioAlunoView(student, papel){
   const cal = state.cal;
   const dados = cal.cache[student.id] || { presencas: [], eventos: [], carregando: false, erro: "" };
   return calendarioHtml({
     papel,
     ano: cal.ano, mes: cal.mes,
-    dias: montarDias({ presencas: dados.presencas, eventos: dados.eventos, papel }),
+    dias: montarDias({ presencas: dados.presencas, eventos: dados.eventos, vencimentos: vencimentosParaCalendario(student, papel), papel }),
     hoje: hojeISO(),
     carregando: dados.carregando,
     erro: dados.erro,
@@ -3899,6 +4180,7 @@ function renderInstituicao(){
     { key:"calendario", label:"Calendário", icon:"calendar" },
     { key:"horarios", label:"Horários", icon:"horarios" },
     { key:"estatisticas", label:"Estatísticas", icon:"chart" },
+    { key:"financeiro", label:"Financeiro", icon:"wallet" },
     { key:"alunos", label:"Alunos", icon:"users" },
     { key:"aniversarios", label:"Aniversários", icon:"cake" },
     { key:"professores", label:"Professores", icon:"users2" },
@@ -3915,6 +4197,7 @@ function renderInstituicao(){
   else if(state.instTab === "calendario") body = calendarioInstituicaoView(school);
   else if(state.instTab === "horarios") body = horarios.view();
   else if(state.instTab === "estatisticas") body = estatisticasView(school);
+  else if(state.instTab === "financeiro") body = financeiroInstituicaoView(school);
   else if(state.instTab === "alunos") body = alunosView(school);
   else if(state.instTab === "aniversarios") body = aniversariosView(school);
   else if(state.instTab === "professores") body = professoresView(school);
@@ -3946,7 +4229,7 @@ function renderInstituicao(){
   }) + importarContratosModal(state, {
     cursos: cursosEModalidadesDaEscola(school?.nome || ""),
     turmas: state.instTurmas || [],
-  });
+  }) + contratoVisualizadorModal();
 }
 
 function gestaoInstituicaoView(school){
@@ -3971,7 +4254,7 @@ function gestaoInstituicaoView(school){
   const carregandoResumo = state.instAlunosCarregando || state.gestaoEquipeCarregando;
   const num = (lista) => Array.isArray(lista) && !carregandoResumo ? lista.length : "—";
   const semLogin = (Array.isArray(alunos) && Array.isArray(responsaveis) && !carregandoResumo)
-    ? alunos.filter(a => !a.uid).length + responsaveis.filter(r => !r.uid).length
+    ? alunos.filter(a => !a.uid && !ehTurmaDeRecreacao(a.turma)).length + responsaveis.filter(r => !r.uid).length
     : "—";
   const tiles = [
     { rotulo: "Alunos", valor: num(alunos), icon: ICONS.users, aba: "alunos" },
@@ -3986,7 +4269,7 @@ function gestaoInstituicaoView(school){
       <span class="gestao-tile-rotulo">${t.rotulo}</span>`;
     return t.aba
       ? `<button type="button" class="gestao-tile" data-action="set-inst-tab" data-key="${t.aba}" title="Abrir ${t.rotulo}">${conteudo}</button>`
-      : `<div class="gestao-tile ${t.alerta ? "gestao-tile-alerta" : ""}" title="Alunos e responsáveis sem login registrado — veja em Senhas & acessos">${conteudo}</div>`;
+      : `<button type="button" class="gestao-tile ${t.alerta ? "gestao-tile-alerta" : ""}" data-action="ver-sem-login" title="Ver só quem está sem login (alunos só de Recreação não contam: não têm login)">${conteudo}</button>`;
   }).join("")}</div>`;
 
   return `
@@ -4102,7 +4385,10 @@ function gestaoCadastroView(school){
   const campoLogin = precisaLogin ? `
         <input id="new-user-email" type="email" class="teacher-text-input" placeholder="E-mail de acesso" value="${escapeHtml(state.novoUsuarioEmail || "")}" />
         <input id="new-user-senha" type="text" class="teacher-text-input" placeholder="Senha provisória (mín. 6 caracteres)" value="${escapeHtml(state.novoUsuarioSenha || "")}" />
-        <button type="button" class="btn-secondary" style="margin-top:6px;" data-action="gerar-acesso-novo-usuario">Gerar outro login e senha</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;">
+          <button type="button" class="btn-secondary" data-action="gerar-senha-novo-usuario">Gerar outra senha</button>
+          ${role === "aluno" || role === "responsavel" ? `<button type="button" class="btn-secondary" data-action="gerar-acesso-novo-usuario">Gerar outro login e senha</button>` : ""}
+        </div>
         <p class="section-eyebrow" style="margin:4px 0 0;">${role === "aluno" || role === "responsavel" ? "Login e senha são gerados sozinhos a partir do nome — você pode editar." : "A senha é gerada sozinha; informe o e-mail da pessoa."}</p>` : "";
 
   const rotuloBotao = state.novoUsuarioSalvando
@@ -4225,6 +4511,103 @@ function gestaoCadastroView(school){
    responsável não existia) e qualquer troca de senha virava chamado pro
    desenvolvedor.
    ------------------------------------------------------------------ */
+/* Quem está sem login de verdade: alunos (menos os só de Recreação, que
+   não têm login por regra) e responsáveis sem uid. Professor sempre tem. */
+function pessoasSemLogin(){
+  const alunos = (state.instAlunos || [])
+    .filter(a => !a.uid && !ehTurmaDeRecreacao(a.turma))
+    .map(a => ({ tipo: "aluno", ref: a }));
+  const resps = (state.gestaoResponsaveis || [])
+    .filter(r => !r.uid)
+    .map(r => ({ tipo: "responsavel", ref: r }));
+  return [...alunos, ...resps];
+}
+
+function painelGerarLoginsEmLote(qtdVisivel, carregando){
+  const total = pessoasSemLogin().length;
+  const res = state.geracaoLoteResultado;
+
+  let painelResultado = "";
+  if(res){
+    const linhasOk = res.criados.map(c => `
+      <tr><td>${escapeHtml(c.nome)}</td><td>${escapeHtml(c.tipo === "aluno" ? "Aluno" : "Responsável")}</td><td>${escapeHtml(c.email)}</td><td><strong>${escapeHtml(c.senha)}</strong></td></tr>`).join("");
+    painelResultado = `
+      <div class="card" style="padding:14px 16px;margin:0 0 12px;border-left:3px solid var(--green,#2E9E6B);">
+        <p style="margin:0 0 4px;font-weight:600;color:var(--ink);">${res.criados.length} ${res.criados.length === 1 ? "login criado" : "logins criados"}${res.falhas.length ? ` · ${res.falhas.length} com problema` : ""}</p>
+        <p class="section-eyebrow" style="margin:0 0 8px;">Anote ou copie agora: a senha provisória não aparece de novo depois que você fechar este aviso.</p>
+        ${res.criados.length ? `<div style="overflow-x:auto;"><table style="width:100%;font-size:13px;border-collapse:collapse;">
+          <thead><tr style="text-align:left;color:var(--slate);"><th>Nome</th><th>Tipo</th><th>Login</th><th>Senha</th></tr></thead>
+          <tbody>${linhasOk}</tbody></table></div>` : ""}
+        ${res.falhas.length ? `<p class="teacher-error" style="color:var(--red,#C4544A);font-size:12.5px;margin:8px 0 0;">Não deu certo para: ${res.falhas.map(f => `${escapeHtml(f.nome)} (${escapeHtml(f.motivo)})`).join("; ")}. Abra a pessoa na lista e tente de novo.</p>` : ""}
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
+          ${res.criados.length ? `<button type="button" class="teacher-primary-btn" style="margin:0;" data-action="copiar-logins-lote">Copiar lista</button>` : ""}
+          <button type="button" class="btn-secondary" data-action="fechar-resultado-lote">Fechar</button>
+        </div>
+      </div>`;
+  }
+
+  let acao = "";
+  if(state.geracaoLoteRodando){
+    acao = `<p class="section-eyebrow" style="margin:0 0 10px;">Gerando logins… ${escapeHtml(state.geracaoLoteProgresso)} Não feche esta tela.</p>`;
+  } else if(state.geracaoLoteConfirmando){
+    acao = `
+      <div class="aluno-modal-confirm" style="margin:0 0 12px;">
+        <p>Vou criar login e senha provisória para ${total} ${total === 1 ? "pessoa" : "pessoas"} (alunos e responsáveis sem acesso; alunos só de Recreação ficam de fora). Depois mostro a lista para você repassar às famílias.</p>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <button type="button" class="teacher-primary-btn" style="margin:0;" data-action="confirmar-gerar-logins-lote">Sim, gerar logins</button>
+          <button type="button" class="btn-secondary" data-action="cancelar-gerar-logins-lote">Cancelar</button>
+        </div>
+      </div>`;
+  } else if(!carregando && total > 0){
+    acao = `
+      <div style="margin:0 0 12px;">
+        <p class="section-eyebrow" style="margin:0 0 8px;">${total} ${total === 1 ? "pessoa está" : "pessoas estão"} sem login (alunos só de Recreação não contam). Toque numa pessoa para criar o acesso dela, ou gere todos de uma vez.</p>
+        <button type="button" class="teacher-primary-btn" style="margin:0;" data-action="gerar-logins-lote">Gerar login de todos (${total})</button>
+      </div>`;
+  } else if(!carregando && !res){
+    acao = `<p class="section-eyebrow" style="margin:0 0 10px;">Todo mundo que precisa de login já tem. 🎉</p>`;
+  }
+  return `${painelResultado}${acao}`;
+}
+
+/* Cria o login de um aluno que já existe (cadastro sem acesso). Mesmo
+   caminho do cadastro novo: Auth no app secundário + usuarios/{uid} +
+   uid/e-mail gravados no próprio aluno. */
+async function criarLoginParaAluno(aluno, emails, senha){
+  const { cred, email: emailFinal } = await criarLoginComAlternativas(emails, senha);
+  const uid = cred.user.uid;
+  try {
+    await setDoc(doc(db, "usuarios", uid), { role: "aluno", nome: aluno.nome, email: emailFinal, alunoId: aluno.id });
+    await updateDoc(doc(db, "alunos", aluno.id), { uid, email: emailFinal });
+    return { uid, email: emailFinal };
+  } catch(err){
+    try { await cred.user.delete(); } catch(_e){ /* ignora */ }
+    throw err;
+  } finally {
+    try { await signOut(secondaryAuth); } catch(_e){ /* ignora */ }
+  }
+}
+
+/* Versão do responsável que aceita lista de e-mails alternativos. */
+async function criarLoginParaResponsavelComAlternativas(responsavel, emails, senha){
+  const { cred, email: emailFinal } = await criarLoginComAlternativas(emails, senha);
+  const uid = cred.user.uid;
+  try {
+    await setDoc(doc(db, "usuarios", uid), {
+      role: "responsavel", nome: responsavel.nome, email: emailFinal,
+      alunosIds: responsavel.alunosIds || [],
+      escolaId: state.escolaSelecionadaId,
+    });
+    await updateDoc(doc(db, "responsaveis", responsavel.id), { uid, email: emailFinal });
+    return { uid, email: emailFinal };
+  } catch(err){
+    try { await cred.user.delete(); } catch(_e){ /* ignora */ }
+    throw err;
+  } finally {
+    try { await signOut(secondaryAuth); } catch(_e){ /* ignora */ }
+  }
+}
+
 function gestaoAcessosView(){
   const busca = (state.gestaoAcessosBusca || "").trim().toLowerCase();
   const grupo = state.gestaoAcessosGrupo || "todos";
@@ -4234,6 +4617,7 @@ function gestaoAcessosView(){
     { key: "alunos", label: "Alunos" },
     { key: "professores", label: "Professores" },
     { key: "responsaveis", label: "Responsáveis" },
+    { key: "semlogin", label: "Sem login" },
   ];
   const contagem = {
     alunos: (state.instAlunos || []).length,
@@ -4241,6 +4625,7 @@ function gestaoAcessosView(){
     responsaveis: (state.gestaoResponsaveis || []).length,
   };
   contagem.todos = contagem.alunos + contagem.professores + contagem.responsaveis;
+  contagem.semlogin = pessoasSemLogin().length;
   const filtroHtml = `<div class="acesso-filtros">${filtros.map(f => `
     <button type="button" class="acesso-filtro ${grupo === f.key ? "active" : ""}" data-action="set-acessos-grupo" data-key="${f.key}">${f.label}${contagem[f.key] ? ` <span class="acesso-filtro-count">${contagem[f.key]}</span>` : ""}</button>`).join("")}</div>`;
 
@@ -4249,10 +4634,11 @@ function gestaoAcessosView(){
   // Monta uma lista única, com o tipo de cada pessoa junto, pra poder
   // buscar por nome sem se importar com a aba em que ela "mora".
   const pessoas = [];
-  if(grupo === "todos" || grupo === "alunos"){
+  if(grupo === "todos" || grupo === "alunos" || grupo === "semlogin"){
     (state.instAlunos || []).forEach(a => pessoas.push({
       tipo: "aluno", docId: a.id, uid: a.uid || null,
       nome: a.nome, detalhe: a.turma || "Sem curso", email: a.email || "",
+      semLoginNormal: !a.uid && ehTurmaDeRecreacao(a.turma),
     }));
   }
   if(grupo === "todos" || grupo === "professores"){
@@ -4261,7 +4647,7 @@ function gestaoAcessosView(){
       nome: p.nome, detalhe: (p.disciplinas || []).join(", ") || "Sem disciplina", email: p.email || "",
     }));
   }
-  if(grupo === "todos" || grupo === "responsaveis"){
+  if(grupo === "todos" || grupo === "responsaveis" || grupo === "semlogin"){
     (state.gestaoResponsaveis || []).forEach(r => pessoas.push({
       tipo: "responsavel", docId: r.id, uid: r.uid || null,
       nome: r.nome,
@@ -4272,6 +4658,7 @@ function gestaoAcessosView(){
 
   const rotuloTipo = { aluno: "Aluno", professor: "Professor", responsavel: "Responsável" };
   const filtradas = pessoas
+    .filter(p => grupo !== "semlogin" || (!p.uid && !p.semLoginNormal))
     .filter(p => !busca || p.nome.toLowerCase().includes(busca) || (p.email || "").toLowerCase().includes(busca))
     .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
 
@@ -4290,7 +4677,7 @@ function gestaoAcessosView(){
           <span style="font-size:12.5px;color:var(--slate);">${escapeHtml(rotuloTipo[p.tipo])} · ${escapeHtml(p.detalhe)}</span>
         </span>
         <span style="font-size:12.5px;color:var(--slate);display:flex;align-items:center;gap:8px;">
-          ${p.uid ? "Tem login" : "Sem login"} ${ICONS.chevronRight}
+          ${p.uid ? "Tem login" : (p.semLoginNormal ? "Recreação (sem login)" : "Sem login")} ${ICONS.chevronRight}
         </span>
       </button>`).join("");
   }
@@ -4304,6 +4691,7 @@ function gestaoAcessosView(){
         ${ICONS.search}
         <input class="search-input" id="gestao-acessos-busca" placeholder="Buscar por nome ou e-mail" value="${escapeHtml(state.gestaoAcessosBusca)}" />
       </div>
+      ${grupo === "semlogin" ? painelGerarLoginsEmLote(filtradas.length, carregando) : ""}
       <div class="card flush">${linhas}</div>
       ${state.gestaoEquipeErro ? `<p class="teacher-error" style="color:var(--red,#C4544A);font-size:12.5px;margin-top:10px;">${escapeHtml(state.gestaoEquipeErro)}</p>` : ""}
       <p class="section-eyebrow" style="margin-top:10px;">A equipe administrativa troca a própria senha em "Meu perfil".</p>
@@ -4321,12 +4709,25 @@ function acessoUsuarioModal(){
   const temLogin = !!state.acessoUid;
   const podeExcluir = state.acessoTipo !== "aluno" || !!(state.instAlunos || []).find(a => a.id === state.acessoDocId);
 
-  const blocoSemLogin = `
+  const alunoDoModal = state.acessoTipo === "aluno"
+    ? (state.instAlunos || []).find(a => a.id === state.acessoDocId)
+    : null;
+  const alunoRecreacaoSemLogin = !!alunoDoModal && !temLogin && ehTurmaDeRecreacao(alunoDoModal.turma);
+
+  const blocoSemLogin = alunoRecreacaoSemLogin ? `
+      <div class="aluno-modal-section">
+        <h3 class="teacher-label">Sem login (Recreação)</h3>
+        <p class="section-eyebrow" style="margin:0;">Aluno só de Recreação não tem login próprio: quem acessa o app é o responsável. Se precisar de acesso, confira o cadastro do responsável vinculado.</p>
+      </div>` : `
       <div class="aluno-modal-section">
         <h3 class="teacher-label">Criar acesso</h3>
         <p class="section-eyebrow" style="margin:0 0 8px;">Esta pessoa ainda não tem login. Defina um e-mail e uma senha para ela entrar no app.</p>
         <input id="acesso-email" type="email" class="teacher-text-input" placeholder="E-mail de acesso" value="${escapeHtml(state.acessoEmail)}" />
-        <input id="acesso-nova-senha" type="text" class="teacher-text-input" style="margin-top:8px;" placeholder="Senha (mín. 6 caracteres)" />
+        <input id="acesso-nova-senha" type="text" class="teacher-text-input" style="margin-top:8px;" placeholder="Senha (mín. 6 caracteres)" value="${escapeHtml(state.acessoSenhaSugerida || "")}" />
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+          <button type="button" class="btn-secondary" data-action="gerar-senha-acesso">Gerar outra senha</button>
+          ${state.acessoTipo === "aluno" || state.acessoTipo === "responsavel" ? `<button type="button" class="btn-secondary" data-action="gerar-login-e-senha-acesso">Gerar outro login e senha</button>` : ""}
+        </div>
         <button type="button" class="teacher-primary-btn" data-action="criar-login-acesso" ${state.acessoCriandoLogin ? "disabled" : ""}>${state.acessoCriandoLogin ? "Criando…" : "Criar acesso"}</button>
       </div>`;
 
@@ -4335,6 +4736,7 @@ function acessoUsuarioModal(){
         <h3 class="teacher-label">Trocar senha</h3>
         ${state.acessoEmail ? `<p class="section-eyebrow" style="margin:0 0 8px;">Login: <strong style="color:var(--ink);">${escapeHtml(state.acessoEmail)}</strong></p>` : ""}
         <input id="acesso-nova-senha" type="text" class="teacher-text-input" placeholder="Nova senha (mín. 6 caracteres)" />
+        <button type="button" class="btn-secondary" style="margin:8px 0 0;" data-action="gerar-senha-acesso">Gerar outra senha</button>
         <button type="button" class="teacher-primary-btn" data-action="definir-senha-acesso" ${state.acessoDefinindoSenha ? "disabled" : ""}>${state.acessoDefinindoSenha ? "Salvando…" : "Salvar nova senha"}</button>
         <p class="section-eyebrow" style="margin-top:8px;">Combine a nova senha com a pessoa por fora — ela já entra com ela no próximo login.</p>
       </div>`;
@@ -4370,30 +4772,25 @@ function acessoUsuarioModal(){
   </div>`;
 }
 
-/* Contratos que foram importados como "pendente de assinatura". Enquanto
-   a validação por link não existe, o fluxo é: escolher o PDF, mandar pro
-   responsável pelo WhatsApp e, quando voltar assinado, marcar aqui. O PDF
-   não fica guardado no sistema (só a situação), por isso é preciso
-   escolher o arquivo de novo se a página foi recarregada. */
-function contratosPendentesCard(){
-  if(state.instAlunosCarregando || state.gestaoEquipeCarregando){
-    return `<div class="management-card management-card-wide" style="max-width:none;"><h3>Aguardando assinatura</h3><p>Carregando…</p></div>`;
-  }
-  const pendentes = (state.instAlunos || [])
-    .filter(a => a.contratoStatus === "pendente")
-    .sort((a, b) => a.nome.localeCompare(b.nome));
-  if(!pendentes.length) return "";
-
-  const linhas = pendentes.map(a => {
-    const destino = destinoDoContratoDoAluno(a);
-    const arquivo = state.contratoArquivosEnvio[a.id];
-    const msg = state.contratoEnvioMsg[a.id];
-    const enviado = a.contratoEnviadoEm ? `Enviado em ${a.contratoEnviadoEm.split("-").reverse().join("/")}` : "Ainda não enviado";
-    return `
+/* Aba "Contratos" — dois avisos:
+   1) contratos aguardando assinatura. Os que têm PDF salvo no sistema já
+      saem prontos pra ver, mandar pelo WhatsApp e marcar como assinado,
+      um por um (o aluno pode ter mais de um). Os que foram só marcados
+      como pendentes, sem PDF, continuam no fluxo antigo (escolher o PDF
+      de novo) e ganham o botão "Salvar no sistema".
+   2) alunos que ainda não têm nenhum contrato guardado no sistema — pede
+      pra anexar, pra ficar salvo e visível aos responsáveis. */
+function linhaPendenteSemArquivo(a){
+  const destino = destinoDoContratoDoAluno(a);
+  const arquivo = state.contratoArquivosEnvio[a.id];
+  const msg = state.contratoEnvioMsg[a.id];
+  const enviado = a.contratoEnviadoEm ? `Enviado em ${a.contratoEnviadoEm.split("-").reverse().join("/")}` : "Ainda não enviado";
+  return `
       <div class="pendente-contrato-item">
         <div class="pendente-contrato-info">
           <strong>${escapeHtml(a.nome)}</strong>
           <span>${destino.numero ? `Enviar para ${escapeHtml(destino.nome)}` : `Sem WhatsApp cadastrado (${escapeHtml(destino.nome)})`} · ${enviado}</span>
+          <span class="pendente-contrato-msg">O PDF deste contrato não está salvo no sistema.</span>
           ${msg ? `<span class="pendente-contrato-msg">${escapeHtml(msg)}</span>` : ""}
         </div>
         <div class="pendente-contrato-acoes">
@@ -4401,18 +4798,71 @@ function contratosPendentesCard(){
             ${ICONS.upload} <span>${arquivo ? escapeHtml(arquivo.name) : "Escolher PDF"}</span>
             <input type="file" accept="application/pdf" data-contrato-envio="${a.id}" style="display:none;" />
           </label>
+          <button type="button" class="aniversario-btn" data-action="contrato-pendente-salvar" data-aluno="${a.id}" ${arquivo ? "" : "disabled"}>Salvar no sistema</button>
           <button type="button" class="aniversario-btn" data-action="contrato-pendente-enviar" data-aluno="${a.id}" ${arquivo ? "" : "disabled"}>Enviar no WhatsApp</button>
           <button type="button" class="pendente-contrato-assinado" data-action="contrato-pendente-assinado" data-aluno="${a.id}">Marcar como assinado</button>
         </div>
       </div>`;
-  }).join("");
+}
 
-  return `
+function contratosPendentesCard(){
+  if(state.instAlunosCarregando || state.gestaoEquipeCarregando || state.contratosInst.carregando){
+    return `<div class="management-card management-card-wide" style="max-width:none;"><h3>Aguardando assinatura</h3><p>Carregando…</p></div>`;
+  }
+  const c = state.contratosInst;
+  const alunos = state.instAlunos || [];
+  const salvos = c.carregado ? c.itens : [];
+  let html = "";
+
+  if(c.erro){
+    html += `<div class="management-card management-card-wide" style="max-width:none;"><h3>Contratos salvos</h3><p class="teacher-error" style="color:var(--red);">${escapeHtml(c.erro)}</p></div>`;
+  }
+
+  // 1) aguardando assinatura
+  const linhas = [];
+  alunos
+    .filter(a => a.contratoStatus === "pendente" || salvos.some(m => m.alunoId === a.id && m.status === "pendente"))
+    .sort((a, b) => a.nome.localeCompare(b.nome))
+    .forEach(a => {
+      const pend = ordenarContratos(salvos.filter(m => m.alunoId === a.id && m.status === "pendente"));
+      if(pend.length) pend.forEach(m => linhas.push(contratoItemHtml(m, { nomeAluno: a.nome })));
+      else linhas.push(linhaPendenteSemArquivo(a));
+    });
+  if(linhas.length){
+    html += `
     <div class="management-card management-card-wide" style="max-width:none;">
-      <h3>Aguardando assinatura (${pendentes.length})</h3>
-      <p>Escolha o PDF do contrato, envie pelo WhatsApp e, quando voltar assinado, marque como assinado.</p>
-      <div class="pendente-contrato-lista">${linhas}</div>
+      <h3>Aguardando assinatura (${linhas.length})</h3>
+      <p>Abra o contrato, envie pelo WhatsApp e, quando voltar assinado, marque como assinado. Se o aluno tiver mais de um contrato, cada um aparece separado.</p>
+      <div class="pendente-contrato-lista">${linhas.join("")}</div>
     </div>`;
+  }
+
+  // 2) sem contrato salvo
+  if(c.carregado){
+    const semArquivo = alunos
+      .filter(a => a.situacao !== "cancelado" && !salvos.some(m => m.alunoId === a.id))
+      .sort((a, b) => a.nome.localeCompare(b.nome));
+    if(semArquivo.length){
+      const mostrar = semArquivo.slice(0, 12).map(a => `
+        <div class="pendente-contrato-item">
+          <div class="pendente-contrato-info">
+            <strong>${escapeHtml(a.nome)}</strong>
+            <span>${escapeHtml(a.turma || "Sem turma")}${a.contratoStatus ? ` · registrado como ${a.contratoStatus === "assinado" ? "assinado" : "aguardando assinatura"}` : " · sem contrato registrado"}</span>
+          </div>
+          <div class="pendente-contrato-acoes">
+            <button type="button" class="aniversario-btn" data-action="abrir-aluno" data-id="${escapeHtml(a.id)}">${ICONS.upload} Anexar contrato</button>
+          </div>
+        </div>`).join("");
+      html += `
+    <div class="management-card management-card-wide" style="max-width:none;">
+      <h3>Sem contrato salvo no sistema (${semArquivo.length})</h3>
+      <p>Estes alunos ainda não têm o PDF do contrato guardado. Abra a ficha e anexe o arquivo — assim ele fica salvo e os responsáveis conseguem ver no app.</p>
+      <div class="pendente-contrato-lista">${mostrar}</div>
+      ${semArquivo.length > 12 ? `<p class="section-eyebrow" style="margin-top:10px;">+ ${semArquivo.length - 12} outros alunos. Conforme você anexa, a lista diminui.</p>` : ""}
+    </div>`;
+    }
+  }
+  return html;
 }
 
 /* Aba "Contratos": gerar contrato, importar PDFs e acompanhar quem ainda
@@ -5614,6 +6064,475 @@ function professorResumoMediasHtml(turma, atividades){
     <div class="card flush">${linhas}</div>`;
 }
 
+/* ==================================================================
+   Contratos guardados no sistema (PDF salvo)
+   ------------------------------------------------------------------
+   Cada contrato em PDF vira um documento em `contratos/{id}` (só os
+   dados: aluno, unidade, nome do arquivo, situação, datas) e o PDF em
+   si fica em `contratosArquivos/{id}_{n}`, cortado em pedaços de ~700 KB
+   (base64) porque o Firestore recusa documento acima de 1 MiB e o app
+   não usa Storage. Um aluno pode ter vários contratos (ex.: renovação,
+   segundo curso), cada um com a sua situação:
+     contratos/{id}
+       alunoId, escolaId, nome (arquivo), tamanho, partes,
+       status: "pendente" | "assinado", criadoEm, assinadoEm, enviadoEm
+     contratosArquivos/{id}_{n}
+       contratoId, alunoId, escolaId, ordem, parte (texto base64)
+   O campo `contratoStatus` do aluno continua existindo (as Estatísticas
+   dependem dele) e passa a ser o RESUMO dos contratos salvos: "pendente"
+   se algum ainda não foi assinado, senão "assinado". `contratosSalvos`
+   guarda quantos PDFs o aluno tem salvos.
+   ================================================================== */
+const CONTRATO_PDF_TAMANHO_MAX = 4 * 1024 * 1024;   // 4 MB por PDF
+const CONTRATO_PARTE_TAMANHO = 700000;               // caracteres base64 por documento
+const CONTRATO_PAGINAS_MAX = 40;                     // páginas desenhadas no visualizador
+let contratoVisToken = 0;                            // cancela a abertura se o visualizador fechar antes
+
+function normalizeContrato(id, d){
+  return {
+    id,
+    alunoId: d.alunoId || "",
+    escolaId: d.escolaId || "",
+    nome: d.nome || "contrato.pdf",
+    tamanho: Number(d.tamanho) || 0,
+    partes: Number(d.partes) || 1,
+    status: d.status === "assinado" ? "assinado" : "pendente",
+    criadoEm: d.criadoEm || "",
+    assinadoEm: d.assinadoEm || "",
+    enviadoEm: d.enviadoEm || "",
+  };
+}
+
+function ordenarContratos(lista){
+  return lista.slice().sort((a, b) =>
+    String(b.criadoEm).localeCompare(String(a.criadoEm)) || a.nome.localeCompare(b.nome));
+}
+
+function tamanhoLegivel(bytes){
+  if(bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1).replace(".", ",")} MB`;
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+function contratosDoAluno(alunoId){
+  return state.contratosInst.itens.filter(c => c.alunoId === alunoId);
+}
+
+function acharContratoSalvo(id){
+  const naEscola = state.contratosInst.itens.find(c => c.id === id);
+  if(naEscola) return naEscola;
+  for(const k of Object.keys(state.contratosFam)){
+    const achou = (state.contratosFam[k].itens || []).find(c => c.id === id);
+    if(achou) return achou;
+  }
+  return null;
+}
+
+function contratosResetar(){
+  contratoVisFechar();
+  state.contratosInst = { escolaId: null, itens: [], carregando: false, carregado: false, erro: "" };
+  state.contratosFam = {};
+  state.contratoUpStatus = "pendente";
+  state.contratoUpEnviando = false;
+  state.contratoUpMsg = "";
+  state.contratoUpErro = "";
+  state.contratoOcupado = {};
+}
+
+function textoErroContratos(err, ehEquipe){
+  if(err?.code === "permission-denied"){
+    return ehEquipe
+      ? "O Firestore recusou a leitura dos contratos (permission-denied). Publique as regras de `contratos` e `contratosArquivos` (arquivo firestore-contratos.rules)."
+      : "Não foi possível abrir os contratos agora. Fale com a secretaria.";
+  }
+  return `Não consegui carregar os contratos${err?.code ? ` (${err.code})` : ""}. Tente de novo.`;
+}
+
+/* ---------- carregar listas (só os dados, sem o PDF) ---------- */
+async function carregarContratosDaEscola(escolaId, forcar = false){
+  const c = state.contratosInst;
+  if(!escolaId || c.carregando) return;
+  if(!forcar && c.carregado && c.escolaId === escolaId) return;
+  c.carregando = true; c.erro = "";
+  render();
+  try {
+    const snaps = await getDocs(query(collection(db, "contratos"), where("escolaId", "==", escolaId)));
+    c.itens = snaps.docs.map(d => normalizeContrato(d.id, d.data()));
+    c.escolaId = escolaId;
+    c.carregado = true;
+  } catch(err){
+    console.error("Erro ao carregar contratos:", err);
+    c.itens = []; c.carregado = false;
+    c.erro = textoErroContratos(err, true);
+  } finally {
+    c.carregando = false;
+    render();
+  }
+}
+
+async function carregarContratosDoAluno(alunoId, forcar = false){
+  if(!alunoId) return;
+  const atual = state.contratosFam[alunoId];
+  if(atual && (atual.carregando || (atual.carregado && !forcar))) return;
+  state.contratosFam[alunoId] = { itens: atual?.itens || [], carregando: true, carregado: false, erro: "" };
+  render();
+  try {
+    const snaps = await getDocs(query(collection(db, "contratos"), where("alunoId", "==", alunoId)));
+    state.contratosFam[alunoId] = {
+      itens: snaps.docs.map(d => normalizeContrato(d.id, d.data())),
+      carregando: false, carregado: true, erro: "",
+    };
+  } catch(err){
+    console.error("Erro ao carregar contratos do aluno:", err);
+    state.contratosFam[alunoId] = { itens: [], carregando: false, carregado: false, erro: textoErroContratos(err, false) };
+  }
+  render();
+}
+
+/* ---------- gravar / ler o PDF ---------- */
+function validarArquivoContrato(arquivo){
+  const ehPdf = arquivo.type === "application/pdf" || /\.pdf$/i.test(arquivo.name || "");
+  if(!ehPdf) return `"${arquivo.name}" não é um PDF.`;
+  if(arquivo.size > CONTRATO_PDF_TAMANHO_MAX){
+    return `"${arquivo.name}" tem ${tamanhoLegivel(arquivo.size)} e o limite é ${tamanhoLegivel(CONTRATO_PDF_TAMANHO_MAX)}. Digitalize em resolução menor ou comprima o PDF.`;
+  }
+  return "";
+}
+
+async function salvarContratoPdf({ alunoId, escolaId, arquivo, status, enviadoEm = "" }){
+  const dados = await lerArquivoComoDataUrl(arquivo);
+  const partes = [];
+  for(let i = 0; i < dados.length; i += CONTRATO_PARTE_TAMANHO) partes.push(dados.slice(i, i + CONTRATO_PARTE_TAMANHO));
+  const ref = doc(collection(db, "contratos"));
+  const hoje = dataDeHojeISO();
+  const assinado = status === "assinado";
+  const meta = {
+    alunoId, escolaId,
+    nome: arquivo.name || "contrato.pdf",
+    tamanho: arquivo.size,
+    partes: partes.length,
+    status: assinado ? "assinado" : "pendente",
+    criadoEm: hoje,
+    assinadoEm: assinado ? hoje : "",
+    enviadoEm: enviadoEm || "",
+    criadoPor: state.authUser?.uid || "",
+  };
+  // tudo ou nada: ou o contrato e todos os pedaços entram, ou nada entra
+  const batch = writeBatch(db);
+  partes.forEach((parte, i) => {
+    batch.set(doc(db, "contratosArquivos", `${ref.id}_${i}`), { contratoId: ref.id, alunoId, escolaId, ordem: i, parte });
+  });
+  batch.set(ref, meta);
+  await batch.commit();
+  return normalizeContrato(ref.id, meta);
+}
+
+async function lerDataUrlDoContrato(meta){
+  const snaps = await Promise.all(
+    Array.from({ length: meta.partes || 1 }, (_, i) => getDoc(doc(db, "contratosArquivos", `${meta.id}_${i}`)))
+  );
+  if(snaps.some(s => !s.exists())) throw new Error("contrato-incompleto");
+  return snaps.map(s => s.data().parte).join("");
+}
+
+function dataUrlParaBlob(dataUrl){
+  const [cabecalho, base64] = dataUrl.split(",");
+  const mime = /data:(.*?);/.exec(cabecalho)?.[1] || "application/pdf";
+  const bin = atob(base64);
+  const bytes = new Uint8Array(bin.length);
+  for(let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new Blob([bytes], { type: mime });
+}
+
+async function arquivoDoContratoSalvo(meta){
+  const blob = dataUrlParaBlob(await lerDataUrlDoContrato(meta));
+  return new File([blob], meta.nome, { type: "application/pdf" });
+}
+
+async function baixarContratoSalvo(meta){
+  const arquivo = await arquivoDoContratoSalvo(meta);
+  const url = URL.createObjectURL(arquivo);
+  const a = document.createElement("a");
+  a.href = url; a.download = meta.nome;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
+/* ---------- resumo no cadastro do aluno ---------- */
+async function sincronizarResumoContratos(alunoId, escolaId){
+  const snaps = await getDocs(query(
+    collection(db, "contratos"),
+    where("escolaId", "==", escolaId),
+    where("alunoId", "==", alunoId),
+  ));
+  const lista = snaps.docs.map(d => normalizeContrato(d.id, d.data()));
+  const dados = { contratosSalvos: lista.length };
+  if(lista.some(c => c.status === "pendente")) dados.contratoStatus = "pendente";
+  else if(lista.length) dados.contratoStatus = "assinado";
+  await updateDoc(doc(db, "alunos", alunoId), dados);
+  const aluno = (state.instAlunos || []).find(a => a.id === alunoId);
+  if(aluno) Object.assign(aluno, dados);
+  const c = state.contratosInst;
+  if(c.escolaId === escolaId) c.itens = c.itens.filter(x => x.alunoId !== alunoId).concat(lista);
+}
+
+async function anexarContratosDoAluno(aluno, arquivos){
+  const escolaId = state.escolaSelecionadaId;
+  const status = state.contratoUpStatus;
+  state.contratoUpEnviando = true; state.contratoUpErro = ""; state.contratoUpMsg = "";
+  render();
+  let salvos = 0;
+  const erros = [];
+  for(const arq of arquivos){
+    const problema = validarArquivoContrato(arq);
+    if(problema){ erros.push(problema); continue; }
+    try {
+      await salvarContratoPdf({ alunoId: aluno.id, escolaId, arquivo: arq, status });
+      salvos++;
+    } catch(err){
+      console.error("Erro ao salvar contrato:", arq.name, err);
+      erros.push(`Não consegui salvar "${arq.name}"${err?.code ? ` (${err.code})` : ""}.`);
+    }
+  }
+  if(salvos){
+    try { await sincronizarResumoContratos(aluno.id, escolaId); }
+    catch(err){ console.warn("Contratos salvos, mas não atualizei o resumo do aluno:", err?.code || err); }
+  }
+  state.contratoUpMsg = salvos ? `${salvos} contrato${salvos > 1 ? "s salvos" : " salvo"} no cadastro de ${aluno.nome}.` : "";
+  state.contratoUpErro = erros.join(" ");
+  state.contratoUpEnviando = false;
+  render();
+}
+
+async function marcarContratoSalvoAssinado(meta){
+  await updateDoc(doc(db, "contratos", meta.id), { status: "assinado", assinadoEm: dataDeHojeISO() });
+  await sincronizarResumoContratos(meta.alunoId, meta.escolaId);
+}
+
+async function marcarContratoSalvoEnviado(meta){
+  try {
+    await updateDoc(doc(db, "contratos", meta.id), { enviadoEm: dataDeHojeISO() });
+    meta.enviadoEm = dataDeHojeISO();
+    await marcarContratoEnviado(meta.alunoId);
+  } catch(err){
+    console.warn("Não consegui registrar o envio do contrato:", err?.code || err);
+  }
+}
+
+async function excluirContratoSalvo(meta){
+  const batch = writeBatch(db);
+  for(let i = 0; i < (meta.partes || 1); i++) batch.delete(doc(db, "contratosArquivos", `${meta.id}_${i}`));
+  batch.delete(doc(db, "contratos", meta.id));
+  await batch.commit();
+  await sincronizarResumoContratos(meta.alunoId, meta.escolaId);
+}
+
+/* Usado ao excluir o aluno: leva junto todos os contratos dele. */
+async function apagarContratosDoAluno(alunoId, escolaId){
+  const snaps = await getDocs(query(
+    collection(db, "contratos"),
+    where("escolaId", "==", escolaId),
+    where("alunoId", "==", alunoId),
+  ));
+  for(const d of snaps.docs){
+    const batch = writeBatch(db);
+    for(let i = 0; i < (Number(d.data().partes) || 1); i++) batch.delete(doc(db, "contratosArquivos", `${d.id}_${i}`));
+    batch.delete(d.ref);
+    await batch.commit();
+  }
+  state.contratosInst.itens = state.contratosInst.itens.filter(c => c.alunoId !== alunoId);
+}
+
+/* ---------- visualizador dentro do app ---------- */
+function contratoVisFechar(){
+  contratoVisToken++;
+  if(state.contratoVis?.blobUrl) URL.revokeObjectURL(state.contratoVis.blobUrl);
+  state.contratoVis = null;
+}
+
+/* Abre o PDF numa janela do próprio app. As páginas são desenhadas com o
+   PDF.js (que já é carregado pra importação) e guardadas como imagem, o
+   que funciona igual no celular — onde um <iframe> de PDF costuma mostrar
+   só a primeira página. */
+async function abrirContratoNoApp(meta){
+  contratoVisFechar();
+  const token = contratoVisToken;
+  state.contratoVis = {
+    id: meta.id, nome: meta.nome, status: meta.status, assinadoEm: meta.assinadoEm,
+    carregando: true, erro: "", progresso: "", paginas: [], totalPaginas: 0, blobUrl: "",
+  };
+  render();
+  try {
+    const blob = dataUrlParaBlob(await lerDataUrlDoContrato(meta));
+    if(token !== contratoVisToken) return;
+    state.contratoVis.blobUrl = URL.createObjectURL(blob);
+    if(window.pdfjsLib){
+      const pdf = await window.pdfjsLib.getDocument({ data: await blob.arrayBuffer() }).promise;
+      state.contratoVis.totalPaginas = pdf.numPages;
+      const paginas = [];
+      for(let p = 1; p <= Math.min(pdf.numPages, CONTRATO_PAGINAS_MAX); p++){
+        if(token !== contratoVisToken) return;
+        state.contratoVis.progresso = `Preparando página ${p} de ${Math.min(pdf.numPages, CONTRATO_PAGINAS_MAX)}…`;
+        if(p > 1) render();
+        const page = await pdf.getPage(p);
+        const base = page.getViewport({ scale: 1 });
+        const viewport = page.getViewport({ scale: Math.min(2, 1000 / base.width) });
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.floor(viewport.width);
+        canvas.height = Math.floor(viewport.height);
+        await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+        paginas.push(canvas.toDataURL("image/jpeg", 0.85));
+      }
+      if(token !== contratoVisToken) return;
+      state.contratoVis.paginas = paginas;
+    }
+  } catch(err){
+    console.error("Erro ao abrir contrato:", err);
+    if(token !== contratoVisToken) return;
+    state.contratoVis.erro = err?.code === "permission-denied"
+      ? "Você não tem permissão para abrir este contrato."
+      : "Não consegui abrir este contrato agora. Tente de novo.";
+  }
+  if(token !== contratoVisToken) return;
+  state.contratoVis.carregando = false;
+  render();
+}
+
+function contratoVisualizadorModal(){
+  const v = state.contratoVis;
+  if(!v) return "";
+  let corpo;
+  if(v.carregando){
+    corpo = `<p class="contrato-vis-aviso">${escapeHtml(v.progresso || "Abrindo contrato…")}</p>`;
+  } else if(v.erro){
+    corpo = `<p class="contrato-vis-aviso" style="color:var(--red);">${escapeHtml(v.erro)}</p>`;
+  } else if(v.paginas.length){
+    corpo = v.paginas.map((src, i) => `<img class="contrato-vis-pagina" src="${src}" alt="Página ${i + 1} do contrato" />`).join("")
+      + (v.totalPaginas > v.paginas.length ? `<p class="contrato-vis-aviso">Mostrando as primeiras ${v.paginas.length} de ${v.totalPaginas} páginas. Baixe o PDF para ver o resto.</p>` : "");
+  } else {
+    corpo = `<p class="contrato-vis-aviso">Não deu para mostrar o contrato aqui. Use “Baixar PDF” ou “Abrir em outra aba”.</p>`;
+  }
+  const pill = v.status === "assinado"
+    ? `<span class="pill pill-green">Assinado${v.assinadoEm ? ` em ${escapeHtml(formatarDataBr(v.assinadoEm))}` : ""}</span>`
+    : `<span class="pill pill-gold">Aguardando assinatura</span>`;
+  const acoesArquivo = v.blobUrl ? `
+        <a class="btn-secondary contrato-vis-link" href="${escapeHtml(v.blobUrl)}" download="${escapeHtml(v.nome)}">Baixar PDF</a>
+        <a class="btn-secondary contrato-vis-link" href="${escapeHtml(v.blobUrl)}" target="_blank" rel="noopener">Abrir em outra aba</a>` : "";
+  return `
+  <div class="contrato-vis-backdrop" data-action="fechar-contrato-vis">
+    <div class="contrato-vis" role="dialog" aria-modal="true" aria-label="Contrato" data-action="noop">
+      <div class="contrato-vis-head">
+        <div style="min-width:0;">
+          <h2>${escapeHtml(v.nome)}</h2>
+          ${pill}
+        </div>
+        <button type="button" class="secretaria-modal-close" style="color:var(--slate);" data-action="fechar-contrato-vis" aria-label="Fechar">${ICONS.close}</button>
+      </div>
+      <div class="contrato-vis-corpo">${corpo}</div>
+      ${acoesArquivo ? `<div class="contrato-vis-rodape">${acoesArquivo}</div>` : ""}
+    </div>
+  </div>`;
+}
+
+/* ---------- telas ---------- */
+function contratoStatusPill(meta){
+  return meta.status === "assinado"
+    ? `<span class="pill pill-green">Assinado${meta.assinadoEm ? ` em ${escapeHtml(formatarDataBr(meta.assinadoEm))}` : ""}</span>`
+    : `<span class="pill pill-gold">Aguardando assinatura</span>`;
+}
+
+/* Uma linha de contrato salvo, com as ações da secretaria. */
+function contratoItemHtml(meta, { nomeAluno = "" } = {}){
+  const ocupado = !!state.contratoOcupado[meta.id];
+  const pendente = meta.status === "pendente";
+  const msg = state.contratoEnvioMsg[meta.id];
+  const enviado = meta.enviadoEm ? ` · Enviado em ${escapeHtml(formatarDataBr(meta.enviadoEm))}` : (pendente ? " · Ainda não enviado" : "");
+  return `
+    <div class="pendente-contrato-item">
+      <div class="pendente-contrato-info">
+        <strong>${escapeHtml(nomeAluno || meta.nome)}</strong>
+        <span>${nomeAluno ? `${escapeHtml(meta.nome)} · ` : ""}Salvo em ${meta.criadoEm ? escapeHtml(formatarDataBr(meta.criadoEm)) : "—"} · ${escapeHtml(tamanhoLegivel(meta.tamanho))}${enviado}</span>
+        <span>${contratoStatusPill(meta)}</span>
+        ${msg ? `<span class="pendente-contrato-msg">${escapeHtml(msg)}</span>` : ""}
+      </div>
+      <div class="pendente-contrato-acoes">
+        <button type="button" class="aniversario-btn" data-action="ver-contrato" data-id="${escapeHtml(meta.id)}" ${ocupado ? "disabled" : ""}>Ver contrato</button>
+        ${pendente ? `
+        <button type="button" class="aniversario-btn" data-action="contrato-salvo-enviar" data-id="${escapeHtml(meta.id)}" ${ocupado ? "disabled" : ""}>${ocupado ? "Aguarde…" : "Enviar no WhatsApp"}</button>
+        <button type="button" class="pendente-contrato-assinado" data-action="contrato-salvo-assinado" data-id="${escapeHtml(meta.id)}" ${ocupado ? "disabled" : ""}>Marcar como assinado</button>` : ""}
+        <button type="button" class="attendance-btn" data-action="contrato-salvo-excluir" data-id="${escapeHtml(meta.id)}" aria-label="Excluir contrato" title="Excluir contrato" ${ocupado ? "disabled" : ""}>${ICONS.trash}</button>
+      </div>
+    </div>`;
+}
+
+/* Seção "Contratos" da ficha do aluno (secretaria). */
+function contratosAlunoSection(aluno){
+  const c = state.contratosInst;
+  let lista;
+  if(c.erro){
+    lista = `<p class="teacher-error" style="color:var(--red);font-size:12.5px;margin:6px 0;">${escapeHtml(c.erro)}</p>`;
+  } else if(!c.carregado){
+    lista = `<p class="section-eyebrow" style="margin:6px 0;">Carregando contratos…</p>`;
+  } else {
+    const itens = ordenarContratos(contratosDoAluno(aluno.id));
+    lista = itens.length
+      ? `<div class="pendente-contrato-lista">${itens.map(m => contratoItemHtml(m)).join("")}</div>`
+      : `<div class="contrato-aviso">
+           <strong>Nenhum contrato salvo para este aluno.</strong>
+           Anexe o PDF abaixo para ele ficar guardado no sistema — os responsáveis passam a ver na aba Contratos do app.
+           ${aluno.contratoStatus ? `<br>Situação registrada antes: ${aluno.contratoStatus === "assinado" ? "assinado" : "aguardando assinatura"} (sem o PDF guardado).` : ""}
+         </div>`;
+  }
+  return `
+      <div class="aluno-modal-section">
+        <h3 class="teacher-label">Contratos</h3>
+        ${lista}
+        <div class="contrato-anexar-bloco">
+          <label class="teacher-label" for="contrato-up-status" style="display:block;">Situação dos PDFs que vai anexar</label>
+          <select id="contrato-up-status" class="teacher-text-input">
+            <option value="pendente" ${state.contratoUpStatus === "pendente" ? "selected" : ""}>Aguardando assinatura</option>
+            <option value="assinado" ${state.contratoUpStatus === "assinado" ? "selected" : ""}>Já assinado</option>
+          </select>
+          <label class="pendente-contrato-anexar" style="margin-top:10px;max-width:none;${state.contratoUpEnviando ? "opacity:.6;pointer-events:none;" : ""}">
+            ${ICONS.upload} <span>${state.contratoUpEnviando ? "Salvando…" : "Anexar contrato(s) em PDF"}</span>
+            <input type="file" accept="application/pdf" multiple data-contrato-anexo="${escapeHtml(aluno.id)}" style="display:none;" />
+          </label>
+          <p class="section-eyebrow" style="margin:6px 0 0;">Dá para escolher mais de um PDF de uma vez. Até ${escapeHtml(tamanhoLegivel(CONTRATO_PDF_TAMANHO_MAX))} cada.</p>
+          ${state.contratoUpErro ? `<p class="teacher-error" style="color:var(--red);font-size:12.5px;margin-top:8px;">${escapeHtml(state.contratoUpErro)}</p>` : ""}
+          ${state.contratoUpMsg ? `<p class="teacher-success" style="margin-top:8px;">${escapeHtml(state.contratoUpMsg)}</p>` : ""}
+        </div>
+      </div>`;
+}
+
+/* Aba "Contratos" do responsável: lê só o que é do filho escolhido. */
+function contratosFamiliaView(student){
+  const cache = state.contratosFam[student.id];
+  let corpo;
+  if(!cache || (cache.carregando && !cache.itens.length)){
+    corpo = `<div style="padding:20px;font-size:14px;color:var(--slate);">Carregando contratos…</div>`;
+  } else if(cache.erro){
+    corpo = `<div style="padding:20px;font-size:14px;color:var(--red);">${escapeHtml(cache.erro)}</div>`;
+  } else if(!cache.itens.length){
+    corpo = `<div style="padding:20px;font-size:14px;color:var(--slate);">Nenhum contrato disponível no app ainda. Se você já assinou um contrato, a secretaria pode anexá-lo aqui.</div>`;
+  } else {
+    corpo = ordenarContratos(cache.itens).map(m => `
+      <div class="row contrato-fam-item">
+        <div style="min-width:0;">
+          <div style="color:var(--ink);font-weight:600;font-size:14px;word-break:break-word;">${escapeHtml(m.nome)}</div>
+          <div style="color:var(--slate);font-size:12.5px;margin-top:2px;">Anexado em ${m.criadoEm ? escapeHtml(formatarDataBr(m.criadoEm)) : "—"} · ${escapeHtml(tamanhoLegivel(m.tamanho))}</div>
+          <div style="margin-top:6px;">${contratoStatusPill(m)}</div>
+        </div>
+        <div class="contrato-fam-acoes">
+          <button type="button" class="teacher-primary-btn" style="margin-top:0;" data-action="ver-contrato" data-id="${escapeHtml(m.id)}">Ver contrato</button>
+          <button type="button" class="btn-secondary" data-action="baixar-contrato" data-id="${escapeHtml(m.id)}">Baixar PDF</button>
+        </div>
+      </div>`).join("");
+  }
+  return `
+    <h2 class="section-title">Contratos</h2>
+    <p class="section-eyebrow">Contratos de prestação de serviços de ${escapeHtml(student.nome)}</p>
+    <div class="card flush">${corpo}</div>`;
+}
+
 async function carregarResponsaveisDoAluno(alunoId){
   state.alunoRespCarregando = true;
   render();
@@ -5661,6 +6580,8 @@ async function excluirAlunoDaInstituicao(aluno, escolaId){
     }
 
     await deleteDoc(doc(db, "alunos", aluno.id));
+    try { await apagarContratosDoAluno(aluno.id, escolaId); }
+    catch(e){ console.warn("Não consegui apagar os contratos salvos do aluno:", e?.code || e); }
     try {
       await updateDoc(doc(db, "escolas", escolaId), {
         alunos: arrayRemove({ nome: aluno.nome, turma: aluno.turma }),
@@ -6729,38 +7650,60 @@ function financeiroLancarCobrancaView(){
     </div>`;
 }
 
-function financeiroConsultarView(){
-  const recentes = todasCobrancas(state.instAlunos || []);
-  const recentesHtml = recentes.map(({ aluno, mensalidade: m }) => {
-    const atrasada = mensalidadeEstaAtrasada(m);
-    const pillClasse = m.status === "pago" ? "pill-green" : (atrasada ? "pill-red" : "pill-gold");
-    const pillTexto = m.status === "pago"
-      ? `${ICONS.check} Pago`
-      : (atrasada ? `${ICONS.clock} Atrasada há ${diasAtraso(m.vencimento)}d` : `${ICONS.clock} Pendente`);
-    const detalhePagamento = m.status === "pago"
-      ? `<div style="font-size:12px;color:var(--slate);margin-top:2px;">${escapeHtml(formaPagamentoLabel(m.formaPagamento))}${m.dataPagamento ? ` · pago em ${escapeHtml(formatarDataBr(m.dataPagamento))}` : ""}</div>`
-      : "";
-    return `
-      <div class="row" style="flex-direction:column;align-items:stretch;">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
-          <div>
-            <div style="font-size:14.5px;font-weight:600;color:var(--ink);">${escapeHtml(aluno.nome)} · ${escapeHtml(competenciaLabel(m.competencia))}</div>
-            <div style="font-size:12.5px;color:var(--slate);">${escapeHtml(formatarMoeda(m.valor))} · vence em ${escapeHtml(formatarDataBr(m.vencimento))}${m.criadoEm ? ` · lançada em ${escapeHtml(formatarDataBr(m.criadoEm))}` : ""}</div>
-            ${detalhePagamento}
-            ${anexosMensalidadeHtml(m)}
-          </div>
-          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-            <span class="pill ${pillClasse}">${pillTexto}</span>
-            ${m.status !== "pago" ? `<button type="button" class="btn-secondary" data-action="marcar-cobranca-paga" data-aluno-id="${escapeHtml(aluno.id)}" data-mens-id="${escapeHtml(m.id)}" ${state.finStatusSalvandoId === m.id ? "disabled" : ""}>${state.finStatusSalvandoId === m.id ? "Salvando…" : "Marcar como pago"}</button>` : ""}
-          </div>
-        </div>
-      </div>`;
-  }).join("") || `<div style="padding:20px;font-size:14px;color:var(--slate);">Nenhuma cobrança lançada ainda.</div>`;
+function financeiroFiltrarCobrancas(){
+  const termo = semAcento(state.finConsultaBusca).trim();
+  return todasCobrancas(state.instAlunos || []).filter(({ aluno, mensalidade: m }) => {
+    if(termo && !(semAcento(aluno.nome).includes(termo) || semAcento(aluno.turma).includes(termo) || semAcento(aluno.idAluno).includes(termo))) return false;
+    return true;
+  });
+}
 
+function financeiroListaConsultaHtml(){
+  const lista = financeiroFiltrarCobrancas();
+  const termo = semAcento(state.finConsultaBusca).trim();
+
+  // Alunos que batem com a busca (até 5), cada um com atalho pra lançar cobrança
+  let alunosHtml = "";
+  if(termo){
+    const achados = (state.instAlunos || [])
+      .filter(a => semAcento(a.nome).includes(termo) || semAcento(a.turma).includes(termo) || semAcento(a.idAluno).includes(termo))
+      .sort((a, b) => a.nome.localeCompare(b.nome));
+    if(achados.length && achados.length <= 5){
+      alunosHtml = `<div class="card flush" style="margin-top:10px;">${achados.map(a => `
+        <div class="row" style="justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+          <div>
+            <div style="font-size:14.5px;font-weight:600;color:var(--ink);">${escapeHtml(a.nome)}</div>
+            <div style="font-size:12.5px;color:var(--slate);">${escapeHtml(a.turma || "")}${(a.financeiro?.mensalidades || []).length ? ` · ${(a.financeiro.mensalidades).length} cobrança(s)` : " · sem cobranças"}</div>
+          </div>
+          <button type="button" class="teacher-primary-btn" style="margin:0;" data-action="fin-lancar-para" data-id="${escapeHtml(a.id)}">Lançar cobrança</button>
+        </div>`).join("")}</div>`;
+    }
+  }
+
+  const resumo = `<p class="section-eyebrow" style="margin-top:10px;">${lista.length} cobrança(s)</p>`;
+
+  const linhas = lista.map(({ aluno, mensalidade: m }) => `
+      <div class="row" style="flex-direction:column;align-items:stretch;">
+        <div style="font-size:14.5px;font-weight:600;color:var(--ink);">${escapeHtml(aluno.nome)} · ${escapeHtml(competenciaLabel(m.competencia))}</div>
+        <div style="font-size:12.5px;color:var(--slate);">${escapeHtml(formatarMoeda(m.valor))} · vence em ${escapeHtml(formatarDataBr(m.vencimento))} · ${escapeHtml(formaPagamentoLabel(m.formaPagamento))}${m.criadoEm ? ` · lançada em ${escapeHtml(formatarDataBr(m.criadoEm))}` : ""}</div>
+        ${anexosMensalidadeHtml(m)}
+      </div>`).join("") || `<div style="padding:20px;font-size:14px;color:var(--slate);">Nenhuma cobrança encontrada.</div>`;
+
+  return `${alunosHtml}${resumo}<div class="card flush" style="margin-top:6px;">${linhas}</div>`;
+}
+
+/* Atualiza só a lista (sem re-renderizar a tela inteira), pro cursor não
+   sair do campo de busca a cada letra. */
+function atualizarListaConsultaFin(){
+  const el = document.getElementById("fin-consulta-lista");
+  if(el) el.innerHTML = financeiroListaConsultaHtml();
+}
+
+function financeiroConsultarView(){
   return `
-    <p class="section-eyebrow">Todas as cobranças da unidade, do vencimento mais recente para o mais antigo. Nas pendentes, use o botão "Marcar como pago".</p>
-    ${state.finStatusErro ? `<p class="teacher-error" style="color:var(--red);font-size:12.5px;margin-top:8px;">${escapeHtml(state.finStatusErro)}</p>` : ""}
-    <div class="card flush" style="margin-top:10px;">${recentesHtml}</div>`;
+    <p class="section-eyebrow">Busque o aluno (nome, turma ou IDALUNO) para ver as cobranças dele ou lançar uma nova.</p>
+    <input id="fin-consulta-busca" type="search" class="teacher-text-input" style="margin:10px 0 0;" placeholder="Buscar aluno, turma ou IDALUNO…" autocomplete="off" value="${escapeHtml(state.finConsultaBusca)}" />
+    <div id="fin-consulta-lista">${financeiroListaConsultaHtml()}</div>`;
 }
 
 function alunosView(school){
@@ -7175,6 +8118,8 @@ function alunoDetalheModal(){
         ${state.alunoTurmaErro ? `<p class="teacher-error" style="color:var(--red);font-size:12.5px;margin-top:8px;">${escapeHtml(state.alunoTurmaErro)}</p>` : ""}
         ${state.alunoTurmaMensagem ? `<p class="teacher-success" style="margin-top:8px;">${escapeHtml(state.alunoTurmaMensagem)}</p>` : ""}
       </div>
+
+      ${contratosAlunoSection(aluno)}
 
       <div class="aluno-modal-section">
         <h3 class="teacher-label">Acesso ao app</h3>
@@ -7994,6 +8939,7 @@ function bindEvents(){
     if(t.id === "aluno-fin-pix"){ state.alunoFinPix = t.value; return; }
     if(t.id === "aluno-fin-codigo-barras"){ state.alunoFinCodigoBarras = t.value; return; }
     if(t.id === "aluno-fin-link-cartao"){ state.alunoFinLinkCartao = t.value; return; }
+    if(t.id === "fin-consulta-busca"){ state.finConsultaBusca = t.value; atualizarListaConsultaFin(); return; }
     if(t.id === "fin-cobranca-busca"){ state.finCobrancaBusca = t.value; atualizarResultadosBuscaFin(); return; }
     if(t.id === "fin-cobranca-competencia"){ state.finCobrancaCompetencia = t.value; return; }
     if(t.id === "fin-cobranca-valor"){ state.finCobrancaValor = t.value; return; }
@@ -8134,6 +9080,8 @@ function bindEvents(){
       try {
         const dados = await lerArquivoComoDataUrl(arq);
         state.alunoFinBoletoArquivo = { nome: arq.name, dados };
+        const lido = await lerDadosDoBoletoPdf(arq).catch(() => null);
+        aplicarDadosDoBoleto("aluno-fin", lido);
       } catch(err){
         state.alunoFinErro = "Não consegui ler esse PDF. Tente outro arquivo.";
       } finally {
@@ -8157,12 +9105,25 @@ function bindEvents(){
       try {
         const dados = await lerArquivoComoDataUrl(arq);
         state.finCobrancaBoletoArquivo = { nome: arq.name, dados };
+        const lido = await lerDadosDoBoletoPdf(arq).catch(() => null);
+        aplicarDadosDoBoleto("fin-cobranca", lido);
       } catch(err){
         state.finCobrancaErro = "Não consegui ler esse PDF. Tente outro arquivo.";
       } finally {
         state.finCobrancaBoletoLendo = false;
         render();
       }
+      return;
+    }
+    if(t.id === "contrato-up-status"){
+      state.contratoUpStatus = t.value === "assinado" ? "assinado" : "pendente";
+      return;
+    }
+    if(t.dataset && t.dataset.contratoAnexo){
+      const arquivos = Array.from(t.files || []);
+      const alunoAnexo = (state.instAlunos || []).find(a => a.id === t.dataset.contratoAnexo);
+      t.value = "";
+      if(alunoAnexo && arquivos.length) await anexarContratosDoAluno(alunoAnexo, arquivos);
       return;
     }
     if(t.dataset && t.dataset.contratoEnvio){
@@ -8445,6 +9406,7 @@ function bindEvents(){
         else if(state.familiaTab === "notas") carregarBoletimDoAluno(calAlunoAtual());
         else if(state.familiaTab === "certificados") carregarCertificadosDoAluno(calAlunoAtual());
         else if(state.familiaTab === "aval"){ state.aval.instOk = false; state.aval.instErro = ""; carregarAvaliacoesDoAluno(calAlunoAtual()); }
+        else if(state.familiaTab === "contratos") carregarContratosDoAluno(state.familiaStudentId);
         break;
       case "switch-student":
         state.familiaStudentId = el.dataset.id;
@@ -8454,6 +9416,7 @@ function bindEvents(){
         else if(state.familiaTab === "notas") carregarBoletimDoAluno(calAlunoAtual());
         else if(state.familiaTab === "certificados") carregarCertificadosDoAluno(calAlunoAtual());
         else if(state.familiaTab === "aval"){ state.aval.instOk = false; state.aval.instErro = ""; carregarAvaliacoesDoAluno(calAlunoAtual()); }
+        else if(state.familiaTab === "contratos") carregarContratosDoAluno(state.familiaStudentId);
         break;
       case "set-inst-tab":
         state.instTab = el.dataset.key;
@@ -8501,6 +9464,7 @@ function bindEvents(){
         // cadastrados) e das turmas (seletor de turma)
         if(state.instTab === "contratos"){
           garantirPessoasDaUnidade();
+          carregarContratosDaEscola(state.escolaSelecionadaId);
         }
         // aniversários precisa dos alunos (data de nascimento) e dos
         // responsáveis (pra quem tem WhatsApp quando o aluno não tem)
@@ -8541,6 +9505,14 @@ function bindEvents(){
         }
         render();
         break;
+
+      case "fin-lancar-para": {
+        resetarFormCobrancaFin();
+        state.finCobrancaAlunoId = el.dataset.id || "";
+        state.finSubTab = "lancar";
+        render();
+        break;
+      }
 
       case "marcar-cobranca-paga": {
         const aluno = (state.instAlunos || []).find(a => a.id === el.dataset.alunoId);
@@ -8589,8 +9561,106 @@ function bindEvents(){
 
       case "set-acessos-grupo":
         state.gestaoAcessosGrupo = el.dataset.key;
+        state.geracaoLoteConfirmando = false;
         render();
         break;
+
+      case "ver-sem-login":
+        state.gestaoSubTab = "acessos";
+        state.gestaoAcessosGrupo = "semlogin";
+        state.gestaoAcessosBusca = "";
+        state.geracaoLoteConfirmando = false;
+        render();
+        garantirPessoasDaUnidade();
+        break;
+
+      case "gerar-senha-acesso": {
+        const campo = document.getElementById("acesso-nova-senha");
+        const nova = senhaProvisoria();
+        if(campo) campo.value = nova;
+        if(!state.acessoUid) state.acessoSenhaSugerida = nova;
+        break;
+      }
+
+      case "gerar-login-e-senha-acesso": {
+        const dominio = state.acessoTipo === "aluno" ? DOMINIO_ALUNO : DOMINIO_RESPONSAVEL;
+        const usados = emailsUsadosDaUnidade();
+        const atual = (document.getElementById("acesso-email")?.value || "").trim();
+        if(atual) usados.push(atual);
+        state.acessoEmail = escolherEmailLivre(state.acessoNome, dominio, usados);
+        state.acessoSenhaSugerida = senhaProvisoria();
+        render();
+        break;
+      }
+
+      case "gerar-logins-lote":
+        state.geracaoLoteConfirmando = true;
+        state.geracaoLoteResultado = null;
+        render();
+        break;
+
+      case "cancelar-gerar-logins-lote":
+        state.geracaoLoteConfirmando = false;
+        render();
+        break;
+
+      case "fechar-resultado-lote":
+        state.geracaoLoteResultado = null;
+        render();
+        break;
+
+      case "copiar-logins-lote": {
+        const res = state.geracaoLoteResultado;
+        if(!res) break;
+        const texto = res.criados.map(c => `${c.nome} (${c.tipo === "aluno" ? "aluno" : "responsável"})\nLogin: ${c.email}\nSenha: ${c.senha}`).join("\n\n");
+        try {
+          await navigator.clipboard.writeText(texto);
+          state.instituicaoMensagem = "Lista de logins copiada.";
+        } catch(_e){
+          state.instituicaoErro = "Não consegui copiar. Selecione e copie a tabela mostrada.";
+        }
+        render();
+        break;
+      }
+
+      case "confirmar-gerar-logins-lote": {
+        const alvos = pessoasSemLogin();
+        state.geracaoLoteConfirmando = false;
+        state.geracaoLoteRodando = true;
+        state.geracaoLoteResultado = null;
+        const criados = [];
+        const falhas = [];
+        const usados = emailsUsadosDaUnidade();
+        render();
+        for(let i = 0; i < alvos.length; i++){
+          const { tipo, ref } = alvos[i];
+          state.geracaoLoteProgresso = `${i + 1} de ${alvos.length}.`;
+          render();
+          const dominio = tipo === "aluno" ? DOMINIO_ALUNO : DOMINIO_RESPONSAVEL;
+          const emails = variantesDeEmail(ref.nome, dominio).filter(e => !usados.includes(e.toLowerCase()));
+          const senha = senhaProvisoria();
+          try {
+            if(emails.length === 0) throw new Error("sem login livre para esse nome");
+            const r = tipo === "aluno"
+              ? await criarLoginParaAluno(ref, emails, senha)
+              : await criarLoginParaResponsavelComAlternativas(ref, emails, senha);
+            ref.uid = r.uid;
+            ref.email = r.email;
+            usados.push(r.email.toLowerCase());
+            criados.push({ nome: ref.nome, tipo, email: r.email, senha });
+          } catch(err){
+            falhas.push({
+              nome: ref.nome,
+              motivo: err?.code?.startsWith?.("auth/") ? mensagemErroFirebase(err.code) : (err?.code || err?.message || "erro"),
+            });
+          }
+        }
+        state.geracaoLoteRodando = false;
+        state.geracaoLoteProgresso = "";
+        state.geracaoLoteResultado = { criados, falhas };
+        render();
+        break;
+      }
 
       case "set-new-user-role":
         await mudarPapelNovoUsuario(el.dataset.role);
@@ -9416,6 +10486,107 @@ function bindEvents(){
         break;
       }
 
+      case "ver-contrato": {
+        const meta = acharContratoSalvo(el.dataset.id);
+        if(meta) await abrirContratoNoApp(meta);
+        break;
+      }
+
+      case "fechar-contrato-vis":
+        contratoVisFechar();
+        render();
+        break;
+
+      case "baixar-contrato": {
+        const meta = acharContratoSalvo(el.dataset.id);
+        if(!meta) break;
+        try { await baixarContratoSalvo(meta); }
+        catch(err){ console.error("Erro ao baixar contrato:", err); alert("Não consegui baixar este contrato agora. Tente de novo."); }
+        break;
+      }
+
+      case "contrato-salvo-enviar": {
+        const meta = acharContratoSalvo(el.dataset.id);
+        const aluno = meta && (state.instAlunos || []).find(a => a.id === meta.alunoId);
+        if(!meta || !aluno) break;
+        state.contratoOcupado[meta.id] = true;
+        render();
+        try {
+          const arquivo = await arquivoDoContratoSalvo(meta);
+          const destino = destinoDoContratoDoAluno(aluno);
+          const resultado = await enviarContratoParaAssinatura({
+            arquivo, alunoNome: aluno.nome, respNome: destino.nome, numero: destino.numero,
+          });
+          state.contratoEnvioMsg[meta.id] = textoResultadoEnvio(resultado);
+          if(resultado === "compartilhado" || resultado === "manual") await marcarContratoSalvoEnviado(meta);
+        } catch(err){
+          console.error("Erro ao enviar contrato salvo:", err);
+          state.contratoEnvioMsg[meta.id] = `Não consegui preparar o PDF${err?.code ? ` (${err.code})` : ""}. Tente de novo.`;
+        }
+        delete state.contratoOcupado[meta.id];
+        render();
+        break;
+      }
+
+      case "contrato-salvo-assinado": {
+        const meta = acharContratoSalvo(el.dataset.id);
+        if(!meta) break;
+        state.contratoOcupado[meta.id] = true;
+        render();
+        try {
+          await marcarContratoSalvoAssinado(meta);
+          delete state.contratoEnvioMsg[meta.id];
+        } catch(err){
+          console.error("Erro ao marcar contrato como assinado:", err);
+          state.contratoEnvioMsg[meta.id] = `Não consegui salvar${err?.code ? ` (${err.code})` : ""}. Tente de novo.`;
+        }
+        delete state.contratoOcupado[meta.id];
+        render();
+        break;
+      }
+
+      case "contrato-salvo-excluir": {
+        const meta = acharContratoSalvo(el.dataset.id);
+        if(!meta) break;
+        if(!confirm(`Excluir o contrato "${meta.nome}"? O PDF sai do sistema e deixa de aparecer para os responsáveis.`)) break;
+        state.contratoOcupado[meta.id] = true;
+        render();
+        try {
+          await excluirContratoSalvo(meta);
+        } catch(err){
+          console.error("Erro ao excluir contrato:", err);
+          state.contratoEnvioMsg[meta.id] = `Não consegui excluir${err?.code ? ` (${err.code})` : ""}. Tente de novo.`;
+        }
+        delete state.contratoOcupado[meta.id];
+        render();
+        break;
+      }
+
+      case "contrato-pendente-salvar": {
+        const alunoId = el.dataset.aluno;
+        const aluno = (state.instAlunos || []).find(a => a.id === alunoId);
+        const arquivo = state.contratoArquivosEnvio[alunoId];
+        if(!aluno || !arquivo) break;
+        const problema = validarArquivoContrato(arquivo);
+        if(problema){ state.contratoEnvioMsg[alunoId] = problema; render(); break; }
+        state.contratoEnvioMsg[alunoId] = "Salvando…";
+        render();
+        try {
+          await salvarContratoPdf({
+            alunoId, escolaId: state.escolaSelecionadaId, arquivo,
+            status: "pendente", enviadoEm: aluno.contratoEnviadoEm || "",
+          });
+          await sincronizarResumoContratos(alunoId, state.escolaSelecionadaId);
+          delete state.contratoArquivosEnvio[alunoId];
+          delete state.contratoEnvioMsg[alunoId];
+        } catch(err){
+          console.error("Erro ao salvar contrato pendente:", err);
+          state.contratoEnvioMsg[alunoId] = `Não consegui salvar${err?.code ? ` (${err.code})` : ""}. Tente de novo.`;
+        }
+        render();
+        break;
+      }
+
       case "import-contrato-remover":
         state.importContratosItens.splice(Number(el.dataset.row), 1);
         render();
@@ -9487,6 +10658,29 @@ function bindEvents(){
             item.acessos = { aluno: resultado.aluno, aluno2: resultado.aluno2, responsavel: resultado.responsavel, extras: resultado.extras || [] };
             if(!item.assinado) resumo.pendentes++;
             item.avisos = resultado.avisos || [];
+
+            // Deixa o PDF guardado no cadastro (um contrato por aluno do PDF,
+            // pra o segundo irmão também ter o dele).
+            if(item.arquivo){
+              const problemaPdf = validarArquivoContrato(item.arquivo);
+              if(problemaPdf){
+                item.avisos.push(`O PDF não foi salvo no sistema: ${problemaPdf} Anexe pela ficha do aluno.`);
+              } else {
+                try {
+                  for(const idAluno of [resultado.alunoId, resultado.alunoId2].filter(Boolean)){
+                    await salvarContratoPdf({
+                      alunoId: idAluno, escolaId: state.escolaSelecionadaId, arquivo: item.arquivo,
+                      status: item.assinado ? "assinado" : "pendente",
+                    });
+                    await sincronizarResumoContratos(idAluno, state.escolaSelecionadaId);
+                  }
+                  item.avisos.push("PDF do contrato salvo no sistema (a secretaria e os responsáveis conseguem abrir).");
+                } catch(errPdf){
+                  console.error("Erro ao salvar o PDF do contrato importado:", errPdf);
+                  item.avisos.push(`Cadastro feito, mas não consegui salvar o PDF no sistema${errPdf?.code ? ` (${errPdf.code})` : ""}. Anexe pela ficha do aluno.`);
+                }
+              }
+            }
           } catch(err){
             console.error("Erro ao importar contrato:", item.arquivoNome, err);
             item.status = "erro";
@@ -9798,6 +10992,12 @@ function bindEvents(){
         state.acessoErro = "";
         state.acessoMensagem = "";
         state.acessoConfirmandoExclusao = el.dataset.excluir === "1";
+        state.acessoSenhaSugerida = "";
+        if(!uid && el.dataset.excluir !== "1" && (tipo === "aluno" || tipo === "responsavel")){
+          const dominio = tipo === "aluno" ? DOMINIO_ALUNO : DOMINIO_RESPONSAVEL;
+          if(!email) state.acessoEmail = escolherEmailLivre(state.acessoNome, dominio, emailsUsadosDaUnidade());
+          state.acessoSenhaSugerida = senhaProvisoria();
+        }
         // Abrir o gerenciador de acesso a partir da ficha do aluno fecha a
         // ficha — dois modais empilhados só atrapalham no celular.
         if(tipo === "aluno") state.alunoDetalheId = null;
@@ -9851,13 +11051,16 @@ function bindEvents(){
           render();
           break;
         }
-        if(state.acessoTipo !== "responsavel"){
-          state.acessoErro = "Por enquanto só dá pra criar acesso de responsável por aqui. Para aluno e professor, use Gestão > Criar cadastro.";
+        if(state.acessoTipo !== "responsavel" && state.acessoTipo !== "aluno"){
+          state.acessoErro = "Por enquanto só dá pra criar acesso de aluno e responsável por aqui. Para professor, use Gestão > Criar cadastro.";
           render();
           break;
         }
-        const responsavel = (state.gestaoResponsaveis || []).find(r => r.id === state.acessoDocId);
-        if(!responsavel){
+        const ehAlunoAcesso = state.acessoTipo === "aluno";
+        const pessoaAcesso = ehAlunoAcesso
+          ? (state.instAlunos || []).find(a => a.id === state.acessoDocId)
+          : (state.gestaoResponsaveis || []).find(r => r.id === state.acessoDocId);
+        if(!pessoaAcesso){
           state.acessoErro = "Cadastro não encontrado. Feche e abra a lista de novo.";
           render();
           break;
@@ -9865,12 +11068,20 @@ function bindEvents(){
         state.acessoCriandoLogin = true;
         render();
         try {
-          const uid = await criarLoginParaResponsavel(responsavel, email, senha);
-          responsavel.uid = uid;
-          responsavel.email = email;
+          let emailFinalAcesso = email;
+          let uid;
+          if(ehAlunoAcesso){
+            const r = await criarLoginParaAluno(pessoaAcesso, [email], senha);
+            uid = r.uid; emailFinalAcesso = r.email;
+          } else {
+            uid = await criarLoginParaResponsavel(pessoaAcesso, email, senha);
+          }
+          pessoaAcesso.uid = uid;
+          pessoaAcesso.email = emailFinalAcesso;
           state.acessoUid = uid;
-          state.acessoEmail = email;
-          state.acessoMensagem = `Acesso criado. ${responsavel.nome} entra com ${email} e a senha que você definiu.`;
+          state.acessoEmail = emailFinalAcesso;
+          state.acessoSenhaSugerida = "";
+          state.acessoMensagem = `Acesso criado. ${pessoaAcesso.nome} entra com ${emailFinalAcesso} e a senha ${senha}. Anote: ela não aparece de novo.`;
         } catch(err){
           state.acessoErro = err?.code?.startsWith("auth/")
             ? mensagemErroFirebase(err.code)
@@ -10077,9 +11288,12 @@ function bindEvents(){
         state.alunoTurmaSelecionada = "";
         state.alunoTurmaErro = "";
         state.alunoTurmaMensagem = "";
+        state.contratoUpMsg = "";
+        state.contratoUpErro = "";
         render();
         garantirTurmasDaUnidade();
         carregarResponsaveisDoAluno(id);
+        carregarContratosDaEscola(state.escolaSelecionadaId);
         break;
       }
 
@@ -10154,6 +11368,13 @@ function bindEvents(){
           }
           render();
         }
+        break;
+      }
+
+      case "gerar-senha-novo-usuario": {
+        state.novoUsuarioSenha = senhaProvisoria();
+        const campoSenhaNovo = document.getElementById("new-user-senha");
+        if(campoSenhaNovo) campoSenhaNovo.value = state.novoUsuarioSenha;
         break;
       }
 

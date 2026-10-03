@@ -142,10 +142,10 @@ export function gradeDoMes(ano, mes){
    - aluno não vê aviso marcado "só responsáveis" e não vê observações;
    - responsável não vê aviso marcado "só alunos" e vê as observações;
    - professor vê todos os avisos que ele mesmo criou. */
-export function montarDias({ presencas = [], eventos = [], papel }){
+export function montarDias({ presencas = [], eventos = [], vencimentos = [], papel }){
   const dias = {};
   const dia = (iso) => {
-    if(!dias[iso]) dias[iso] = { presencas: [], eventos: [], institucional: [], institucionalTipo: "", observacoes: [], status: "" };
+    if(!dias[iso]) dias[iso] = { presencas: [], eventos: [], institucional: [], vencimentos: [], institucionalTipo: "", observacoes: [], status: "" };
     return dias[iso];
   };
 
@@ -172,6 +172,12 @@ export function montarDias({ presencas = [], eventos = [], papel }){
     dia(e.data).eventos.push(e);
   });
 
+  // Vencimento de boleto (aluno/responsável): { id, titulo, valor, forma, aluno, data }
+  vencimentos.forEach(v => {
+    if(!ISO_REGEX.test(v.data || "")) return;
+    dia(v.data).vencimentos.push(v);
+  });
+
   Object.keys(dias).forEach(iso => {
     dias[iso].presencas.sort((a, b) => String(a.disciplina || "").localeCompare(String(b.disciplina || ""), "pt-BR"));
     dias[iso].observacoes.sort((a, b) => String(a.disciplina || "").localeCompare(String(b.disciplina || ""), "pt-BR"));
@@ -191,8 +197,9 @@ const SVG_LIXEIRA = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none"
 
 /* ---------------- célula de um dia ---------------- */
 function celulaHtml(iso, dia, ehHoje, podeCriar){
-  const d = dia || { presencas: [], eventos: [], institucional: [], institucionalTipo: "", observacoes: [], status: "" };
-  const temItens = d.presencas.length + d.eventos.length + d.institucional.length > 0;
+  const d = dia || { presencas: [], eventos: [], institucional: [], vencimentos: [], institucionalTipo: "", observacoes: [], status: "" };
+  const venc = d.vencimentos || [];
+  const temItens = d.presencas.length + d.eventos.length + d.institucional.length + venc.length > 0;
   const clicavel = temItens || podeCriar;
 
   const classeInst = TIPOS_INSTITUICAO[d.institucionalTipo]?.classe || "";
@@ -208,15 +215,17 @@ function celulaHtml(iso, dia, ehHoje, podeCriar){
   if(d.institucional.length) partes.push(d.institucional.map(e => TIPOS_INSTITUICAO[e.tipo]?.rotulo || "Aviso da secretaria").join(", "));
   if(d.eventos.length) partes.push(`${d.eventos.length} ${d.eventos.length === 1 ? "aviso" : "avisos"}`);
   if(d.observacoes.length) partes.push("com observação do professor");
+  if(venc.length) partes.push(venc.length === 1 ? "vencimento de boleto" : `${venc.length} vencimentos de boleto`);
 
   const pontosInst = Math.min(d.institucional.length, 3);
   const marcasInst = pontosInst ? `<span class="cal-dia-marcas">${`<i class="cal-inst-ponto cal-inst-${classeInst || "outro"}"></i>`.repeat(pontosInst)}</span>` : "";
   const pontos = Math.min(d.eventos.length, 3);
   const marcas = pontos ? `<span class="cal-dia-marcas">${"<i class=\"cal-ponto\"></i>".repeat(pontos)}</span>` : "";
+  const marcasVenc = venc.length ? `<span class="cal-venc-marca" title="Vencimento de boleto">$</span>` : "";
   const alerta = d.observacoes.length ? `<span class="cal-alerta" title="Observação do professor">${SVG_ALERTA}</span>` : "";
 
   return `<button type="button" class="${classes.join(" ")}" ${clicavel ? `data-action="cal-abrir-dia" data-dia="${iso}"` : "disabled"} aria-label="${esc(partes.join(", "))}">
-      <span class="cal-dia-num">${numero}</span>${marcasInst}${marcas}${alerta}
+      <span class="cal-dia-num">${numero}</span>${marcasInst}${marcas}${marcasVenc}${alerta}
     </button>`;
 }
 
@@ -281,7 +290,7 @@ function eventoCardHtml(e, papel, { excluirConfirmId, excluindoId }){
 }
 
 function diaModalHtml(iso, dia, papel, opcoes){
-  const d = dia || { presencas: [], eventos: [], observacoes: [], status: "" };
+  const d = dia || { presencas: [], eventos: [], vencimentos: [], observacoes: [], status: "" };
 
   const presencasHtml = d.presencas.length ? `
     <div class="aluno-modal-section">
@@ -320,7 +329,19 @@ function diaModalHtml(iso, dia, papel, opcoes){
       <div class="aluno-modal-resp-list">${d.eventos.map(e => eventoCardHtml(e, papel, opcoes)).join("")}</div>
     </div>` : "";
 
-  const vazio = (!presencasHtml && !observacoesHtml && !institucionalHtml && !eventosHtml)
+  const vencimentosHtml = (d.vencimentos || []).length ? `
+    <div class="aluno-modal-section">
+      <h3 class="teacher-label">Vencimento de boleto</h3>
+      <div class="aluno-modal-resp-list">${d.vencimentos.map(v => `
+        <div class="cal-evento cal-evento-venc">
+          <div class="cal-evento-topo"><span class="pill pill-gold">Vencimento</span><strong>${esc(v.titulo)}</strong></div>
+          <p class="cal-evento-desc">${esc(v.valor)} · ${esc(v.forma)}</p>
+          ${v.aluno ? `<div class="cal-evento-meta">${esc(v.aluno)}</div>` : ""}
+        </div>`).join("")}
+      </div>
+    </div>` : "";
+
+  const vazio = (!presencasHtml && !observacoesHtml && !institucionalHtml && !eventosHtml && !vencimentosHtml)
     ? `<div class="aluno-modal-section"><p class="section-eyebrow" style="margin:0;">Nada registrado neste dia.</p></div>` : "";
 
   const novo = papel === "professor" ? `
@@ -338,7 +359,7 @@ function diaModalHtml(iso, dia, papel, opcoes){
         <div><h2>${esc(dataExtenso(iso))}</h2></div>
         <button type="button" class="secretaria-modal-close" style="color:var(--slate);" data-action="cal-fechar-dia" aria-label="Fechar">${SVG_FECHAR}</button>
       </div>
-      ${presencasHtml}${observacoesHtml}${institucionalHtml}${eventosHtml}${vazio}${novo}
+      ${vencimentosHtml}${presencasHtml}${observacoesHtml}${institucionalHtml}${eventosHtml}${vazio}${novo}
     </div>
   </div>`;
 }
@@ -367,6 +388,7 @@ export function calendarioHtml(opcoes){
        <span><i class="cal-leg cal-leg-justificada"></i>Justificada</span>
        <span><i class="cal-leg cal-leg-falta"></i>Falta</span>
        <span><i class="cal-ponto"></i>Aviso ou lembrete</span>
+       <span><i class="cal-venc-marca cal-venc-leg">$</i>Vencimento de boleto</span>
        ${papel === "responsavel" ? `<span class="cal-leg-alerta">${SVG_ALERTA}Observação do professor</span>` : ""}
        ${legendaInst}`;
 
