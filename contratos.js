@@ -182,6 +182,17 @@ function dataExtenso(iso){
   return `${d} de ${MESES[m - 1]} de ${a}`;
 }
 
+/* Data ISO válida e com ano plausível (2000–2100). Serve pra descartar o
+   valor parcial que o <input type=date> manda enquanto o ano é digitado. */
+export function contratoDataPlausivel(iso, { min = 2000, max = 2100 } = {}){
+  const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if(!m) return false;
+  const a = Number(m[1]), mes = Number(m[2]), d = Number(m[3]);
+  if(a < min || a > max) return false;
+  const dt = new Date(Date.UTC(a, mes - 1, d));
+  return dt.getUTCMonth() === mes - 1 && dt.getUTCDate() === d;
+}
+
 /* Soma meses a uma data ISO e volta um dia (fim do pacote).
    Ex.: início 01/02/2026 + 12 meses -> 30/01/2027, igual ao modelo. */
 export function calcularTermino(isoInicio, meses){
@@ -471,6 +482,12 @@ export function contratoValidar(c){
   if(!c.curso) return "Escolha o curso.";
   if(!contratoMeses(c)) return "Informe a duração do contrato em meses.";
   if(!c.dataInicio) return "Informe a data de início do pacote.";
+  if(!contratoDataPlausivel(c.dataInicio)) return "A data de início do pacote parece inválida. Confira o dia, o mês e o ano.";
+  if(c.dataTermino && !contratoDataPlausivel(c.dataTermino)) return "A data de término parece inválida. Confira o dia, o mês e o ano.";
+  if(c.dataTermino && c.dataTermino <= c.dataInicio) return "O término do pacote precisa ser depois do início.";
+  if(c.primeiroVencimento && !contratoDataPlausivel(c.primeiroVencimento)) return "A data do 1º vencimento parece inválida. Confira o dia, o mês e o ano.";
+  if(c.dataAssinatura && !contratoDataPlausivel(c.dataAssinatura)) return "A data da assinatura parece inválida. Confira o dia, o mês e o ano.";
+  if(c.alunoNascimento && !contratoDataPlausivel(c.alunoNascimento, { min: 1900, max: new Date().getFullYear() })) return "A data de nascimento do aluno parece inválida.";
   if(!c.semResponsavel && !c.respNome.trim()) return "Informe o responsável ou marque \"aluno maior de idade\".";
   if(!numeroLimpo(c.valorCurso)) return "Informe o valor do curso.";
   if(!Number(c.numParcelas)) return "Informe em quantas parcelas o valor será dividido.";
@@ -1036,7 +1053,7 @@ function campo(label, field, valor, { tipo = "text", placeholder = "", largura =
   return `
     <label class="contrato-campo" style="${largura ? `flex:1 1 ${largura};` : ""}">
       <span>${esc(label)}</span>
-      <input type="${tipo}" class="teacher-text-input" data-contrato-field="${field}" value="${esc(valor || "")}" placeholder="${esc(placeholder)}" />
+      <input type="${tipo}" class="teacher-text-input" data-contrato-field="${field}" value="${esc(valor || "")}" placeholder="${esc(placeholder)}" ${tipo === "date" ? 'min="2000-01-01" max="2100-12-31"' : ""} />
     </label>`;
 }
 

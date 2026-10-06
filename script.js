@@ -214,6 +214,7 @@ import {
   contratoEstadoInicial,
   contratoModal,
   contratoRecalcular,
+  contratoDataPlausivel,
   contratoAplicarEmpresa,
   contratoValidar,
   contratoSugerirAcessos,
@@ -689,10 +690,38 @@ function whatsappLink(numero){
   return `https://wa.me/${comDdi}`;
 }
 
+/* Assinatura eletrônica pelo gov.br (Assinador do ITI). É gratuita; a conta
+   gov.br da pessoa precisa ser nível prata ou ouro. O Assinador não aceita
+   link com o documento já carregado — a pessoa entra, sobe o PDF e assina. */
+const GOVBR_ASSINADOR_URL = "https://assinador.iti.br/";
+
+/* Quantos dias o responsável tem pra assinar, contados do envio. */
+const PRAZO_ASSINATURA_DIAS = 7;
+
+function somarDiasISO(iso, dias){
+  const [a, m, d] = iso.split("-").map(Number);
+  const dt = new Date(a, m - 1, d + dias);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+}
+
+/* Dias entre hoje e a data (negativo = já passou). null se não houver data. */
+function diasAteISO(iso){
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(iso || "")) return null;
+  const [a, m, d] = iso.split("-").map(Number);
+  const [ha, hm, hd] = dataDeHojeISO().split("-").map(Number);
+  return Math.round((Date.UTC(a, m - 1, d) - Date.UTC(ha, hm - 1, hd)) / 86400000);
+}
+
+function prazoPadraoAssinatura(){
+  return somarDiasISO(dataDeHojeISO(), PRAZO_ASSINATURA_DIAS);
+}
+
 /* Mensagem que acompanha o contrato enviado pra assinatura. Edite aqui. */
 const MENSAGEM_CONTRATO = {
-  paraAssinatura: (primeiroNomeQuemAssina, nomeAluno) =>
-    `Olá${primeiroNomeQuemAssina ? `, ${primeiroNomeQuemAssina}` : ""}! Tudo bem?\n\nSegue o contrato de prestação de serviços do(a) ${nomeAluno} no Educa+ Centro Educacional, em PDF, para assinatura.\n\nDepois de assinado, é só devolver por aqui mesmo (pode ser o PDF ou uma foto legível). Qualquer dúvida, é só chamar!`,
+  paraAssinatura: (primeiroNomeQuemAssina, nomeAluno, prazoISO) =>
+    `Olá${primeiroNomeQuemAssina ? `, ${primeiroNomeQuemAssina}` : ""}! Tudo bem?\n\nSegue o contrato de prestação de serviços do(a) ${nomeAluno} no Educa+ Centro Educacional, em PDF, para assinatura.\n\n⏰ Prazo para assinar: até ${formatarDataBr(prazoISO)}.\n\n✍️ Como assinar pelo gov.br (gratuito, uns 5 minutos):\n1️⃣ Acesse ${GOVBR_ASSINADOR_URL} e entre com a sua conta gov.br (nível prata ou ouro)\n2️⃣ Envie o PDF do contrato e assine\n3️⃣ Baixe o PDF assinado e devolva por aqui mesmo\n\nSe preferir, pode imprimir, assinar à mão e mandar uma foto legível. O contrato também fica na aba Contratos do app: ${linkDoApp()}\n\nQualquer dúvida, é só chamar!`,
+  assinadoDevolvido: (nomeAluno) =>
+    `Olá! Segue em anexo o contrato assinado do(a) ${nomeAluno}.`,
 };
 
 /* Endereço do app que vai na mensagem de acesso. Deixe vazio pra usar o
@@ -736,8 +765,8 @@ function abrirWhatsappDeAcesso({ ehResponsavel, acesso, nomeAluno, nomeDestino, 
    Precisa ser chamada direto de um clique (sem esperar nada antes),
    senão o navegador bloqueia o compartilhamento.
    Devolve: "compartilhado" | "cancelado" | "manual" | "sem-numero". */
-async function enviarContratoParaAssinatura({ arquivo, alunoNome, respNome, numero }){
-  const texto = MENSAGEM_CONTRATO.paraAssinatura(primeiroNome(respNome), alunoNome);
+async function enviarContratoParaAssinatura({ arquivo, alunoNome, respNome, numero, prazo }){
+  const texto = MENSAGEM_CONTRATO.paraAssinatura(primeiroNome(respNome), alunoNome, prazo || prazoPadraoAssinatura());
 
   if(arquivo && typeof navigator.canShare === "function" && navigator.canShare({ files: [arquivo] })){
     try {
@@ -1507,6 +1536,7 @@ const state = {
   contratoUpErro: "",
   contratoOcupado: {},                  // { [contratoId]: true } enquanto envia/atualiza
   contratoVis: null,                    // visualizador de contrato dentro do app
+  contratoGuia: null,                   // responsável: passo a passo de assinatura pelo gov.br ({ id })
 
   // ficha do aluno (modal aberto ao clicar num aluno da lista)
   alunoDetalheId: null,
@@ -1704,6 +1734,7 @@ async function carregarDadosDoPerfil(){
     state.familiaTab = "calendario";
     state.screen = "familia";
     carregarCalendarioDoAluno(alunos[0]);
+    alunos.forEach(a => carregarContratosDoAluno(a.id));   // alimenta o aviso de contrato pendente
     return;
   }
 
@@ -2308,6 +2339,23 @@ function mensagemErroFirebase(code){
 /* ================================================================== */
 /* Render dispatcher                                                    */
 /* ================================================================== */
+/* Redesenha a tela e devolve o foco ao campo que estava ativo (útil quando
+   o render é disparado ao sair de um campo, para o próximo clique não se perder). */
+function renderPreservandoFoco(){
+  const a = document.activeElement;
+  let seletor = "";
+  if(a && a !== document.body){
+    if(a.dataset && a.dataset.contratoField) seletor = `[data-contrato-field="${a.dataset.contratoField}"]`;
+    else if(a.dataset && a.dataset.contratoSelect) seletor = `[data-contrato-select="${a.dataset.contratoSelect}"]`;
+    else if(a.id) seletor = `#${a.id}`;
+  }
+  render();
+  if(seletor){
+    const novo = document.querySelector(seletor);
+    if(novo) novo.focus();
+  }
+}
+
 function render(){
   if(state.screen === "login") app.innerHTML = renderLogin();
   else if(state.screen === "carregando") app.innerHTML = renderCarregando();
@@ -2578,9 +2626,9 @@ function renderFamilia(){
     navItems, active: state.familiaTab,
     headerSub: "RESPONSÁVEL", headerTitle: greeting(state.perfil?.nome || "Responsável"),
     headerFoto: headerFotoHtml(FOTO_PADRAO.responsavel, state.perfil?.nome || "Responsável"),
-    bodyHtml: switcher + classStatusCard(student, true) + body,
+    bodyHtml: switcher + contratosAvisoFamilia() + classStatusCard(student, true) + body,
     navAction: "set-familia-tab",
-  }) + avisosPopupHtml() + contratoVisualizadorModal();
+  }) + avisosPopupHtml() + contratoVisualizadorModal() + contratoGuiaModal();
 }
 
 function notasView(student){
@@ -6075,7 +6123,8 @@ function professorResumoMediasHtml(turma, atividades){
    segundo curso), cada um com a sua situação:
      contratos/{id}
        alunoId, escolaId, nome (arquivo), tamanho, partes,
-       status: "pendente" | "assinado", criadoEm, assinadoEm, enviadoEm
+       status: "pendente" | "assinado", criadoEm, assinadoEm, enviadoEm,
+       prazoAssinatura (definido quando a secretaria envia pra assinar)
      contratosArquivos/{id}_{n}
        contratoId, alunoId, escolaId, ordem, parte (texto base64)
    O campo `contratoStatus` do aluno continua existindo (as Estatísticas
@@ -6100,6 +6149,7 @@ function normalizeContrato(id, d){
     criadoEm: d.criadoEm || "",
     assinadoEm: d.assinadoEm || "",
     enviadoEm: d.enviadoEm || "",
+    prazoAssinatura: d.prazoAssinatura || "",   // "AAAA-MM-DD": até quando o responsável deve assinar
   };
 }
 
@@ -6129,6 +6179,7 @@ function acharContratoSalvo(id){
 
 function contratosResetar(){
   contratoVisFechar();
+  state.contratoGuia = null;
   state.contratosInst = { escolaId: null, itens: [], carregando: false, carregado: false, erro: "" };
   state.contratosFam = {};
   state.contratoUpStatus = "pendente";
@@ -6308,10 +6359,12 @@ async function marcarContratoSalvoAssinado(meta){
   await sincronizarResumoContratos(meta.alunoId, meta.escolaId);
 }
 
-async function marcarContratoSalvoEnviado(meta){
+async function marcarContratoSalvoEnviado(meta, prazo){
   try {
-    await updateDoc(doc(db, "contratos", meta.id), { enviadoEm: dataDeHojeISO() });
+    const prazoFinal = prazo || prazoPadraoAssinatura();
+    await updateDoc(doc(db, "contratos", meta.id), { enviadoEm: dataDeHojeISO(), prazoAssinatura: prazoFinal });
     meta.enviadoEm = dataDeHojeISO();
+    meta.prazoAssinatura = prazoFinal;
     await marcarContratoEnviado(meta.alunoId);
   } catch(err){
     console.warn("Não consegui registrar o envio do contrato:", err?.code || err);
@@ -6434,6 +6487,18 @@ function contratoVisualizadorModal(){
 }
 
 /* ---------- telas ---------- */
+/* Etiqueta do prazo de assinatura (só pra contrato pendente com prazo). */
+function contratoPrazoPill(meta){
+  if(meta.status !== "pendente") return "";
+  const dias = diasAteISO(meta.prazoAssinatura);
+  if(dias === null) return "";
+  const data = escapeHtml(formatarDataBr(meta.prazoAssinatura));
+  if(dias < 0) return `<span class="pill pill-red">Prazo vencido em ${data}</span>`;
+  if(dias === 0) return `<span class="pill pill-red">Assine até hoje</span>`;
+  if(dias <= 2) return `<span class="pill pill-red">Assine até ${data} · faltam ${dias} dia${dias > 1 ? "s" : ""}</span>`;
+  return `<span class="pill pill-gold">Assine até ${data}</span>`;
+}
+
 function contratoStatusPill(meta){
   return meta.status === "assinado"
     ? `<span class="pill pill-green">Assinado${meta.assinadoEm ? ` em ${escapeHtml(formatarDataBr(meta.assinadoEm))}` : ""}</span>`
@@ -6445,7 +6510,11 @@ function contratoItemHtml(meta, { nomeAluno = "" } = {}){
   const ocupado = !!state.contratoOcupado[meta.id];
   const pendente = meta.status === "pendente";
   const msg = state.contratoEnvioMsg[meta.id];
-  const enviado = meta.enviadoEm ? ` · Enviado em ${escapeHtml(formatarDataBr(meta.enviadoEm))}` : (pendente ? " · Ainda não enviado" : "");
+  const diasPrazo = pendente ? diasAteISO(meta.prazoAssinatura) : null;
+  const prazoTxt = diasPrazo === null ? ""
+    : diasPrazo < 0 ? ` · <b style="color:var(--red);">Prazo vencido em ${escapeHtml(formatarDataBr(meta.prazoAssinatura))}</b>`
+    : ` · Prazo até ${escapeHtml(formatarDataBr(meta.prazoAssinatura))}`;
+  const enviado = (meta.enviadoEm ? ` · Enviado em ${escapeHtml(formatarDataBr(meta.enviadoEm))}` : (pendente ? " · Ainda não enviado" : "")) + prazoTxt;
   return `
     <div class="pendente-contrato-item">
       <div class="pendente-contrato-info">
@@ -6457,7 +6526,7 @@ function contratoItemHtml(meta, { nomeAluno = "" } = {}){
       <div class="pendente-contrato-acoes">
         <button type="button" class="aniversario-btn" data-action="ver-contrato" data-id="${escapeHtml(meta.id)}" ${ocupado ? "disabled" : ""}>Ver contrato</button>
         ${pendente ? `
-        <button type="button" class="aniversario-btn" data-action="contrato-salvo-enviar" data-id="${escapeHtml(meta.id)}" ${ocupado ? "disabled" : ""}>${ocupado ? "Aguarde…" : "Enviar no WhatsApp"}</button>
+        <button type="button" class="aniversario-btn" data-action="contrato-salvo-enviar" data-id="${escapeHtml(meta.id)}" ${ocupado ? "disabled" : ""}>${ocupado ? "Aguarde…" : (meta.enviadoEm ? "Reenviar / lembrar no WhatsApp" : "Enviar no WhatsApp")}</button>
         <button type="button" class="pendente-contrato-assinado" data-action="contrato-salvo-assinado" data-id="${escapeHtml(meta.id)}" ${ocupado ? "disabled" : ""}>Marcar como assinado</button>` : ""}
         <button type="button" class="attendance-btn" data-action="contrato-salvo-excluir" data-id="${escapeHtml(meta.id)}" aria-label="Excluir contrato" title="Excluir contrato" ${ocupado ? "disabled" : ""}>${ICONS.trash}</button>
       </div>
@@ -6503,6 +6572,79 @@ function contratosAlunoSection(aluno){
       </div>`;
 }
 
+/* Aviso no topo do app do responsável quando há contrato esperando
+   assinatura (de qualquer um dos filhos). Some na própria aba Contratos. */
+function contratosAvisoFamilia(){
+  if(state.familiaTab === "contratos") return "";
+  const pend = [];
+  (state.data.familiaAlunos || []).forEach(a => {
+    ((state.contratosFam[a.id] || {}).itens || []).forEach(m => { if(m.status === "pendente") pend.push({ m, a }); });
+  });
+  if(!pend.length) return "";
+  const vencidos = pend.filter(x => diasAteISO(x.m.prazoAssinatura) !== null && diasAteISO(x.m.prazoAssinatura) < 0).length;
+  const prazos = pend.map(x => x.m.prazoAssinatura).filter(Boolean).sort();
+  const quando = vencidos
+    ? `${vencidos === 1 ? "O prazo de 1 contrato já venceu" : `O prazo de ${vencidos} contratos já venceu`}.`
+    : (prazos.length ? `Assine até ${formatarDataBr(prazos[0])}.` : "");
+  return `
+    <div class="contrato-aviso" style="margin-bottom:14px;${vencidos ? "border-color:var(--red);" : ""}">
+      <strong>${pend.length === 1 ? "Você tem 1 contrato aguardando assinatura" : `Você tem ${pend.length} contratos aguardando assinatura`}</strong>
+      ${escapeHtml(quando)} Dá para assinar pelo gov.br em poucos minutos.
+      <div style="margin-top:10px;">
+        <button type="button" class="teacher-primary-btn" style="margin-top:0;" data-action="${pend.length === 1 ? "contrato-guia-abrir" : "set-familia-tab"}" ${pend.length === 1 ? `data-id="${escapeHtml(pend[0].m.id)}"` : `data-key="contratos"`}>${pend.length === 1 ? "Assinar pelo gov.br" : "Ver contratos"}</button>
+      </div>
+    </div>`;
+}
+
+/* Passo a passo da assinatura pelo gov.br. */
+function contratoGuiaModal(){
+  const g = state.contratoGuia;
+  if(!g) return "";
+  const meta = acharContratoSalvo(g.id);
+  if(!meta) return "";
+  const aluno = (state.data.familiaAlunos || []).find(a => a.id === meta.alunoId);
+  const nomeAluno = aluno ? aluno.nome : "";
+  const zaps = SECRETARIA_WHATSAPP.map(escola => `
+        <a class="btn-secondary contrato-vis-link" href="${whatsappLinkComTexto(escola.numero, MENSAGEM_CONTRATO.assinadoDevolvido(nomeAluno))}" target="_blank" rel="noopener">WhatsApp · ${escapeHtml(escola.nome)}</a>`).join("");
+  return `
+  <div class="contrato-vis-backdrop" data-action="contrato-guia-fechar">
+    <div class="contrato-guia" role="dialog" aria-modal="true" aria-label="Assinar pelo gov.br" data-action="noop">
+      <div class="contrato-vis-head">
+        <div style="min-width:0;">
+          <h2>Assinar pelo gov.br</h2>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;">${contratoStatusPill(meta)}${contratoPrazoPill(meta)}</div>
+        </div>
+        <button type="button" class="secretaria-modal-close" style="color:var(--slate);" data-action="contrato-guia-fechar" aria-label="Fechar">${ICONS.close}</button>
+      </div>
+      <div class="contrato-guia-corpo">
+        <p class="section-eyebrow" style="margin:0 0 12px;">Contrato${nomeAluno ? ` de ${escapeHtml(nomeAluno)}` : ""}. Leva uns 5 minutos e não tem custo.</p>
+        <ol class="contrato-guia-passos">
+          <li>
+            <strong>Baixe o contrato</strong>
+            <span>Salve o PDF no seu celular ou computador.</span>
+            <button type="button" class="btn-secondary" data-action="baixar-contrato" data-id="${escapeHtml(meta.id)}">Baixar PDF</button>
+          </li>
+          <li>
+            <strong>Entre no Assinador do gov.br</strong>
+            <span>Use a sua conta gov.br. Para assinar, ela precisa ser nível <b>prata ou ouro</b> — se for bronze, aumente o nível no app gov.br (dá para fazer pelo reconhecimento facial) ou assine à mão.</span>
+            <a class="teacher-primary-btn contrato-vis-link" style="margin-top:6px;text-decoration:none;" href="${escapeHtml(GOVBR_ASSINADOR_URL)}" target="_blank" rel="noopener">Abrir o Assinador gov.br</a>
+          </li>
+          <li>
+            <strong>Envie o PDF e assine</strong>
+            <span>Escolha o arquivo que você baixou, confirme os seus dados e clique em assinar.</span>
+          </li>
+          <li>
+            <strong>Devolva o PDF assinado para a escola</strong>
+            <span>Baixe o arquivo assinado e mande para a secretaria pelo WhatsApp. Assim que a escola confirmar, o contrato passa para “Assinado” aqui no app.</span>
+            <div class="contrato-guia-zaps">${zaps}</div>
+          </li>
+        </ol>
+        <p class="section-eyebrow" style="margin:14px 0 0;">Prefere no papel? Imprima, assine à mão e envie uma foto legível para a secretaria.</p>
+      </div>
+    </div>
+  </div>`;
+}
+
 /* Aba "Contratos" do responsável: lê só o que é do filho escolhido. */
 function contratosFamiliaView(student){
   const cache = state.contratosFam[student.id];
@@ -6519,10 +6661,11 @@ function contratosFamiliaView(student){
         <div style="min-width:0;">
           <div style="color:var(--ink);font-weight:600;font-size:14px;word-break:break-word;">${escapeHtml(m.nome)}</div>
           <div style="color:var(--slate);font-size:12.5px;margin-top:2px;">Anexado em ${m.criadoEm ? escapeHtml(formatarDataBr(m.criadoEm)) : "—"} · ${escapeHtml(tamanhoLegivel(m.tamanho))}</div>
-          <div style="margin-top:6px;">${contratoStatusPill(m)}</div>
+          <div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:6px;">${contratoStatusPill(m)}${contratoPrazoPill(m)}</div>
         </div>
         <div class="contrato-fam-acoes">
-          <button type="button" class="teacher-primary-btn" style="margin-top:0;" data-action="ver-contrato" data-id="${escapeHtml(m.id)}">Ver contrato</button>
+          ${m.status === "pendente" ? `<button type="button" class="teacher-primary-btn" style="margin-top:0;" data-action="contrato-guia-abrir" data-id="${escapeHtml(m.id)}">Assinar pelo gov.br</button>` : ""}
+          <button type="button" class="${m.status === "pendente" ? "btn-secondary" : "teacher-primary-btn"}" style="margin-top:0;" data-action="ver-contrato" data-id="${escapeHtml(m.id)}">Ver contrato</button>
           <button type="button" class="btn-secondary" data-action="baixar-contrato" data-id="${escapeHtml(m.id)}">Baixar PDF</button>
         </div>
       </div>`).join("");
@@ -8951,6 +9094,8 @@ function bindEvents(){
     // cursor pula pra fora do input a cada tecla. O recálculo (parcelas,
     // término) acontece no "change", quando a pessoa sai do campo.
     if(t.dataset && t.dataset.contratoField){
+      // data com ano ainda incompleto (0002, 0020...) não entra no estado
+      if(t.type === "date" && t.value && !contratoDataPlausivel(t.value)) return;
       state.contrato[t.dataset.contratoField] = t.value;
       return;
     }
@@ -8968,7 +9113,8 @@ function bindEvents(){
     if(t.dataset && t.dataset.importCampo){
       const i = Number(t.dataset.row);
       const item = state.importContratosItens[i];
-      if(item){
+      const dataParcial = t.type === "date" && t.value && !contratoDataPlausivel(t.value);
+      if(item && !dataParcial){
         item.contrato[t.dataset.importCampo] = t.value;
         // quem digita um responsável quer que ele seja cadastrado
         if(t.dataset.importCampo === "respNome") item.contrato.semResponsavel = !t.value.trim();
@@ -9274,7 +9420,10 @@ function bindEvents(){
       return;
     }
     if(t.dataset && t.dataset.contratoField){
-      // datas e valores: ao sair do campo, recalcula término/parcelas
+      // Campo de data: o navegador dispara "change" a cada dígito do ano
+      // (0002, 0020, 0202, 2026...). Ignora anos incompletos/absurdos pra
+      // não gravar data errada nem redesenhar a tela no meio da digitação.
+      if(t.type === "date" && t.value && !contratoDataPlausivel(t.value)) return;
       state.contrato[t.dataset.contratoField] = t.value;
       const recalcula = ["dataInicio","duracaoCustom","valorCurso","valorMaterial","numParcelas","qtdParcelasIniciais"];
       // nome mudou: o login antigo não serve mais, refaz do zero
@@ -9284,7 +9433,13 @@ function bindEvents(){
       if(t.dataset.contratoField === "respNome") state.contrato.emailResp = "";
       if(recalcula.includes(t.dataset.contratoField)){
         contratoRecalcular(state.contrato);
-        render();
+        // Se ainda está digitando na data, só redesenha ao sair do campo
+        // (e devolve o foco pro campo que a pessoa clicou em seguida).
+        if(t.type === "date" && document.activeElement === t){
+          t.addEventListener("blur", () => setTimeout(renderPreservandoFoco, 0), { once: true });
+        } else {
+          render();
+        }
       } else if(sugereAcesso.includes(t.dataset.contratoField)){
         contratoSugerirAcessos(state.contrato, emailsUsadosDaUnidade());
         render();
@@ -10497,6 +10652,16 @@ function bindEvents(){
         render();
         break;
 
+      case "contrato-guia-abrir":
+        state.contratoGuia = { id: el.dataset.id };
+        render();
+        break;
+
+      case "contrato-guia-fechar":
+        state.contratoGuia = null;
+        render();
+        break;
+
       case "baixar-contrato": {
         const meta = acharContratoSalvo(el.dataset.id);
         if(!meta) break;
@@ -10514,11 +10679,14 @@ function bindEvents(){
         try {
           const arquivo = await arquivoDoContratoSalvo(meta);
           const destino = destinoDoContratoDoAluno(aluno);
+          // mantém o prazo anterior se ainda não venceu; senão conta de novo a partir de hoje
+          const prazo = (meta.prazoAssinatura && diasAteISO(meta.prazoAssinatura) >= 0)
+            ? meta.prazoAssinatura : prazoPadraoAssinatura();
           const resultado = await enviarContratoParaAssinatura({
-            arquivo, alunoNome: aluno.nome, respNome: destino.nome, numero: destino.numero,
+            arquivo, alunoNome: aluno.nome, respNome: destino.nome, numero: destino.numero, prazo,
           });
           state.contratoEnvioMsg[meta.id] = textoResultadoEnvio(resultado);
-          if(resultado === "compartilhado" || resultado === "manual") await marcarContratoSalvoEnviado(meta);
+          if(resultado === "compartilhado" || resultado === "manual") await marcarContratoSalvoEnviado(meta, prazo);
         } catch(err){
           console.error("Erro ao enviar contrato salvo:", err);
           state.contratoEnvioMsg[meta.id] = `Não consegui preparar o PDF${err?.code ? ` (${err.code})` : ""}. Tente de novo.`;
