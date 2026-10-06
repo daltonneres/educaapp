@@ -2761,3 +2761,138 @@ textarea.teacher-text-input { resize: vertical; font-family: inherit; }
   .contrato-guia { max-height: 100%; height: 100%; max-width: none; border-radius: 0; }
   .contrato-guia-zaps > * { flex: 1 1 100%; }
 }
+
+
+/* ==================================================================
+   Ajustes finais para celular (colocados no fim do arquivo de
+   propósito, pra valerem sobre as regras anteriores)
+   ================================================================== */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+img, svg, video { max-width: 100%; }
+
+/* 100vh no celular inclui a barra do navegador e "estoura" a tela;
+   100dvh acompanha a altura real visível. */
+@supports (height: 100dvh) {
+  #app, .shell, .screen { min-height: 100dvh; }
+  .sidebar { height: 100dvh; }
+}
+
+@media (max-width: 760px) {
+  body { overflow-x: hidden; }
+  .main { overflow-x: hidden; overflow-wrap: anywhere; }
+
+  /* iOS dá zoom automático em campo com fonte menor que 16px e a tela
+     fica "torta" depois. 16px evita isso. */
+  input, select, textarea,
+  .field-input, .teacher-text-input, .teacher-observation, .grade-input,
+  .rc-nota-input, .rc-feedback-input, .lesson-content textarea,
+  .teacher-message-panel textarea {
+    font-size: 16px !important;
+  }
+
+  /* Cabeçalho: foto + texto alinhados à esquerda, em vez de colados na direita */
+  .main-head { justify-content: flex-start; gap: 12px; }
+  .main-head-texto { text-align: left; }
+  .main-head-title { font-size: 22px; line-height: 1.2; }
+
+  /* Botões e abas mais fáceis de tocar */
+  .teacher-primary-btn, .btn-secondary, .subtab-btn, .nav-btn { min-height: 42px; }
+
+  /* Barra de abas que não cabe: rola de lado em vez de quebrar feio */
+  .subtab-bar { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch;
+    margin-left: -16px; margin-right: -16px; padding: 2px 16px 6px; scrollbar-width: none; }
+  .subtab-bar::-webkit-scrollbar { display: none; }
+  .subtab-btn { flex: 0 0 auto; }
+
+  /* Listas em 2 colunas viram 1 */
+  .course-agenda-items, .rc-ident { grid-template-columns: 1fr; }
+
+  /* Tabelas largas rolam dentro do próprio quadro */
+  .card, .management-card, .rc-scroll { max-width: 100%; }
+  .card table, .management-card table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+  /* Janelas (modais) ocupam a tela toda, sem sobrar margem */
+  .aluno-modal-backdrop, .secretaria-modal-backdrop { padding: 0; align-items: flex-end; }
+  .aluno-modal, .secretaria-modal, .cal-modal, .suporte-modal, .contrato-modal {
+    max-width: none; width: 100%; margin: 0;
+    border-radius: 18px 18px 0 0;
+    max-height: 94dvh; overflow-y: auto; -webkit-overflow-scrolling: touch;
+    padding-bottom: calc(24px + env(safe-area-inset-bottom));
+  }
+
+  /* O botão flutuante do menu não cobre o fim da página nem os botões de ação */
+  .main { padding-bottom: calc(96px + env(safe-area-inset-bottom)) !important; }
+}
+
+@media (max-width: 430px) {
+  .main { padding-left: 12px; padding-right: 12px; }
+  .brand-word { font-size: 30px; }
+  .section-title { font-size: 21px; }
+  .gestao-resumo, .papel-chips { grid-template-columns: 1fr 1fr; gap: 8px; }
+}
+
+/* ---- Aba Suporte (suporte.js) ---- */
+.sup-busca { margin: 4px 0 14px; max-width: 520px; }
+.sup-grupo { margin-bottom: 10px; }
+.sup-grupo > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 12px; }
+.sup-grupo > summary::-webkit-details-marker { display: none; }
+.sup-grupo > summary::after { content: "›"; margin-left: auto; font-size: 22px; color: var(--slate); transition: transform .15s ease; }
+.sup-grupo[open] > summary::after { transform: rotate(90deg); }
+.sup-grupo > .manual-list { margin-top: 8px; }
+
+/* ==================== Painel do desenvolvedor (dev.js) ==================== */
+.dev-banner{position:fixed;top:0;left:0;right:0;z-index:9999;padding:8px 14px;text-align:center;font-size:.9rem;font-weight:600;color:#fff}
+.dev-banner-info{background:var(--navy-soft);border-bottom:2px solid var(--gold)}
+.dev-banner-alerta{background:var(--red)}
+.dev-bloqueio{text-align:center;padding:48px 16px}
+.dev-bloqueio-icone{color:var(--gold);transform:scale(2);margin-bottom:18px;display:inline-block}
+.dev-card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px;margin:14px 0}
+.dev-card-alerta{border-color:var(--red)}
+.dev-card-head{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.dev-card-head h3{margin:0;color:var(--navy)}
+.dev-input{width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid var(--line);border-radius:10px;font:inherit;margin:4px 0 10px}
+.dev-chips,.dev-acoes{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
+.dev-chip{padding:6px 10px;font-size:.8rem}
+.dev-modulos{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-top:12px}
+.dev-modulo{display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:10px;border-radius:10px;border:1px solid var(--line);background:#fff;cursor:pointer;font:inherit;text-align:left;position:relative}
+.dev-modulo small{color:var(--slate)}
+.dev-modulo-dot{position:absolute;top:10px;right:10px;width:10px;height:10px;border-radius:50%}
+.dev-modulo.on .dev-modulo-dot{background:var(--green)}
+.dev-modulo.off{background:rgba(177,74,61,.08);border-color:var(--red)}
+.dev-modulo.off .dev-modulo-dot{background:var(--red)}
+.dev-status{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin:12px 0}
+.dev-status-item{display:flex;flex-direction:column;gap:4px;padding:10px;border:1px solid var(--line);border-radius:10px}
+.dev-status-rotulo{font-size:.75rem;text-transform:uppercase;letter-spacing:.04em;color:var(--slate)}
+.dev-status-item small{color:var(--slate)}
+.dev-badge{align-self:flex-start;padding:2px 10px;border-radius:999px;font-weight:700;font-size:.8rem;color:#fff}
+.dev-badge-red{background:var(--red)}.dev-badge-green{background:var(--green)}.dev-badge-gold{background:var(--gold-deep)}
+.dev-lista-modulos{margin:8px 0 0;padding-left:18px;font-size:.9rem;color:var(--ink)}
+.dev-ok{color:var(--green)}
+.dev-log{list-style:none;margin:10px 0 0;padding:0;max-height:360px;overflow:auto}
+.dev-log-item{display:flex;flex-direction:column;gap:2px;padding:8px 0;border-bottom:1px solid var(--line)}
+.dev-log-quando{font-size:.75rem;color:var(--slate)}
+.dev-log-acao{font-weight:600;color:var(--navy)}
+.dev-log-item small{color:var(--slate)}
+
+/* ---- Pop-up de manutenção/aviso + item no calendário (dev.js) ---- */
+.dev-popup-backdrop{position:fixed;inset:0;z-index:10000;background:rgba(8,21,36,.72);display:flex;align-items:center;justify-content:center;padding:16px}
+.dev-popup{background:#fff;border-radius:16px;max-width:460px;width:100%;max-height:85vh;overflow:auto;padding:22px;box-shadow:0 20px 60px rgba(0,0,0,.4)}
+.dev-popup-item{border-left:5px solid var(--navy-soft);padding:6px 0 6px 12px;margin:0 0 16px}
+.dev-popup-item.red{border-color:var(--red)}.dev-popup-item.gold{border-color:var(--gold)}
+.dev-popup-item h3{margin:0 0 4px;color:var(--navy)}
+.dev-popup-item p{margin:0 0 4px;color:var(--ink);white-space:pre-line}
+.dev-popup-item small{color:var(--slate);font-weight:600}
+.dev-popup .btn-gold{width:100%}
+.dev-grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media(max-width:520px){.dev-grid2{grid-template-columns:1fr}}
+.cal-inst-dia.cal-inst-sistema{background:rgba(177,74,61,.14);border-color:rgba(177,74,61,.5)}
+.cal-inst-ponto.cal-inst-sistema{background:var(--red)}
+.pill.cal-pill-inst-sistema{background:rgba(177,74,61,.14);color:#8f3a30}
+.dev-popup-item.green{border-color:var(--green)}
+.dev-popup-item small{white-space:pre-line;display:block}
+.dev-sugestao{border:1px dashed var(--line);border-radius:10px;padding:10px 12px;margin:10px 0;background:rgba(201,162,74,.06)}
+.dev-sugestao p{margin:0 0 4px;color:var(--ink)}
+.dev-ass{color:var(--slate);display:block;margin-bottom:6px}
+.dev-modulo.off-neutro{background:#fff;border-color:var(--line)}
+.dev-modulo.off-neutro .dev-modulo-dot{background:#c9ced6}
+.cal-evento-desc{white-space:pre-line}

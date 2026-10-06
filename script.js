@@ -206,10 +206,16 @@ import {
   deleteField,
   writeBatch,
   runTransaction,
+  onSnapshot,
+  addDoc,
+  orderBy,
+  limit,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
 import { firebaseConfig } from "./firebase-config.js";
 import { criarHorarios } from "./horarios.js";
+import { criarSuporte } from "./suporte.js";
+import { criarDev } from "./dev.js";
 import {
   contratoEstadoInicial,
   contratoModal,
@@ -669,8 +675,15 @@ async function enviarParabensComLogo({ numero, texto, nome, tipo }){
 
 /* Link do WhatsApp já com a mensagem escrita, pronta pra secretaria só
    conferir e apertar enviar. */
+/* No computador, o link wa.me costuma abrir o aplicativo WhatsApp Desktop, que
+   troca os emojis por símbolos estranhos (ex.: "ðŸŽ‰"). Abrindo direto o
+   WhatsApp Web, o texto chega certo. No celular, o wa.me funciona bem. */
 function whatsappLinkComTexto(numero, texto){
-  return `${whatsappLink(numero)}?text=${encodeURIComponent(texto)}`;
+  const t = encodeURIComponent(texto);
+  if(ehCelular()) return `${whatsappLink(numero)}?text=${t}`;
+  const digits = String(numero || "").replace(/\D/g, "");
+  const comDdi = !digits ? "" : (digits.startsWith("55") ? digits : `55${digits}`);
+  return `https://web.whatsapp.com/send?${comDdi ? `phone=${comDdi}&` : ""}text=${t}`;
 }
 
 /* Um contato só vale como WhatsApp se tiver cara de telefone (DDD +
@@ -1320,6 +1333,7 @@ const state = {
   familiaStudentId: null,
   escolaSelecionadaId: null,
   instTab: "turmas",
+  config: null,               // espelho de config/app (manutenção, aviso, módulos) — ver dev.js
   gestaoSubTab: "cadastro",   // cadastro | acessos — sub-abas dentro de "Gestão"
   finSubTab: "consultar",     // consultar | lancar — sub-abas dentro de "Financeiro"
   finConsultaBusca: "",         // texto da busca (aluno/turma/IDALUNO) em Financeiro > Consultar
@@ -1671,6 +1685,13 @@ const app = document.getElementById("app");
    a gravação no Firestore ficam em horarios.js; aqui só entregamos o que
    ele precisa do resto do app.
    ------------------------------------------------------------------ */
+/* Aba "Suporte" (aluno, responsável e professor): manuais + formulário que abre o WhatsApp da secretaria. */
+const suporte = criarSuporte({ state, render, ICONS, escapeHtml, SECRETARIA_WHATSAPP, whatsappLinkComTexto });
+
+/* Painel do desenvolvedor + config remota (manutenção, avisos, módulos) — ver dev.js */
+const dev = criarDev({ state, render, db, doc, setDoc, onSnapshot, collection, query, orderBy, limit, getDocs, addDoc, ICONS, escapeHtml });
+dev.iniciarConfig();
+
 const horarios = criarHorarios({
   state, db, render,
   fs: { doc, setDoc, updateDoc, deleteDoc, collection, query, where, getDocs, getDoc },
@@ -2357,6 +2378,19 @@ function renderPreservandoFoco(){
 }
 
 function render(){
+  const telasComLogin = ["aluno", "familia", "professor", "instituicao", "escola-picker"];
+  if(telasComLogin.includes(state.screen) && dev.emManutencao()){
+    app.innerHTML = dev.telaManutencao();
+    return;
+  }
+  renderBase();
+  const faixa = dev.bannerHtml();
+  if(faixa) app.insertAdjacentHTML("afterbegin", faixa);
+  const popup = dev.popupHtml();
+  if(popup) app.insertAdjacentHTML("beforeend", popup);
+}
+
+function renderBase(){
   if(state.screen === "login") app.innerHTML = renderLogin();
   else if(state.screen === "carregando") app.innerHTML = renderCarregando();
   else if(state.screen === "escola-picker") app.innerHTML = renderEscolaPicker();
@@ -2500,6 +2534,10 @@ function renderEscolaPicker(){
 
 /* ---------------- SHELL (sidebar + main) ---------------- */
 function shell({ navItems, active, headerSub, headerTitle, headerFoto, bodyHtml, navAction, schoolBadge, schoolBadgeClickable }){
+  // Bloqueio de módulos pelo painel dev (config/app > modulos)
+  const rotuloAtivo = navItems.find(i => i.key === active)?.label;
+  if(dev.moduloBloqueado(state.screen, active)) bodyHtml = dev.moduloIndisponivel(rotuloAtivo);
+  navItems = dev.filtrarNav(state.screen, navItems);
   const navBtns = navItems.map(item => `
     <button class="nav-btn ${active===item.key?'active':''}" data-action="${navAction}" data-key="${item.key}">
       ${ICONS[item.icon]} ${item.label}
@@ -2562,6 +2600,7 @@ function renderAluno(){
     ...(ehTurmaDeRecreacao(student.turma) ? [] : [{ key:"certificados", label:"Certificados", icon:"award" }]),
     { key:"comunicados", label:"Comunicados", icon:"megaphone" },
     ...(ehTurmaDeRecreacao(student.turma) ? [] : [{ key:"ficha", label:"Minha ficha", icon:"shield" }]),
+    { key:"suporte", label:"Suporte", icon:"lifebuoy" },
   ];
 
   let body = "";
@@ -2572,6 +2611,7 @@ function renderAluno(){
   else if(state.alunoTab === "certificados") body = certificadosView(student, false);
   else if(state.alunoTab === "comunicados") body = comunicadosView(student);
   else if(state.alunoTab === "ficha") body = alunoFichaView(student, "aluno");
+  else if(state.alunoTab === "suporte") body = suporte.view();
 
   return shell({
     navItems, active: state.alunoTab,
@@ -2599,6 +2639,7 @@ function renderFamilia(){
     { key:"contratos", label:"Contratos", icon:"fileText" },
     { key:"comunicados", label:"Comunicados", icon:"megaphone" },
     { key:"ficha", label:"Ficha", icon:"shield" },
+    { key:"suporte", label:"Suporte", icon:"lifebuoy" },
   ];
 
   let switcher = "";
@@ -2621,6 +2662,7 @@ function renderFamilia(){
   else if(state.familiaTab === "contratos") body = contratosFamiliaView(student);
   else if(state.familiaTab === "comunicados") body = comunicadosView(student);
   else if(state.familiaTab === "ficha") body = alunoFichaView(student, "responsavel");
+  else if(state.familiaTab === "suporte") body = suporte.view();
 
   return shell({
     navItems, active: state.familiaTab,
@@ -3215,7 +3257,7 @@ function calendarioAlunoView(student, papel){
   return calendarioHtml({
     papel,
     ano: cal.ano, mes: cal.mes,
-    dias: montarDias({ presencas: dados.presencas, eventos: dados.eventos, vencimentos: vencimentosParaCalendario(student, papel), papel }),
+    dias: montarDias({ presencas: dados.presencas, eventos: [...dados.eventos, ...dev.eventosCalendario()], vencimentos: vencimentosParaCalendario(student, papel), papel }),
     hoje: hojeISO(),
     carregando: dados.carregando,
     erro: dados.erro,
@@ -3229,7 +3271,7 @@ function calendarioProfessorView(){
   return calendarioHtml({
     papel: "professor",
     ano: cal.ano, mes: cal.mes,
-    dias: montarDias({ eventos: cal.prof.eventos, papel: "professor" }),
+    dias: montarDias({ eventos: [...cal.prof.eventos, ...dev.eventosCalendario()], papel: "professor" }),
     hoje: hojeISO(),
     carregando: cal.prof.carregando,
     erro: cal.prof.erro,
@@ -3310,7 +3352,7 @@ function calendarioInstituicaoView(school){
   return calendarioHtml({
     papel: "instituicao",
     ano: cal.ano, mes: cal.mes,
-    dias: montarDias({ eventos: cache.eventos, papel: "instituicao" }),
+    dias: montarDias({ eventos: [...cache.eventos, ...dev.eventosCalendario()], papel: "instituicao" }),
     hoje: hojeISO(),
     carregando: cache.carregando,
     erro: cache.erro,
@@ -3379,12 +3421,14 @@ function renderProfessor(){
     { key:"avaliacoes", label:"Notas & atividades", icon:"cap" },
     { key:"aval", label:"Avaliações", icon:"star" },
     { key:"certificados", label:"Certificados", icon:"award" },
+    { key:"suporte", label:"Suporte", icon:"lifebuoy" },
     { key:"perfil", label:"Meu perfil", icon:"user" },
   ];
   const body = state.professorTab === "calendario" ? calendarioProfessorView()
     : state.professorTab === "horarios" ? horarios.view()
     : state.professorTab === "turmas" ? professorTurmasView()
     : state.professorTab === "perfil" ? professorPerfilView()
+    : state.professorTab === "suporte" ? suporte.view()
     : state.professorTab === "aulas" ? professorAulasView()
     : state.professorTab === "conteudos" ? professorConteudosView()
     : state.professorTab === "aval" ? avaliacoesProfessorView()
@@ -4238,6 +4282,7 @@ function renderInstituicao(){
     { key:"certificados", label:"Certificados", icon:"award" },
     { key:"gestao", label:"Gestão", icon:"building" },
     { key:"perfil", label:"Meu perfil", icon:"user" },
+    ...(state.perfil?.dev ? [{ key:"dev", label:"Painel Dev", icon:"shield" }] : []),
   ];
 
   let body = "";
@@ -4255,6 +4300,7 @@ function renderInstituicao(){
   else if(state.instTab === "certificados") body = certificadosGestaoView(state.instTurmas || []);
   else if(state.instTab === "gestao") body = gestaoInstituicaoView(school);
   else if(state.instTab === "perfil") body = perfilInstituicaoView(school);
+  else if(state.instTab === "dev") body = dev.view();
 
   const temMaisDeUmaEscola = Object.keys(state.data.escolas).length > 1;
   const nomePessoaLogada = (state.perfil?.nome || "").trim();
@@ -8965,6 +9011,8 @@ function bindEvents(){
     const t = e.target;
     // Aba Horários: guarda o valor sem re-renderizar, pro cursor não pular.
     if(t.dataset && t.dataset.hor){ horarios.input(t); return; }
+    // Aba Suporte: guarda o texto e filtra os manuais sem re-renderizar.
+    if(t.dataset && t.dataset.sup){ suporte.input(t); return; }
     // Aba Avaliações: campos do boletim e comentário da avaliação institucional
     // guardam o valor sem re-renderizar, pro cursor não pular.
     if(t.dataset && t.dataset.avalCampo){
@@ -9425,7 +9473,7 @@ function bindEvents(){
       // não gravar data errada nem redesenhar a tela no meio da digitação.
       if(t.type === "date" && t.value && !contratoDataPlausivel(t.value)) return;
       state.contrato[t.dataset.contratoField] = t.value;
-      const recalcula = ["dataInicio","duracaoCustom","valorCurso","valorMaterial","numParcelas","qtdParcelasIniciais"];
+      const recalcula = ["dataInicio","duracaoCustom","valorCurso","valorMaterial","numParcelas","qtdParcelasIniciais","descontoVista"];
       // nome mudou: o login antigo não serve mais, refaz do zero
       const sugereAcesso = ["alunoNome","aluno2Nome","respNome"];
       if(t.dataset.contratoField === "alunoNome") state.contrato.emailAluno = "";
@@ -9502,9 +9550,20 @@ function bindEvents(){
       await horarios.click(el);
       return;
     }
+    // Aba Suporte: ações começam com "sup-" (ver suporte.js)
+    if(action.startsWith("sup-")){
+      suporte.click(el);
+      return;
+    }
+    // Painel do desenvolvedor: ações começam com "dev-" (ver dev.js)
+    if(action.startsWith("dev-")){
+      await dev.click(el);
+      return;
+    }
 
     switch(action){
       case "logout":
+        suporte.resetar();
         state.mobileMenuOpen = false;
         await signOut(auth);
         break;
@@ -9583,6 +9642,7 @@ function bindEvents(){
         render();
         if(state.instTab === "aval") avalAbrirNaInstituicao();
         if(state.instTab === "horarios") horarios.aoAbrir();
+        if(state.instTab === "dev") dev.aoAbrir();
         if(state.instTab === "turmas" && state.escolaSelecionadaId
           && (state.instTurmas === null || state.instTurmasEscolaId !== state.escolaSelecionadaId)
           && !state.instTurmasCarregando){
@@ -11523,7 +11583,7 @@ function bindEvents(){
           const numeroAcesso = telefoneValido(ag.contato);
           const linkAcesso = numeroAcesso
             ? whatsappLinkComTexto(numeroAcesso, texto)
-            : `https://wa.me/?text=${encodeURIComponent(texto)}`;   // sem número: o WhatsApp deixa escolher o contato
+            : whatsappLinkComTexto("", texto);   // sem número: o WhatsApp deixa escolher o contato
           window.open(linkAcesso, "_blank", "noopener");
         } else if(via === "email"){
           window.location.href = `mailto:${encodeURIComponent(ag.contato)}?subject=${encodeURIComponent("Seu acesso ao Educa+")}&body=${encodeURIComponent(texto)}`;

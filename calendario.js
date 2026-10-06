@@ -46,8 +46,9 @@ export const TIPOS_INSTITUICAO = {
   atividade: { rotulo: "Atividade diferente",  classe: "atividade" },
   aviso:     { rotulo: "Aviso da secretaria",  classe: "aviso"     },
   outro:     { rotulo: "Outro",                classe: "outro"     },
+  sistema:   { rotulo: "Aviso do sistema",     classe: "sistema"   },   // manutenção/aviso agendado pelo dev (ver dev.js)
 };
-const PRIORIDADE_INST = { sem_aula: 4, prova: 3, atividade: 2, aviso: 1, outro: 1 };
+const PRIORIDADE_INST = { sem_aula: 4, prova: 3, atividade: 2, aviso: 1, outro: 1, sistema: 1 };
 
 function esc(value){
   return String(value == null ? "" : value).replace(/[&<>"]/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[char]);
@@ -233,7 +234,7 @@ function celulaHtml(iso, dia, ehHoje, podeCriar){
 function eventoInstitucionalCardHtml(e, papel, { excluirConfirmId, excluindoId }){
   const info = TIPOS_INSTITUICAO[e.tipo] || TIPOS_INSTITUICAO.outro;
   let acoes = "";
-  if(papel === "instituicao"){
+  if(papel === "instituicao" && !e.sistema){
     acoes = excluirConfirmId === e.id
       ? `<div class="cal-evento-acoes">
           <button type="button" class="btn-danger" data-action="calinst-excluir-evento" data-id="${esc(e.id)}" ${excluindoId === e.id ? "disabled" : ""}>${excluindoId === e.id ? "Excluindo…" : "Confirmar exclusão"}</button>
@@ -248,7 +249,7 @@ function eventoInstitucionalCardHtml(e, papel, { excluirConfirmId, excluindoId }
   return `<div class="cal-evento cal-evento-inst">
       <div class="cal-evento-topo"><span class="pill cal-pill-inst-${info.classe}">${esc(info.rotulo)}</span><strong>${esc(e.titulo)}</strong></div>
       ${e.descricao ? `<p class="cal-evento-desc">${esc(e.descricao)}</p>` : ""}
-      <div class="cal-evento-meta">Secretaria${e.criadoPorNome ? ` · ${esc(e.criadoPorNome)}` : ""}${aplicaA}</div>
+      <div class="cal-evento-meta">${e.sistema ? "Sistema Educa+" : "Secretaria"}${e.criadoPorNome ? ` · ${esc(e.criadoPorNome)}` : ""}${aplicaA}</div>
       ${acoes}
     </div>`;
 }
