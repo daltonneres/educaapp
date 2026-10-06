@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="pt-BR"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Quando algo dá errado — Educa+ Manuais</title>
+<link rel="icon" href="../imgs/logoeduca.jpeg" type="image/jpeg">
+<style>
+:root{--navy:#0E2038;--navy-soft:#16304F;--gold:#C9A24A;--gold-deep:#9C7A2E;--cream:#F7F3E9;--ink:#122032;--slate:#5B6B7E;--line:rgba(201,162,74,.35);--bg:#F7F3E9;--card:#fff;
+--font-display:'Iowan Old Style','Palatino Linotype',Georgia,serif;--font-body:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:16px}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.65 var(--font-body)}
+header{background:var(--navy);color:#fff;padding:22px 20px;border-bottom:3px solid var(--gold)}
+header .in,main{max-width:820px;margin:0 auto}
+header small{color:var(--gold);letter-spacing:.12em;text-transform:uppercase;font-size:12px}
+header a{color:#E9CE8C;text-decoration:none;font-size:14px}
+main{padding:24px 20px 60px}
+article{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:26px 24px}
+h1{font-family:var(--font-display);font-weight:500;color:var(--navy);font-size:30px;line-height:1.2;margin:0 0 14px}
+h2{font-family:var(--font-display);font-weight:500;color:var(--navy);font-size:22px;margin:34px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+h3{color:var(--gold-deep);font-size:17px;margin:22px 0 6px}
+p,li{max-width:70ch}li{margin:4px 0}
+blockquote{margin:14px 0;padding:10px 16px;background:#FBF6E6;border-left:4px solid var(--gold);border-radius:0 8px 8px 0;color:var(--navy-soft)}
+blockquote p{margin:0}
+hr{border:0;border-top:1px solid var(--line);margin:24px 0}
+.tw{overflow-x:auto;margin:14px 0}
+table{border-collapse:collapse;width:100%;font-size:15px}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:var(--navy);color:#fff;font-weight:600}
+tr:nth-child(even) td{background:#FBF9F2}
+strong{color:var(--navy)}
+footer{text-align:center;color:var(--slate);font-size:13px;padding:0 20px 30px}
+@media print{header{background:none;color:#000;border-bottom:2px solid #000}header a{display:none}body{background:#fff}article{border:0;padding:0}}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#081524;--card:#0E2038;--ink:#E8EDF3;--slate:#9AA8B8;--line:rgba(201,162,74,.3)}
+h1,h2,strong{color:#F1E3B8}h3{color:#E9CE8C}blockquote{background:#16304F;color:#E8EDF3}tr:nth-child(even) td{background:#122A47}th{background:#16304F}}
+</style></head><body>
+<header><div class="in"><small>Educa+ Centro Educacional · Manuais</small><br><a href="javascript:window.close()">← Fechar este manual</a></div></header>
+<main><article><h1>Quando algo dá errado</h1>
+<p><strong>Para quem é:</strong> equipe administrativa. Checklists rápidos para os problemas mais comuns.</p>
+<h2 id="entrar">A pessoa não consegue entrar</h2>
+<p>Confira na ordem:</p>
+<ol>
+<li><strong>Tem login?</strong> Em <strong>Gestão › Senhas &amp; acessos</strong>, busque a pessoa. Se aparecer <em>"sem login"</em>, toque nela e use <strong>Criar acesso</strong>.</li>
+<li><strong>O e-mail está certo?</strong> Confira o login mostrado no <strong>Gerenciar acesso</strong>. Um erro de digitação também causa <em>"E-mail ou senha incorretos."</em></li>
+<li><strong>Esqueceu a senha?</strong> O botão <strong>Esqueci minha senha</strong> da tela de login só orienta a procurar a secretaria: não existe link por e-mail. Defina uma nova em <strong>Trocar senha</strong> e combine com a pessoa.</li>
+<li><strong>O cadastro foi excluído?</strong> Se sim, a pessoa perde o acesso. Cadastre de novo.</li>
+</ol>
+<p><strong>Mensagens que a pessoa pode ver:</strong></p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Mensagem</th>
+<th>O que fazer</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><em>E-mail ou senha incorretos.</em></td>
+<td>Conferir o e-mail e redefinir a senha.</td>
+</tr>
+<tr>
+<td><em>Muitas tentativas. Aguarde um momento…</em></td>
+<td>Esperar alguns minutos e tentar de novo.</td>
+</tr>
+<tr>
+<td><em>Este acesso está desativado. Fale com a secretaria.</em></td>
+<td>Procurar a secretaria; verificar o cadastro.</td>
+</tr>
+<tr>
+<td><em>Não encontramos um cadastro para este acesso.</em></td>
+<td>O login existe, mas não o cadastro no app. Fale com o suporte técnico.</td>
+</tr>
+<tr>
+<td><em>Falha de conexão. Verifique sua internet.</em></td>
+<td>Testar outra rede.</td>
+</tr>
+<tr>
+<td><em>Não conseguimos falar com o servidor agora…</em></td>
+<td>Verificar a internet; se continuar, acionar o suporte.</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="permissao">"Não foi possível salvar" (permission-denied)</h2>
+<p><em>permission-denied</em> significa que o servidor <strong>recusou</strong> a ação. Causas mais comuns:</p>
+<ol>
+<li><strong>Unidade errada:</strong> você está na unidade selecionada certa? Confira o selo da unidade no menu.</li>
+<li><strong>Tipo de acesso:</strong> a ação exige acesso da <strong>equipe</strong>. Conferir se a sua conta é de equipe.</li>
+<li><strong>Regras do servidor desatualizadas:</strong> acontece quando uma função nova foi liberada no app, mas as regras do Firestore ainda não. Na ficha, por exemplo, aparece <em>"Sem permissão para salvar a ficha…"</em>.</li>
+</ol>
+<p>Se já conferiu as duas primeiras, acione o <strong>suporte técnico</strong> com o print da tela.</p>
+<h2 id="pdf">O PDF não foi lido</h2>
+<p>O app lê o <strong>texto</strong> do PDF (em <strong>Importar turmas</strong>, <strong>Importar contratos</strong> e ao anexar boleto). PDFs <strong>escaneados</strong>, que são fotos da página, não têm texto.</p>
+<ul>
+<li><strong>Como saber:</strong> se você não consegue selecionar o texto com o mouse, é escaneado.</li>
+<li><strong>Solução:</strong> exporte de novo a partir do arquivo original (Word, Excel, sistema) como PDF, ou imprima em PDF. Assim o texto fica selecionável.</li>
+<li><strong>Alternativa:</strong> preencha à mão (criar a turma em <strong>Turmas › Criar turma</strong> ou gerar o contrato em <strong>Contratos › Gerar contrato</strong>).</li>
+<li><strong>Boleto:</strong> o limite é 600 KB. Comprima o arquivo se passar disso.</li>
+<li><strong>Contrato guardado:</strong> o limite é 4 MB por PDF. Veja <a href="#contrato-salvo">O contrato não salva ou não aparece</a>.</li>
+</ul>
+<h2 id="contrato-salvo">O contrato não salva ou não aparece</h2>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Situação</th>
+<th>O que fazer</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><em>"…tem X MB e o limite é 4 MB"</em> ao anexar</td>
+<td>O PDF é grande demais. Digitalize em resolução menor ou comprima o arquivo e anexe de novo.</td>
+</tr>
+<tr>
+<td><em>"O Firestore recusou a leitura dos contratos (permission-denied)"</em> na aba Contratos</td>
+<td>As regras do banco ainda não foram atualizadas para os contratos. Acione o <strong>suporte técnico</strong>: é preciso publicar as regras das coleções <code>contratos</code> e <code>contratosArquivos</code>.</td>
+</tr>
+<tr>
+<td><em>"Não consegui salvar…"</em> com um código de erro</td>
+<td>Tente de novo. Se persistir, confira a internet e envie o print ao suporte.</td>
+</tr>
+<tr>
+<td>Importei e apareceu <em>"Cadastro feito, mas não consegui salvar o PDF no sistema"</em></td>
+<td>Os cadastros foram criados normalmente. Abra a ficha do aluno e anexe o PDF em <strong>Contratos</strong>.</td>
+</tr>
+<tr>
+<td>O responsável diz que não vê o contrato</td>
+<td>Confira (1) se o PDF foi anexado na ficha do aluno certo, (2) se o responsável está <strong>vinculado</strong> a esse aluno (aba <em>Responsáveis</em>) e (3) se ele está entrando como <strong>responsável</strong>: o acesso do aluno não tem a aba Contratos.</td>
+</tr>
+<tr>
+<td>O contrato não abre na janela do app</td>
+<td>Toque em <strong>Baixar PDF</strong> ou <strong>Abrir em outra aba</strong>. Se ainda assim não abrir, exclua e anexe o arquivo de novo.</td>
+</tr>
+<tr>
+<td>O aluno aparece em <em>Sem contrato salvo no sistema</em>, mas o contrato existe</td>
+<td>Só vale PDF anexado no sistema. Anexe o arquivo na ficha do aluno. Contratos antigos, só marcados como pendentes ou assinados, ainda não têm PDF guardado.</td>
+</tr>
+<tr>
+<td>O mesmo contrato aparece duas vezes</td>
+<td>Foi importado ou anexado duas vezes. Exclua a cópia repetida (lixeira) na ficha do aluno.</td>
+</tr>
+</tbody>
+</table></div>
+<h2 id="foto">A foto não aparece</h2>
+<ol>
+<li><strong>Sexo não informado no cadastro:</strong> na ficha do aluno, escolha <strong>Menino/Menina</strong>; para professor, <strong>Homem/Mulher</strong>.</li>
+<li><strong>Arquivo de imagem faltando ou com nome diferente:</strong> as fotos padrão ficam na pasta <code>imgs/</code> do site e os nomes precisam ser exatos: <code>aluno-menino.jpg</code>, <code>aluno-menina.jpg</code>, <code>professor.jpg</code> e <code>professora.jpg</code>.</li>
+<li><strong>Responsável:</strong> não tem foto padrão, por isso sempre aparecem as <strong>iniciais</strong>. Isso é normal.</li>
+<li><strong>Sem nenhuma das opções acima:</strong> o app mostra as <strong>iniciais</strong> da pessoa.</li>
+</ol>
+<h2 id="suporte">Como falar com o suporte</h2>
+<p><strong>Onde está o contato:</strong> em <strong>Meu perfil</strong>, o card <strong>Suporte técnico</strong> (<em>"Erro na tela, acesso travado ou dado que não salva?"</em>). Ele mostra o e-mail do suporte e tem o botão <strong>WhatsApp</strong>, que abre a conversa direto.</p>
+<p><strong>Quando chamar:</strong> quando a mensagem pedir <em>"suporte técnico"</em>, quando o mesmo erro se repetir depois de tentar de novo, ou quando um dado sumir.</p>
+<p><strong>O que enviar junto:</strong></p>
+<ul>
+<li><strong>Print</strong> da tela inteira, com a mensagem de erro visível.</li>
+<li><strong>Nome da pessoa</strong> e a <strong>unidade</strong> em questão.</li>
+<li><strong>O que você estava fazendo</strong> no momento (ex.: <em>dando baixa na mensalidade de setembro</em>).</li>
+<li><strong>Horário aproximado</strong> em que aconteceu.</li>
+</ul>
+<blockquote>
+<p>Se a equipe esquecer a <strong>própria</strong> senha, a tela de troca de senha orienta falar com o suporte: não há link por e-mail.</p>
+</blockquote></article></main>
+<footer>Dúvidas? Fale com a secretaria da sua unidade. · Para imprimir, use Ctrl+P (ou Compartilhar › Imprimir).</footer>
+</body></html>

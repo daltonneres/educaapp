@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="pt-BR"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>O que o sistema faz sozinho — Educa+ Manuais</title>
+<link rel="icon" href="../imgs/logoeduca.jpeg" type="image/jpeg">
+<style>
+:root{--navy:#0E2038;--navy-soft:#16304F;--gold:#C9A24A;--gold-deep:#9C7A2E;--cream:#F7F3E9;--ink:#122032;--slate:#5B6B7E;--line:rgba(201,162,74,.35);--bg:#F7F3E9;--card:#fff;
+--font-display:'Iowan Old Style','Palatino Linotype',Georgia,serif;--font-body:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:16px}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.65 var(--font-body)}
+header{background:var(--navy);color:#fff;padding:22px 20px;border-bottom:3px solid var(--gold)}
+header .in,main{max-width:820px;margin:0 auto}
+header small{color:var(--gold);letter-spacing:.12em;text-transform:uppercase;font-size:12px}
+header a{color:#E9CE8C;text-decoration:none;font-size:14px}
+main{padding:24px 20px 60px}
+article{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:26px 24px}
+h1{font-family:var(--font-display);font-weight:500;color:var(--navy);font-size:30px;line-height:1.2;margin:0 0 14px}
+h2{font-family:var(--font-display);font-weight:500;color:var(--navy);font-size:22px;margin:34px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+h3{color:var(--gold-deep);font-size:17px;margin:22px 0 6px}
+p,li{max-width:70ch}li{margin:4px 0}
+blockquote{margin:14px 0;padding:10px 16px;background:#FBF6E6;border-left:4px solid var(--gold);border-radius:0 8px 8px 0;color:var(--navy-soft)}
+blockquote p{margin:0}
+hr{border:0;border-top:1px solid var(--line);margin:24px 0}
+.tw{overflow-x:auto;margin:14px 0}
+table{border-collapse:collapse;width:100%;font-size:15px}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:var(--navy);color:#fff;font-weight:600}
+tr:nth-child(even) td{background:#FBF9F2}
+strong{color:var(--navy)}
+footer{text-align:center;color:var(--slate);font-size:13px;padding:0 20px 30px}
+@media print{header{background:none;color:#000;border-bottom:2px solid #000}header a{display:none}body{background:#fff}article{border:0;padding:0}}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#081524;--card:#0E2038;--ink:#E8EDF3;--slate:#9AA8B8;--line:rgba(201,162,74,.3)}
+h1,h2,strong{color:#F1E3B8}h3{color:#E9CE8C}blockquote{background:#16304F;color:#E8EDF3}tr:nth-child(even) td{background:#122A47}th{background:#16304F}}
+</style></head><body>
+<header><div class="in"><small>Educa+ Centro Educacional · Manuais</small><br><a href="javascript:window.close()">← Fechar este manual</a></div></header>
+<main><article><h1>O que o sistema faz sozinho</h1>
+<p><strong>Para quem é:</strong> equipe administrativa. Saber o que é automático evita retrabalho e lançamentos duplicados.</p>
+<h2 id="idaluno">IDALUNO sequencial</h2>
+<p>Cada novo aluno recebe o próximo número (0001, 0002…) automaticamente, em um contador único para todas as unidades. Serve para diferenciar alunos com o mesmo nome. Não é preciso digitar nem alterar.</p>
+<p><strong>Alunos antigos, sem número:</strong> na aba <strong>Alunos</strong> aparece o aviso <em>"X alunos ainda não têm IDALUNO"</em> com o botão <strong>Gerar IDALUNO</strong>. Ele numera um aluno de cada vez, em ordem. Se der erro no meio, o app informa quantos foram feitos: toque no botão de novo para continuar os que faltam.</p>
+<h2 id="fotos">Fotos padrão por perfil</h2>
+<p>A foto depende do que está no cadastro:</p>
+<div class="tw"><table>
+<thead>
+<tr>
+<th>Perfil</th>
+<th>Foto</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Aluno</strong></td>
+<td>Menino ou Menina, conforme o campo "Aluno(a) é". Sem esse campo preenchido, aparecem as <strong>iniciais</strong>.</td>
+</tr>
+<tr>
+<td><strong>Professor</strong></td>
+<td>Homem ou Mulher, conforme o campo "Professor(a) é". Sem ele, <strong>iniciais</strong>.</td>
+</tr>
+<tr>
+<td><strong>Responsável</strong></td>
+<td>Não tem foto padrão: aparecem sempre as <strong>iniciais</strong>.</td>
+</tr>
+<tr>
+<td><strong>Equipe</strong></td>
+<td>Foto da secretaria da unidade aberta (Salto do Lontra ou Nova Prata do Iguaçu, reconhecidas pelo nome da unidade).</td>
+</tr>
+</tbody>
+</table></div>
+<p>As iniciais são as duas primeiras letras do nome (ex.: Maria Souza vira MS). Para mudar a foto de um aluno ou professor, corrija o campo de sexo na ficha. Veja também <strong>A foto não aparece</strong>.</p>
+<h2 id="situacao-financeira">Situação financeira calculada</h2>
+<p>Nunca é digitada. O app recalcula sempre a partir das mensalidades lançadas:</p>
+<ul>
+<li><strong>Atrasada há X dia(s):</strong> existe cobrança pendente com vencimento já passado.</li>
+<li><strong>Em dia:</strong> não há cobrança vencida (ou todas estão pagas).</li>
+<li><strong>—:</strong> nenhuma cobrança foi lançada ainda. Não significa "em dia".</li>
+<li><strong>Próxima cobrança:</strong> se há atrasada, mostra a atrasada mais antiga; senão, a pendente com vencimento mais próximo, com valor e data.</li>
+</ul>
+<p>Para mudar a situação, lance ou dê baixa na cobrança. Uma cobrança pendente vira <strong>atrasada</strong> no dia seguinte ao vencimento.</p>
+<h2 id="cores">Cores e alertas da presença</h2>
+<p>No calendário do aluno e do responsável: <strong>verde</strong> (presença), <strong>amarelo</strong> (falta justificada) e <strong>vermelho</strong> (falta). Se houver mais de uma aula no dia, vale a <strong>pior</strong>: falta, depois justificada, depois presença.</p>
+<p>O mesmo vale para os itens da secretaria no mesmo dia: fica destacado o de maior prioridade (<strong>Sem aula</strong>, depois <strong>Prova</strong>, <strong>Atividade</strong> e, por último, <strong>Aviso/Outro</strong>).</p>
+<p>O <strong>ícone de alerta</strong>, visto pelo responsável, indica que o professor deixou observação sobre o aluno naquele dia.</p>
+<h2 id="boletim-auto">Boletim montado sozinho</h2>
+<p>As notas vêm das atividades que o professor lança. A média de cada etapa (média das atividades da disciplina) e a média final (as duas etapas) são calculadas pelo sistema. A secretaria não precisa digitar de novo.</p>
+<h2 id="senha-sessoes">Senha nova encerra sessões antigas</h2>
+<p>Ao trocar a senha de alguém em <strong>Senhas &amp; acessos</strong>, o sistema invalida as sessões abertas. Quem estava logado com a senha antiga é desconectado no próximo refresh do acesso, em até <strong>1 hora</strong>.</p>
+<h2 id="nome-disciplinas">Nome e disciplinas sempre iguais</h2>
+<p>Ao editar um professor (nome, disciplinas ou Homem/Mulher), o app grava a mudança no cadastro do próprio professor e em cada unidade em que ele dá aula, de uma vez. Assim o nome não fica diferente entre o painel dele e a lista da Gestão. Não é preciso corrigir em mais de um lugar.</p>
+<h2 id="saudacao">Saudação e status do dia</h2>
+<p>No painel do aluno e do responsável:</p>
+<ul>
+<li><strong>Saudação:</strong> <em>Bom dia</em> até 11h59, <em>Boa tarde</em> até 17h59 e <em>Boa noite</em> depois, seguida do primeiro nome.</li>
+<li><strong>Selo da agenda:</strong> depende <strong>só do horário do relógio</strong>, não das aulas reais.</li>
+<li>Até 14h: <strong>Agenda do dia</strong>.</li>
+<li>Das 14h às 16h: <strong>Em andamento</strong> para o aluno, <strong>Presente agora</strong> para o responsável.</li>
+<li>Depois das 16h: <strong>Agenda do dia</strong>.</li>
+</ul>
+<p>O selo <strong>não verifica</strong> se há aula, se o aluno compareceu ou se a chamada foi feita. Se um responsável perguntar sobre "Presente agora", explique que é uma indicação de horário e que a presença de verdade está em <strong>Presença</strong> e no <strong>Calendário</strong>.</p>
+<h2>Outras funções automáticas</h2>
+<ul>
+<li><strong>Agenda de Horários:</strong> atualiza sozinha cerca de 1 minuto depois da última consulta. Use <strong>Atualizar</strong> para forçar.</li>
+<li><strong>Chamada e nota viram calendário e boletim:</strong> ao salvar, a família já vê o resultado.</li>
+<li><strong>Contrato com acesso ao app:</strong> ao gerar ou importar com essa opção marcada, o login do aluno e do responsável é criado junto.</li>
+</ul>
+<h2 id="contratos-auto">Contratos: PDF guardado e situação do aluno</h2>
+<p>O que acontece sem ninguém pedir:</p>
+<ul>
+<li><strong>Importar contratos guarda o PDF.</strong> Cada arquivo importado fica salvo no cadastro do aluno (uma cópia para cada irmão), com a situação escolhida na prévia. Só não salva se o PDF passar de 4 MB; nesse caso o aviso pede para anexar pela ficha.</li>
+<li><strong>A situação do aluno é um resumo.</strong> Sempre que um contrato é anexado, marcado como assinado ou excluído, o sistema recalcula: <em>pendente</em> se algum contrato guardado ainda não foi assinado, <em>assinado</em> se todos foram. As <strong>Estatísticas</strong> usam esse resumo.</li>
+<li><strong>O responsável vê sozinho.</strong> Assim que o PDF é guardado, ele aparece na aba <strong>Contratos</strong> do responsável vinculado ao aluno, sem passo extra.</li>
+<li><strong>Excluir o aluno apaga os contratos dele.</strong></li>
+</ul>
+<p><strong>O que não é automático:</strong> o contrato criado em <strong>Gerar contrato</strong> sai pela impressão do navegador, e o sistema não captura esse PDF. Depois de assinado, a secretaria anexa o arquivo na ficha do aluno. Enquanto isso, o aluno aparece em <strong>Sem contrato salvo no sistema</strong>, na aba Contratos.</p></article></main>
+<footer>Dúvidas? Fale com a secretaria da sua unidade. · Para imprimir, use Ctrl+P (ou Compartilhar › Imprimir).</footer>
+</body></html>

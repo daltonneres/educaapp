@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Financeiro: boletos e cobranças — Manual Educa+</title>
+<link rel="icon" href="../imgs/logoeduca.jpeg" type="image/jpeg" />
+<style>
+  :root{
+    --navy:#0E2038; --navy-soft:#16304F; --gold:#C9A24A; --gold-deep:#9C7A2E;
+    --cream:#F7F3E9; --ink:#122032; --slate:#5B6B7E; --line:rgba(201,162,74,.28);
+    --font-display:'Iowan Old Style','Palatino Linotype',Georgia,serif;
+    --font-body:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth;scroll-padding-top:76px}
+  body{margin:0;background:var(--cream);color:var(--ink);font-family:var(--font-body);font-size:16px;line-height:1.65;-webkit-font-smoothing:antialiased}
+  .topo{position:sticky;top:0;z-index:5;background:var(--navy);color:#fff}
+  .topo-in{max-width:880px;margin:0 auto;padding:12px 20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .topo strong{font-family:var(--font-display);font-size:17px;font-weight:600;margin-right:auto}
+  .topo a{color:var(--gold-light,#E9CE8C);text-decoration:none;font-size:13.5px;padding:4px 2px;border-bottom:1px solid transparent}
+  .topo a:hover,.topo a:focus-visible{border-bottom-color:currentColor;outline:none}
+  main{max-width:880px;margin:0 auto;padding:36px 20px 72px}
+  h1{font-family:var(--font-display);font-size:clamp(28px,5vw,40px);line-height:1.15;margin:0 0 12px;color:var(--navy)}
+  .lead{font-size:18px;color:var(--slate);max-width:62ch;margin:0 0 28px}
+  section{background:#fff;border:1px solid var(--line);border-radius:12px;padding:24px 24px 20px;margin:0 0 20px}
+  h2{font-family:var(--font-display);font-size:24px;margin:0 0 10px;color:var(--navy)}
+  h3{font-size:16px;margin:20px 0 6px;color:var(--navy)}
+  p{margin:0 0 12px;max-width:68ch}
+  ul,ol{margin:0 0 14px;padding-left:22px;max-width:68ch}
+  li{margin-bottom:6px}
+  .resumo{border-left:4px solid var(--gold);background:#fff;padding:16px 20px;border-radius:0 12px 12px 0;margin:0 0 24px}
+  .resumo p{margin:0 0 6px}
+  .resumo p:last-child{margin:0}
+  .aviso{border-left:3px solid var(--gold-deep);background:rgba(201,162,74,.12);padding:10px 14px;border-radius:0 8px 8px 0;margin:14px 0;max-width:68ch}
+  .aviso p{margin:0}
+  table{border-collapse:collapse;width:100%;max-width:68ch;margin:6px 0 14px;font-size:15px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--navy);font-weight:600}
+  .tabela{overflow-x:auto}
+  code,.menu{background:rgba(14,32,56,.07);padding:1px 6px;border-radius:5px;font-size:.93em}
+  .menu{font-weight:600;color:var(--navy)}
+  footer{color:var(--slate);font-size:13.5px;margin-top:28px}
+  @media (max-width:560px){section{padding:18px 16px 14px}.topo-in{gap:10px}}
+</style>
+</head>
+<body>
+<header class="topo">
+  <div class="topo-in">
+    <strong>Educa+ · Manual da equipe</strong>
+    <a href="#lancar">Lançar</a>
+    <a href="#leitura">Leitura do PDF</a>
+    <a href="#dia-01">Dia 01</a>
+    <a href="#familia">O que a família vê</a>
+    <a href="#calendario">Calendário</a>
+    <a href="#duvidas">Dúvidas</a>
+  </div>
+</header>
+
+<main>
+  <h1>Financeiro: boletos e cobranças</h1>
+  <p class="lead">A secretaria lança a cobrança uma vez. A família encontra o boleto no app, mês a mês, com a data de vencimento e a forma de pagamento.</p>
+
+  <div class="resumo">
+    <p><strong>Em uma frase:</strong> você lança, o app cuida do resto.</p>
+    <p>Não há mensagem a enviar, boleto a confirmar nem baixa a dar. Quando chega o dia 01 do mês, o responsável vê um aviso de cobrança nova ao entrar no app, e o vencimento aparece no calendário dele.</p>
+  </div>
+
+  <section id="visao-geral">
+    <h2>Onde fica</h2>
+    <p>No menu da equipe, a aba <span class="menu">Financeiro</span> fica entre <em>Estatísticas</em> e <em>Alunos</em>. Ela tem duas partes:</p>
+    <ul>
+      <li><strong>Consultar boletos:</strong> lista as cobranças da unidade. Digite o nome do aluno, a turma ou o IDALUNO na busca. Quando a busca encontra até 5 alunos, cada um ganha o botão <em>Lançar cobrança</em>.</li>
+      <li><strong>Lançar cobrança:</strong> o formulário para criar uma cobrança nova.</li>
+    </ul>
+    <p>Também dá para lançar pela ficha do aluno: aba <span class="menu">Alunos</span> → toque no aluno → <span class="menu">Financeiro</span>. É o mesmo lançamento.</p>
+  </section>
+
+  <section id="lancar">
+    <h2>Como lançar uma cobrança</h2>
+    <ol>
+      <li>Abra <span class="menu">Financeiro</span> → <span class="menu">Lançar cobrança</span>.</li>
+      <li>Busque o aluno pelo nome ou pela turma e toque nele.</li>
+      <li>Preencha o <strong>mês de referência</strong>, o <strong>valor</strong> e o <strong>vencimento</strong>.</li>
+      <li>Escolha a <strong>forma de pagamento</strong> (veja a tabela abaixo) e anexe o que ela pede.</li>
+      <li>Toque em <span class="menu">Lançar cobrança</span>.</li>
+    </ol>
+
+    <div class="tabela">
+      <table>
+        <thead><tr><th>Forma</th><th>O que preencher</th></tr></thead>
+        <tbody>
+          <tr><td>Boleto</td><td>PDF do boleto e/ou código de barras. Se quiser oferecer também o Pix, marque <em>Incluir também um Pix copia e cola</em>.</td></tr>
+          <tr><td>Pix</td><td>Escolha <em>Pix copia e cola</em> (cole o código) ou <em>Chave Pix da escola</em> (não há nada para preencher).</td></tr>
+          <tr><td>Cartão</td><td>O link de pagamento.</td></tr>
+          <tr><td>Dinheiro</td><td>Nada além de mês, valor e vencimento.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="aviso"><p>O PDF do boleto pode ter até <strong>600 KB</strong>. Se for maior, comprima o arquivo antes de anexar.</p></div>
+
+    <h3>Lançou errado?</h3>
+    <p>Abra a ficha do aluno (<span class="menu">Alunos</span> → aluno → <span class="menu">Financeiro</span>), exclua a cobrança e lance de novo.</p>
+  </section>
+
+  <section id="leitura">
+    <h2>Leitura automática do PDF do boleto</h2>
+    <p>Ao anexar o PDF, o app lê o arquivo e preenche os campos sozinho. Isso acontece no próprio aparelho: o arquivo não vai para nenhum servidor de leitura.</p>
+    <div class="tabela">
+      <table>
+        <thead><tr><th>O app tenta achar</th><th>Como funciona</th></tr></thead>
+        <tbody>
+          <tr><td>Código de barras</td><td>A linha digitável do boleto (47 ou 48 números). O app confere os dígitos verificadores.</td></tr>
+          <tr><td>Pix copia e cola</td><td>Procura o código no texto do PDF. Se o PDF só tiver o QR Code do Pix, o app lê o QR. Ao achar, marca sozinho <em>Incluir também um Pix copia e cola</em>.</td></tr>
+          <tr><td>Valor e vencimento</td><td>Vêm embutidos no boleto bancário de 47 números. Só são preenchidos se os campos estiverem vazios.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Quando termina, aparece uma frase como <em>“Lido do PDF: código de barras, Pix copia e cola, valor, vencimento.”</em> Nada é gravado até você tocar em <span class="menu">Lançar cobrança</span>.</p>
+
+    <h3>Quando não acha nada</h3>
+    <ul>
+      <li>PDF escaneado (foto do boleto): o app usa leitura de imagem, que erra mais. A frase avisa quando isso acontece. Olhe os números preenchidos.</li>
+      <li>Boleto de convênio (48 números): o código de barras é lido, mas valor e vencimento não.</li>
+      <li>Se o app avisar que não achou nada, digite o código de barras e o Pix à mão. O PDF anexado continua valendo.</li>
+    </ul>
+  </section>
+
+  <section id="dia-01">
+    <h2>Quando a família passa a ver: dia 01</h2>
+    <p>A cobrança aparece para a família a partir do <strong>dia 01 do mês de referência</strong>.</p>
+    <ul>
+      <li>Cobrança de <strong>novembro</strong> lançada em 20 de outubro: fica guardada e a família a vê em <strong>1º de novembro</strong>.</li>
+      <li>Cobrança de <strong>outubro</strong> lançada em 10 de outubro: a família vê <strong>na hora</strong>, porque o dia 01 já passou.</li>
+    </ul>
+    <p>Por isso você pode adiantar o trabalho e lançar o mês seguinte com antecedência.</p>
+
+    <h3>O aviso de cobrança nova</h3>
+    <p>Quando o responsável entra no app e há cobrança disponível que ele ainda não viu, abre uma janela: <em>“Cobrança nova disponível — mês/ano”</em>, com valor, vencimento e forma de pagamento.</p>
+    <ul>
+      <li>Cada cobrança aparece <strong>uma vez</strong> em cada aparelho.</li>
+      <li>Cobrança com vencimento já passado não gera aviso. Sem essa regra, no primeiro acesso viria o histórico inteiro.</li>
+      <li>Se a pessoa limpar os dados do navegador ou entrar em outro aparelho, o aviso pode aparecer de novo.</li>
+    </ul>
+    <p>Quem envia o aviso é o próprio app. A secretaria não faz nada além de lançar.</p>
+  </section>
+
+  <section id="familia">
+    <h2>O que a família vê</h2>
+    <p>Na aba <span class="menu">Financeiro</span> do responsável, as cobranças aparecem <strong>mês a mês</strong>, da mais recente para a mais antiga. Cada linha mostra:</p>
+    <ul>
+      <li>o mês de referência;</li>
+      <li>o valor;</li>
+      <li>a <strong>data de vencimento</strong>;</li>
+      <li>a <strong>forma de pagamento</strong> cadastrada (Boleto, Pix, Cartão ou Dinheiro);</li>
+      <li>o botão para baixar o <strong>boleto em PDF</strong>, <em>Copiar Pix</em> e <em>Copiar código de barras</em>, quando existirem.</li>
+    </ul>
+    <div class="aviso"><p>O app <strong>não mostra</strong> se a cobrança foi paga, está pendente ou atrasada. A secretaria não dá baixa, então esse dado não existe. A tela mostra só vencimento e forma de pagamento.</p></div>
+    <p>Responsável com mais de um filho troca de aluno pelo seletor no topo da tela, e cada um tem as suas cobranças.</p>
+  </section>
+
+  <section id="calendario">
+    <h2>Vencimentos no calendário</h2>
+    <p>No calendário do responsável, o dia de vencimento de cada cobrança ganha uma marca <strong>“$”</strong>. Ao tocar no dia, aparece <em>“Vencimento — mês/ano”</em>, com valor e forma de pagamento. Com mais de um filho, o nome do aluno aparece junto.</p>
+    <ul>
+      <li>A marca só aparece depois que a cobrança fica disponível (dia 01 do mês de referência).</li>
+      <li>A legenda do calendário inclui <em>Vencimento de boleto</em>.</li>
+      <li>Por enquanto, só o <strong>responsável</strong> vê. A conta de aluno não tem a aba Financeiro nem as marcas.</li>
+    </ul>
+  </section>
+
+  <section id="duvidas">
+    <h2>Quando algo não aparece</h2>
+    <div class="tabela">
+      <table>
+        <thead><tr><th>Situação</th><th>O que fazer</th></tr></thead>
+        <tbody>
+          <tr><td>A família diz que não vê a cobrança</td><td>Confira o <strong>mês de referência</strong>: se for futuro, ela só aparece no dia 01. Confira também se o aluno tem responsável vinculado (aba <em>Responsáveis</em>).</td></tr>
+          <tr><td>O app não conseguiu lançar a cobrança</td><td>O cadastro de cada aluno guarda todos os PDFs dele e tem limite de tamanho. Tente um PDF menor, ou lance sem PDF digitando o código de barras e o Pix.</td></tr>
+          <tr><td>O PDF foi anexado, mas os campos ficaram vazios</td><td>O PDF provavelmente não tem texto legível. Digite o código de barras e o Pix à mão.</td></tr>
+          <tr><td>Valor ou vencimento preenchidos errados</td><td>Corrija o campo antes de lançar. Se já lançou, exclua pela ficha do aluno e lance de novo.</td></tr>
+          <tr><td>O responsável não viu o aviso de cobrança nova</td><td>O aviso aparece uma vez por aparelho e só para cobranças que ainda não venceram. A cobrança continua na aba <em>Financeiro</em> e no calendário.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>Educa+ Centro Educacional · Manual da equipe</footer>
+</main>
+</body>
+</html>
