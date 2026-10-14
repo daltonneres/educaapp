@@ -28,7 +28,8 @@
      financeiro: { mensalidades: [{ id, competencia (\"AAAA-MM\"), valor,
                     vencimento (\"AAAA-MM-DD\"), status: \"pendente\"|\"pago\",
                     formaPagamento: \"dinheiro\"|\"pix\"|\"cartao\"|\"\", dataPagamento,
-                    pixCopiaCola, codigoBarras, boletoPdfNome, boletoPdfDados }] }
+                    pixCopiaCola, codigoBarras, boletoPdfNome, boletoPdfDados,
+                    boletoArquivoId, boletoArquivoPartes (carnê: PDF guardado em boletosArquivos/{id}_{n}) }] }
                   // lançado à mão pela secretaria na ficha do aluno (aba Financeiro)
                   // ou direto pela aba "Financeiro" da instituição; status/próxima
                   // cobrança/histórico exibidos na tela são sempre calculados em
@@ -152,6 +153,11 @@
      perguntas: [{ id, texto }]
      atualizadoEm, atualizadoPorId
 
+   solicitacoes/{id}   (avisos gerais da equipe pras famílias — ver solicitacoes.js)
+     escolaId, titulo, texto, para: "responsaveis" | "alunos" | "todos"
+     acao: "" | "contratos" | "ficha" | "financeiro", prazo: "AAAA-MM-DD" | ""
+     urgente, ativa: boolean, criadoPorId, criadoPorNome, criadoEm, atualizadoEm
+
    eventosCalendario/{id}   (avisos e lembretes criados pelo professor OU
                               itens do calendário da secretaria — os dois
                               tipos moram na mesma coleção, diferenciados
@@ -215,6 +221,7 @@ import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/
 import { firebaseConfig } from "./firebase-config.js";
 import { criarHorarios } from "./horarios.js";
 import { criarSuporte } from "./suporte.js";
+import { criarSolicitacoes } from "./solicitacoes.js";
 import { criarDev } from "./dev.js";
 import {
   contratoEstadoInicial,
@@ -227,6 +234,7 @@ import {
   contratoPrecisaLoginAluno,
   contratoNomesAlunos,
   contratoTemSegundoAluno,
+  contratoPrimeiraParcelaPaga,
   abrirContratoParaImpressao,
   variantesDeEmail,
   escolherEmailLivre,
@@ -466,14 +474,14 @@ async function proximoIdAluno(){
 /* ------------------------------------------------------------------
    Fotos por categoria: todo menino usa a mesma foto, toda menina usa
    outra, cada professor(a) usa a foto do seu gênero, e cada secretaria
-   por unidade usa sua própria imagem. O responsável não tem foto padrão
-   na pasta atual, então cai no avatar com iniciais. */
+   por unidade usa sua própria imagem. Todos os responsáveis usam a
+   mesma foto (imgs/responsavel.jpg). */
 const FOTO_PADRAO = {
   alunoMenino: "imgs/aluno-menino.jpg",
   alunoMenina: "imgs/aluno-menina.jpg",
   professor: "imgs/professor.jpg",
   professora: "imgs/professora.jpg",
-  responsavel: "",
+  responsavel: "imgs/responsavel.jpg",
 };
 
 function fotoDoAluno(aluno){
@@ -750,9 +758,9 @@ function linkDoApp(){
 /* Mensagem com o link do app + login + senha provisória. Edite aqui. */
 const MENSAGEM_ACESSO = {
   paraResponsavel: (primeiroNomeResp, nomeAluno, link, login, senha) =>
-    `Olá, ${primeiroNomeResp}! Tudo bem?\n\nSeguem os dados de acesso ao app do Educa+ Centro Educacional para acompanhar o(a) ${nomeAluno}:\n\n📲 Acesse: ${link}\n👤 Login: ${login}\n🔑 Senha provisória: ${senha}\n\nNo primeiro acesso, troque a senha em "Meu perfil". Qualquer dúvida, é só chamar!`,
+    `Olá, ${primeiroNomeResp}! Tudo bem?\n\nSeguem os dados de acesso ao app do Educa+ Centro Educacional para acompanhar o(a) ${nomeAluno}:\n\n📲 Acesse: ${link}\n👤 Login: ${login}\n🔑 Senha: ${senha}\n\nGuarde esta mensagem. Se esquecer a senha, é só pedir à secretaria. Qualquer dúvida, é só chamar!`,
   paraAluno: (primeiroNomeAluno, link, login, senha) =>
-    `Olá, ${primeiroNomeAluno}! Tudo bem?\n\nSeguem seus dados de acesso ao app do Educa+ Centro Educacional:\n\n📲 Acesse: ${link}\n👤 Login: ${login}\n🔑 Senha provisória: ${senha}\n\nNo primeiro acesso, troque a senha em "Meu perfil". Qualquer dúvida, é só chamar!`,
+    `Olá, ${primeiroNomeAluno}! Tudo bem?\n\nSeguem seus dados de acesso ao app do Educa+ Centro Educacional:\n\n📲 Acesse: ${link}\n👤 Login: ${login}\n🔑 Senha: ${senha}\n\nGuarde esta mensagem. Se esquecer a senha, é só pedir à secretaria. Qualquer dúvida, é só chamar!`,
 };
 
 /* Abre o WhatsApp já na conversa da pessoa, com a mensagem de acesso
@@ -849,7 +857,7 @@ const MANUAIS_CATEGORIAS = [
   { key: "cadastros", icon: "user", titulo: "Cadastros e acessos", descricao: "Criar pessoas, dar login, trocar senha e importar turmas." },
   { key: "rotina", icon: "calendar", titulo: "Turmas, alunos e calendário", descricao: "O dia a dia da secretaria com turmas, fichas e avisos." },
   { key: "horarios", icon: "horarios", titulo: "Horários e agenda", descricao: "Agenda de aulas, remarcações, lembretes para as turmas e anotações." },
-  { key: "financeiro", icon: "wallet", titulo: "Financeiro", descricao: "Lançar cobranças e consultar boletos." },
+  { key: "financeiro", icon: "wallet", titulo: "Financeiro", descricao: "Lançar cobranças, importar carnês e consultar boletos." },
   { key: "contratos", icon: "fileText", titulo: "Contratos", descricao: "Gerar, importar e acompanhar a assinatura." },
   { key: "pedagogico", icon: "cap", titulo: "Acompanhamento pedagógico", descricao: "Faltas, boletim, avaliações, certificados e aniversários." },
   { key: "perfis", icon: "users2", titulo: "Guias por perfil", descricao: "O que o professor e a família veem e fazem no app — para orientar por telefone.", descricaoProfessor: "Como o app funciona no seu dia a dia: chamada, conteúdos e notas." },
@@ -859,7 +867,7 @@ const MANUAIS_CATEGORIAS = [
 
 const MANUAIS_INSTITUICAO = [
   // ---- Primeiros passos
-  { categoria: "inicio", tipo: "visual", titulo: "Tour pelo menu da equipe", descricao: "Mapa ilustrado de cada aba (Turmas, Calendário, Estatísticas, Financeiro, Alunos, Aniversários, Professores, Responsáveis, Contratos, Avaliações, Certificados, Gestão e Meu perfil) e para que cada uma serve.", url: "manuais/primeiros-passos.html#tour" },
+  { categoria: "inicio", tipo: "visual", titulo: "Tour pelo menu da equipe", descricao: "Mapa ilustrado de cada aba (Turmas, Calendário, Estatísticas, Financeiro, Alunos, Aniversários, Solicitações, Professores, Responsáveis, Contratos, Avaliações, Certificados, Gestão e Meu perfil) e para que cada uma serve.", url: "manuais/primeiros-passos.html#tour" },
   { categoria: "inicio", tipo: "passo", titulo: "Entrar, trocar de unidade e sair", descricao: "Como fazer login, alternar entre Salto do Lontra e Nova Prata pelo selo da unidade no menu e sair da conta com segurança.", url: "manuais/primeiros-passos.html#entrar" },
   { categoria: "inicio", tipo: "visual", titulo: "Como cada perfil enxerga o app", descricao: "Telas de aluno, responsável e professor ao lado da sua, para você saber exatamente o que a pessoa vê quando pede ajuda por telefone.", url: "manuais/primeiros-passos.html#perfis" },
   { categoria: "inicio", tipo: "referencia", titulo: "Glossário do Educa+", descricao: "Curso, turma, IDALUNO, vínculo, competência, escopo do aviso, situação do contrato: os termos das telas em linguagem simples.", url: "manuais/primeiros-passos.html#glossario" },
@@ -876,6 +884,7 @@ const MANUAIS_INSTITUICAO = [
   // ---- Turmas, alunos e calendário
   { categoria: "rotina", tipo: "passo", titulo: "Criar e ajustar turmas", descricao: "Nome, horário, sala e disciplina; colocar e tirar alunos de uma turma; quando excluir.", url: "manuais/rotina.html#turmas" },
   { categoria: "rotina", tipo: "visual", titulo: "Ficha do aluno por dentro", descricao: "Dados, turma, contato, aniversário, situação do contrato e financeiro — o que dá para editar em cada campo.", url: "manuais/rotina.html#ficha-aluno" },
+  { categoria: "rotina", tipo: "passo", titulo: "Publicar solicitações para as famílias", descricao: "Avisos gerais (assinar contrato, preencher a ficha, entregar documentos): modelos prontos, botão que leva à aba certa, corrigir, desativar e o que a família vê.", url: "manuais/solicitacoes.html" },
   { categoria: "rotina", tipo: "passo", titulo: "Lançar itens no calendário da unidade", descricao: "Dia sem aula, prova, atividade e aviso; escolher quem recebe (alunos, responsáveis, professores) e por curso.", url: "manuais/rotina.html#calendario-unidade" },
   { categoria: "rotina", tipo: "visual", titulo: "Como o calendário aparece para a família", descricao: "Cores de presença, faltas justificadas, ícone de observação do professor e os avisos da escola vistos pelo responsável.", url: "manuais/rotina.html#calendario-familia" },
 
@@ -1335,7 +1344,7 @@ const state = {
   instTab: "turmas",
   config: null,               // espelho de config/app (manutenção, aviso, módulos) — ver dev.js
   gestaoSubTab: "cadastro",   // cadastro | acessos — sub-abas dentro de "Gestão"
-  finSubTab: "consultar",     // consultar | lancar — sub-abas dentro de "Financeiro"
+  finSubTab: "consultar",     // consultar | lancar (cobrança avulsa) | carne — sub-abas dentro de "Financeiro"
   finConsultaBusca: "",         // texto da busca (aluno/turma/IDALUNO) em Financeiro > Consultar
   alunosBusca: "",
   respBusca: "",
@@ -1450,6 +1459,7 @@ const state = {
   respModalErro: "",
   respModalMensagem: "",
   respModalSalvando: false,
+  respModalEditandoVinculos: false, // false = mostra só os alunos já vinculados; true = checklist completo
   respModalNomeInput: "",          // edição dos dados do responsável (modal da aba Responsáveis)
   respModalParentesco: "",
   respModalContato: "",
@@ -1510,12 +1520,36 @@ const state = {
   acessoNome: "",
   acessoEmail: "",                // e-mail de acesso conhecido (pode estar vazio em cadastros antigos)
   acessoSenhaSugerida: "",        // senha provisória já sugerida ao abrir quem está sem login
+  acessoStatus: {},               // uid -> { entrou, ultimoAcesso } (vem da função statusAcessoUsuarios)
+  acessoStatusCarregadoEm: 0,     // 0 = ainda não conferiu quem já entrou
+  acessoStatusCarregando: false,
+  acessoStatusErro: "",
+  acessoPreparandoId: null,       // id de quem está tendo a senha gerada pra envio
+  acessoEnvioErro: "",
   acessoDefinindoSenha: false,
   acessoCriandoLogin: false,
   acessoExcluindo: false,
   acessoConfirmandoExclusao: false,
   acessoErro: "",
   acessoMensagem: "",
+
+  // aba "Senhas e login" — senhas guardadas em credenciais/{uid}
+  senhasLoginCreds: null,         // uid -> { senha, email, nome, tipo, ... } (null = ainda não carregou)
+  senhasLoginEscolaId: null,
+  senhasLoginCarregando: false,
+  senhasLoginErro: "",
+  senhasLoginGrupo: "todos",      // todos | alunos | responsaveis | semlogin | semsenha
+  senhasLoginBusca: "",
+  senhasLoginEsqueci: "",         // texto digitado em "Esqueci a senha"
+  senhasLoginConsulta: "",        // consulta aplicada (depois de tocar em Localizar)
+  senhasLoginVisiveis: {},        // uid -> true quando a senha está à mostra
+  senhasLoginPreparando: null,    // uid que está tendo a senha gerada
+  senhasLoginMsg: null,           // { tipo: "ok" | "erro", texto }
+  senhasLoteConfirmando: false,
+  senhasLoteAlvo: "semsenha",      // semsenha | padrao — quem o lote vai recriar
+  senhasLoteRodando: false,
+  senhasLoteProgresso: "",
+  senhasLoteResultado: null,      // { ok, falhas: [{nome, motivo}] }
 
   // aba "Alunos" da instituição — lista carregada direto da coleção `alunos`
   // (com id de verdade, ao contrário do array resumido salvo em escolas/{id}.alunos)
@@ -1609,6 +1643,16 @@ const state = {
   finCobrancaSalvando: false,
   finCobrancaErro: "",
   finCobrancaMensagem: "",
+  // Financeiro > Lançar cobrança > Importar carnê
+  finCarneArquivo: null,             // File do carnê escolhido
+  finCarneBoletos: null,             // [{ codigoBarras, valor, vencimento, pix }] lidos do PDF
+  finCarneAvisos: [],
+  finCarneLendo: false,
+  finCarneProgresso: "",
+  finCarneSalvando: false,
+  finCarneErro: "",
+  finCarneMensagem: "",
+  boletoBaixando: "",                // arquivoId do carnê que está sendo baixado
 
   // responsáveis vinculados ao aluno aberto na ficha + form de novo responsável
   alunoRespVinculados: null,
@@ -1688,6 +1732,49 @@ const app = document.getElementById("app");
 /* Aba "Suporte" (aluno, responsável e professor): manuais + formulário que abre o WhatsApp da secretaria. */
 const suporte = criarSuporte({ state, render, ICONS, escapeHtml, SECRETARIA_WHATSAPP, whatsappLinkComTexto });
 
+/* Solicitações: avisos gerais da equipe para as famílias (ver solicitacoes.js) */
+const solicitacoes = criarSolicitacoes({
+  state, render, ICONS, escapeHtml, formatarDataBr, dataDeHojeISO,
+  db, collection, doc, addDoc, updateDoc, deleteDoc, getDocs, query, where,
+  abrirAbaFamilia: (key) => solicitacaoAbrirAba(key),
+  abaFamiliaDisponivel: (key) => solicitacaoAbaDisponivel(key),
+});
+
+/* Quem lê as solicitações: "responsavel" (tela da família) ou "aluno". */
+function solicitacaoPerfilAtual(){
+  return state.screen === "aluno" ? "aluno" : "responsavel";
+}
+function solicitacaoEscolasDaFamilia(){
+  const alunos = state.screen === "aluno"
+    ? (state.data.aluno ? [state.data.aluno] : [])
+    : (state.data.familiaAlunos || []);
+  return [...new Set(alunos.map(a => a.escolaId).filter(Boolean))];
+}
+function solicitacaoAbaDisponivel(key){
+  if(key === "comunicados") return true;
+  if(state.screen === "aluno"){
+    if(key === "ficha") return !ehTurmaDeRecreacao(state.data.aluno?.turma);
+    return ["aval", "calendario"].includes(key);
+  }
+  return ["contratos", "financeiro", "ficha", "aval", "calendario"].includes(key);
+}
+function solicitacaoAbrirAba(key){
+  if(!solicitacaoAbaDisponivel(key)) return;
+  state.mobileMenuOpen = false;
+  state.cal.diaAberto = null;
+  if(state.screen === "aluno"){
+    state.alunoTab = key;
+  } else {
+    state.familiaTab = key;
+    state.alunoFicha.erro = ""; state.alunoFicha.mensagem = "";
+  }
+  render();
+  if(state.screen !== "aluno" && key === "contratos") carregarContratosDoAluno(state.familiaStudentId);
+  else if(key === "calendario") carregarCalendarioDoAluno(calAlunoAtual());
+  else if(key === "aval"){ state.aval.instOk = false; state.aval.instErro = ""; carregarAvaliacoesDoAluno(calAlunoAtual()); }
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
 /* Painel do desenvolvedor + config remota (manutenção, avisos, módulos) — ver dev.js */
 const dev = criarDev({ state, render, db, doc, setDoc, onSnapshot, collection, query, orderBy, limit, getDocs, addDoc, ICONS, escapeHtml });
 dev.iniciarConfig();
@@ -1741,6 +1828,7 @@ async function carregarDadosDoPerfil(){
     state.alunoTab = "calendario";
     state.screen = "aluno";
     carregarCalendarioDoAluno(state.data.aluno);
+    solicitacoes.carregarParaFamilia(solicitacaoEscolasDaFamilia());
     return;
   }
 
@@ -1756,6 +1844,7 @@ async function carregarDadosDoPerfil(){
     state.screen = "familia";
     carregarCalendarioDoAluno(alunos[0]);
     alunos.forEach(a => carregarContratosDoAluno(a.id));   // alimenta o aviso de contrato pendente
+    solicitacoes.carregarParaFamilia(solicitacaoEscolasDaFamilia());
     return;
   }
 
@@ -1815,6 +1904,7 @@ function normalizeAluno(id, dados){
     situacaoEm: dados.situacaoEm || "",        // "AAAA-MM-DD" em que virou inativo/cancelado
     motivoSaida: dados.motivoSaida || "",
     matriculadoEm: dados.matriculadoEm || "",  // "AAAA-MM-DD" da matrícula (vazio em cadastros antigos)
+    acessoEnviadoEm: dados.acessoEnviadoEm || "",        // "AAAA-MM-DD" do último envio de login/senha (aba Senhas & acessos)
     contratoStatus: dados.contratoStatus || "",          // "assinado" | "pendente" | "" (sem contrato registrado)
     contratoEnviadoEm: dados.contratoEnviadoEm || "",    // "AAAA-MM-DD" do último envio pra assinatura
     contratosSalvos: Number(dados.contratosSalvos) || 0, // quantos PDFs de contrato estão guardados (coleção `contratos`)
@@ -1871,6 +1961,8 @@ function normalizeMensalidade(m){
     codigoBarras: m.codigoBarras || "",
     boletoPdfNome: m.boletoPdfNome || "",
     boletoPdfDados: m.boletoPdfDados || "",   // data URL "data:application/pdf;base64,...."
+    boletoArquivoId: m.boletoArquivoId || "",         // carnê: PDF guardado à parte (boletosArquivos/{id}_{n})
+    boletoArquivoPartes: Number(m.boletoArquivoPartes) || 0,
     linkPagamento: m.linkPagamento || "",     // link de pagamento (cartão)
     criadoEm: m.criadoEm || "",               // "AAAA-MM-DD" do dia em que a cobrança foi lançada
                                                // (alimenta "Cobranças dos últimos 30 dias" na aba Financeiro)
@@ -1998,7 +2090,7 @@ function acharPixNoTexto(texto){
 }
 
 async function lerQrPixDoPdf(file){
-  if(!window.jsQR || !window.pdfjsLib) return "";
+  if(!window.pdfjsLib || !(await garantirJsQR())) return "";
   const buffer = await file.arrayBuffer();
   const pdf = await window.pdfjsLib.getDocument({ data: buffer }).promise;
   const paginas = Math.min(pdf.numPages, 2);
@@ -2031,6 +2123,13 @@ async function lerDadosDoBoletoPdf(file){
   const avisos = [];
   let texto = "";
   try { texto = await extrairTextoDoPdf(file); } catch(e){ texto = ""; }
+
+  const varios = acharTodasLinhasDigitaveis(texto);
+  if(varios.length > 1){
+    return { codigoBarras: "", pix: "", valor: 0, vencimento: "", avisos: [
+      `Esse PDF tem ${varios.length} boletos (parece um carnê). Para não misturar os códigos, nada foi preenchido. Use a aba "Carnê" em Financeiro.`,
+    ] };
+  }
 
   let linha = acharLinhaDigitavel(texto);
   let pix = acharPixNoTexto(texto);
@@ -2083,6 +2182,517 @@ function aplicarDadosDoBoleto(prefixo, lido){
   }
 }
 
+/* ------------------------------------------------------------------
+   Carnê de boletos: um PDF com vários boletos (um por parcela).
+   O carnê não cabe dentro do documento do aluno (limite de 1 MiB do
+   Firestore), então o PDF é guardado UMA vez, cortado em pedaços, em
+   `boletosArquivos/{arquivoId}_{n}` (mesmo esquema dos contratos), e
+   cada cobrança só guarda a referência (boletoArquivoId/Partes) mais o
+   que foi lido do boleto dela: linha digitável, valor, vencimento e o
+   Pix copia e cola (lido do QR Code impresso no boleto).
+     boletosArquivos/{arquivoId}_{n}
+       arquivoId, alunoId, escolaId, ordem, nome, parte (texto base64)
+   ------------------------------------------------------------------ */
+const BOLETO_ARQ_TAMANHO_MAX = 4 * 1024 * 1024;   // 4 MB por PDF de carnê
+const BOLETO_ARQ_PARTE_TAMANHO = 700000;          // caracteres base64 por documento
+const CARNE_PAGINAS_MAX = 30;                     // páginas lidas procurando QR Code
+
+/* Todas as linhas digitáveis de 47 dígitos (boleto bancário) que passam na
+   conferência dos dígitos verificadores, na ordem em que aparecem. */
+function acharTodasLinhasDigitaveis(texto){
+  const t = String(texto || "");
+  const re47 = /(\d{5})[.\s]?(\d{5})\s+(\d{5})[.\s]?(\d{6})\s+(\d{5})[.\s]?(\d{6})\s+(\d)\s+(\d{14})/g;
+  const lista = [];
+  let m;
+  while((m = re47.exec(t))){
+    const d = m[0].replace(/\D/g, "");
+    if(linhaDigitavel47Valida(d) && !lista.includes(d)) lista.push(d);
+  }
+  return lista;
+}
+
+/* Procura TODOS os QR Codes de Pix do PDF. Ler a página inteira de uma vez
+   falha quando há vários QR (e o código de barras) na mesma folha; por isso
+   a página é desenhada e lida em blocos de 600px com sobreposição. Só vale
+   QR cujo conteúdo seja um Pix com CRC conferindo. Devolve os Pix na ordem
+   do documento (página, de cima pra baixo). */
+/* ------------------------------------------------------------------
+   Carregamento das bibliotecas de QR Code. O endereço do cdnjs pode não
+   responder (bloqueio, rede da escola, caminho que mudou), e sem a jsQR o
+   carnê ficava sem Pix. Por isso o app tenta, em ordem: o arquivo que fica
+   na mesma pasta do index.html (jsQR.min.js / qrcode.min.js) e depois
+   outros endereços públicos. A primeira que funcionar vale.
+   ------------------------------------------------------------------ */
+const JSQR_URLS = [
+  "jsQR.min.js",
+  "https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js",
+  "https://unpkg.com/jsqr@1.4.0/dist/jsQR.js",
+  "https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js",
+];
+const QRCODE_URLS = [
+  "qrcode.min.js",
+  "https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js",
+  "https://unpkg.com/qrcode-generator@1.4.4/qrcode.js",
+  "https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js",
+];
+
+function carregarScriptExterno(urls, jaCarregou){
+  return new Promise(resolve => {
+    let i = 0;
+    const tentar = () => {
+      if(jaCarregou()) return resolve(true);
+      if(i >= urls.length) return resolve(false);
+      const s = document.createElement("script");
+      s.src = urls[i++];
+      s.onload = () => (jaCarregou() ? resolve(true) : tentar());
+      s.onerror = () => { s.remove(); tentar(); };
+      document.head.appendChild(s);
+    };
+    tentar();
+  });
+}
+
+let _jsqrPromessa = null;
+function garantirJsQR(){
+  if(typeof window.jsQR === "function") return Promise.resolve(true);
+  if(!_jsqrPromessa){
+    _jsqrPromessa = carregarScriptExterno(JSQR_URLS, () => typeof window.jsQR === "function")
+      .then(ok => { if(!ok) _jsqrPromessa = null; return ok; });   // se falhou, deixa tentar de novo depois
+  }
+  return _jsqrPromessa;
+}
+
+let _qrcodeTentado = false;
+function pedirQrcodeBiblioteca(){
+  if(_qrcodeTentado) return;
+  _qrcodeTentado = true;
+  carregarScriptExterno(QRCODE_URLS, () => typeof window.qrcode === "function").then(ok => {
+    if(ok){ _qrSvgCache.clear(); render(); }
+    else console.warn("Não consegui carregar a biblioteca que desenha o QR Code do Pix.");
+  });
+}
+
+/* Converte a imagem que o pdf.js entrega (data RGB/RGBA/cinza/1bpp, ou bitmap)
+   em RGBA sobre fundo branco, pronta pro jsQR. */
+function imagemPdfParaRgba(img){
+  if(!img || !img.width || !img.height) return null;
+  const w = img.width, h = img.height, n = w * h;
+  if(img.bitmap){
+    const c = document.createElement("canvas");
+    c.width = w; c.height = h;
+    const x = c.getContext("2d", { willReadFrequently: true });
+    x.fillStyle = "#fff";
+    x.fillRect(0, 0, w, h);
+    x.drawImage(img.bitmap, 0, 0, w, h);
+    return { data: x.getImageData(0, 0, w, h).data, width: w, height: h };
+  }
+  const d = img.data;
+  if(!d) return null;
+  const out = new Uint8ClampedArray(n * 4);
+  if(d.length === n * 4){
+    for(let i = 0; i < n; i++){
+      const a = d[i * 4 + 3] / 255;
+      out[i * 4] = d[i * 4] * a + 255 * (1 - a);
+      out[i * 4 + 1] = d[i * 4 + 1] * a + 255 * (1 - a);
+      out[i * 4 + 2] = d[i * 4 + 2] * a + 255 * (1 - a);
+      out[i * 4 + 3] = 255;
+    }
+  } else if(d.length === n * 3){
+    for(let i = 0; i < n; i++){
+      out[i * 4] = d[i * 3]; out[i * 4 + 1] = d[i * 3 + 1]; out[i * 4 + 2] = d[i * 3 + 2]; out[i * 4 + 3] = 255;
+    }
+  } else if(d.length === n){
+    for(let i = 0; i < n; i++){ out[i * 4] = out[i * 4 + 1] = out[i * 4 + 2] = d[i]; out[i * 4 + 3] = 255; }
+  } else if(d.length === ((w + 7) >> 3) * h){
+    const linha = (w + 7) >> 3;
+    for(let y = 0; y < h; y++){
+      for(let x = 0; x < w; x++){
+        const v = (d[y * linha + (x >> 3)] >> (7 - (x & 7))) & 1 ? 255 : 0;
+        const k = (y * w + x) * 4;
+        out[k] = out[k + 1] = out[k + 2] = v; out[k + 3] = 255;
+      }
+    }
+  } else {
+    return null;
+  }
+  return { data: out, width: w, height: h };
+}
+
+/* Lê o QR de uma imagem já em RGBA; se falhar, tenta de novo com borda branca
+   em volta (alguns QR vêm cortados rente, sem a margem que o leitor precisa). */
+function lerQrDeImagemRgba(rgba){
+  let r = window.jsQR(rgba.data, rgba.width, rgba.height, { inversionAttempts: "attemptBoth" });
+  if(r && r.data) return r.data;
+  const borda = Math.round(Math.max(rgba.width, rgba.height) * 0.15);
+  const W = rgba.width + borda * 2, H = rgba.height + borda * 2;
+  const origem = document.createElement("canvas");
+  origem.width = rgba.width; origem.height = rgba.height;
+  origem.getContext("2d").putImageData(new ImageData(rgba.data, rgba.width, rgba.height), 0, 0);
+  const c = document.createElement("canvas");
+  c.width = W; c.height = H;
+  const x = c.getContext("2d", { willReadFrequently: true });
+  x.fillStyle = "#fff";
+  x.fillRect(0, 0, W, H);
+  x.drawImage(origem, borda, borda);
+  const g = x.getImageData(0, 0, W, H);
+  r = window.jsQR(g.data, W, H, { inversionAttempts: "attemptBoth" });
+  return r && r.data ? r.data : "";
+}
+
+/* 1º método: lê as IMAGENS que estão dentro da página (o QR do boleto é uma
+   imagem), sem desenhar a página. Não depende de resolução nem de como o
+   navegador desenha. Acompanha a matriz de posição pra saber a ordem (de
+   cima pra baixo) de cada imagem. Devolve [{ pix, y, x }] (pontos, de cima). */
+async function qrsDasImagensDaPagina(page, diag){
+  const OPS = window.pdfjsLib.OPS;
+  if(!OPS || !page.getOperatorList) return [];
+  const ol = await page.getOperatorList();
+  const altura = page.view ? (page.view[3] - page.view[1]) : 0;
+  const mul = (m, n) => [
+    m[0] * n[0] + m[1] * n[2], m[0] * n[1] + m[1] * n[3],
+    m[2] * n[0] + m[3] * n[2], m[2] * n[1] + m[3] * n[3],
+    m[4] * n[0] + m[5] * n[2] + n[4], m[4] * n[1] + m[5] * n[3] + n[5],
+  ];
+  let ctm = [1, 0, 0, 1, 0, 0];
+  const pilha = [];
+  const achados = [];
+  let tentadas = 0;
+  for(let i = 0; i < ol.fnArray.length && tentadas < 80; i++){
+    const fn = ol.fnArray[i], args = ol.argsArray[i];
+    if(fn === OPS.save){ pilha.push(ctm.slice()); continue; }
+    if(fn === OPS.restore){ ctm = pilha.pop() || [1, 0, 0, 1, 0, 0]; continue; }
+    if(fn === OPS.transform){ ctm = mul(args, ctm); continue; }
+    if(fn !== OPS.paintImageXObject && fn !== OPS.paintInlineImageXObject) continue;
+
+    let img = null;
+    if(fn === OPS.paintInlineImageXObject){
+      img = args[0];
+    } else {
+      const id = args[0];
+      const pool = typeof id === "string" && id.startsWith("g_") ? page.commonObjs : page.objs;
+      img = await Promise.race([
+        new Promise(res => { try { pool.get(id, res); } catch(e){ res(null); } }),
+        new Promise(res => setTimeout(() => res(null), 3000)),
+      ]);
+    }
+    if(!img || !img.width || img.width < 60 || img.height < 60) continue;
+    if(Math.abs(img.width - img.height) > 0.2 * Math.max(img.width, img.height)) continue;   // QR é quadrado
+    tentadas++;
+    if(diag) diag.imagens++;
+    const rgba = imagemPdfParaRgba(img);
+    if(!rgba) continue;
+    const pix = acharPixNoTexto(lerQrDeImagemRgba(rgba));
+    if(!pix) continue;
+    const topo = Math.max(ctm[5], ctm[3] + ctm[5]);
+    achados.push({ pix, y: altura - topo, x: Math.min(ctm[4], ctm[0] + ctm[4]) });
+  }
+  return achados;
+}
+
+async function lerQrsPixDoPdf(file, aoProgresso, esperados = 0){
+  const resultado = { pixes: [], motivo: "", diag: { imagens: 0, nasImagens: 0, naPagina: 0 } };
+  if(!(await garantirJsQR())){ resultado.motivo = "jsqr-ausente"; return resultado; }
+  if(!window.pdfjsLib){ resultado.motivo = "pdfjs-ausente"; return resultado; }
+  const buffer = await file.arrayBuffer();
+  const pdf = await window.pdfjsLib.getDocument({ data: buffer }).promise;
+  const paginas = Math.min(pdf.numPages, CARNE_PAGINAS_MAX);
+  const achados = new Map();   // pix -> { pagina, y, x } (y e x em pontos do PDF, de cima pra baixo)
+
+  // Método 1: imagens embutidas na página.
+  for(let p = 1; p <= paginas; p++){
+    if(aoProgresso) aoProgresso(p, paginas, 0);
+    await new Promise(r => setTimeout(r, 0));
+    try {
+      const page = await pdf.getPage(p);
+      const itens = await qrsDasImagensDaPagina(page, resultado.diag);
+      itens.forEach(q => { if(!achados.has(q.pix)) achados.set(q.pix, { pagina: p, y: q.y, x: q.x }); });
+    } catch(e){
+      console.warn(`Carnê: não consegui ler as imagens da página ${p}:`, e);
+    }
+  }
+  resultado.diag.nasImagens = achados.size;
+
+  // Método 2 (se faltar QR): desenha a página e procura o QR em blocos, em
+  // resoluções diferentes. Mais lento, por isso só entra quando precisa.
+  const passadas = [
+    { escala: 3, inversao: "dontInvert" },
+    { escala: 4, inversao: "attemptBoth" },
+    { escala: 2, inversao: "attemptBoth" },
+  ];
+  for(let k = 0; k < passadas.length; k++){
+    if(!esperados || achados.size >= esperados) break;
+    const { escala, inversao } = passadas[k];
+    const TAM = 200 * escala, PASSO = 100 * escala;   // janela de 200pt, andando de 100 em 100pt
+    for(let p = 1; p <= paginas; p++){
+      if(aoProgresso) aoProgresso(p, paginas, k + 1);
+      await new Promise(r => setTimeout(r, 0));
+      const page = await pdf.getPage(p);
+      const viewport = page.getViewport({ scale: escala });
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(viewport.width);
+      canvas.height = Math.round(viewport.height);
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      await page.render({ canvasContext: ctx, viewport }).promise;
+      for(let y = 0; y < canvas.height; y += PASSO){
+        for(let x = 0; x < canvas.width; x += PASSO){
+          const w = Math.min(TAM, canvas.width - x), h = Math.min(TAM, canvas.height - y);
+          if(w < TAM / 4 || h < TAM / 4) continue;
+          const img = ctx.getImageData(x, y, w, h);
+          const r = window.jsQR(img.data, w, h, { inversionAttempts: inversao });
+          if(!r || !r.data) continue;
+          const pix = acharPixNoTexto(r.data);
+          if(!pix || achados.has(pix)) continue;
+          achados.set(pix, {
+            pagina: p,
+            y: (y + r.location.topLeftCorner.y) / escala,
+            x: (x + r.location.topLeftCorner.x) / escala,
+          });
+        }
+      }
+      canvas.width = canvas.height = 0;
+    }
+  }
+  resultado.diag.naPagina = achados.size - resultado.diag.nasImagens;
+
+  resultado.pixes = [...achados.entries()]
+    .sort((a, b) => a[1].pagina - b[1].pagina || a[1].y - b[1].y || a[1].x - b[1].x)
+    .map(([pix]) => pix);
+  if(!resultado.pixes.length) resultado.motivo = "nenhum";
+  return resultado;
+}
+
+/* Lê o carnê inteiro. Devolve { boletos: [{ codigoBarras, valor, vencimento,
+   pix }], avisos[] }, em ordem de vencimento. O Pix só é ligado a cada
+   boleto quando a quantidade de QR Codes bate com a de boletos (a ordem no
+   PDF é a mesma); se não bater, fica sem Pix em vez de arriscar trocar. */
+async function lerCarnePdf(file, aoProgresso){
+  const avisos = [];
+  let texto = "";
+  try { texto = await extrairTextoDoPdf(file); } catch(e){ texto = ""; }
+  const linhas = acharTodasLinhasDigitaveis(texto);
+  if(!linhas.length){
+    return { boletos: [], avisos: ["Não achei nenhum boleto (linha digitável) nesse PDF. Carnê escaneado (foto) não dá para ler automaticamente."] };
+  }
+
+  let pixes = [];
+  let motivo = "";
+  let diag = null;
+  try {
+    const lido = await lerQrsPixDoPdf(file, aoProgresso, linhas.length);
+    pixes = lido.pixes;
+    motivo = lido.motivo;
+    diag = lido.diag;
+  } catch(e){
+    console.warn("Falha ao ler QR do carnê:", e);
+    motivo = "erro";
+  }
+  const detalhe = diag ? ` (diagnóstico: ${diag.imagens} imagem(ns) quadrada(s) no PDF, QR lido em ${diag.nasImagens} delas e em mais ${diag.naPagina} pelas páginas)` : "";
+  console.info(`Carnê: ${linhas.length} boleto(s), ${pixes.length} QR Code(s) de Pix${motivo ? ` [motivo: ${motivo}]` : ""}${detalhe}.`);
+  const pareia = pixes.length === linhas.length;
+  if(!pixes.length){
+    const porque = motivo === "jsqr-ausente"
+      ? "A biblioteca que lê QR Code (jsQR) não carregou, nem pelo arquivo local nem pela internet. Coloque o arquivo jsQR.min.js na mesma pasta do index.html, atualize a página (Ctrl+F5) e tente de novo."
+      : (motivo === "erro" ? "Deu erro ao desenhar as páginas para procurar o QR Code." : "Não achei QR Code de Pix nas páginas do PDF.");
+    avisos.push(`${porque} Você pode colar o Pix copia e cola de cada parcela abaixo, ou lançar sem Pix.${detalhe}`);
+  } else if(!pareia){
+    avisos.push(`Achei ${linhas.length} boletos mas ${pixes.length} QR Codes de Pix. Por segurança, o Pix não foi ligado às parcelas: cole o copia e cola de cada uma abaixo, ou lance sem Pix.${detalhe}`);
+  }
+
+  const boletos = [];
+  linhas.forEach((d, i) => {
+    const valor = Number(d.slice(37, 47)) / 100;
+    const vencimento = vencimentoDoFator(d.slice(33, 37));
+    if(!(valor > 0) || !vencimento){
+      avisos.push(`O boleto ${i + 1} do PDF não traz valor ou vencimento na linha digitável e foi ignorado.`);
+      return;
+    }
+    boletos.push({ codigoBarras: d, valor, vencimento, pix: pareia ? pixes[i] : "" });
+  });
+  boletos.sort((a, b) => a.vencimento.localeCompare(b.vencimento));
+  return { boletos, avisos };
+}
+
+/* QR Code (SVG) a partir do Pix copia e cola, desenhado aqui mesmo com a
+   biblioteca qrcode-generator. Se ela não tiver carregado, devolve "" e a
+   tela mostra só o botão de copiar. */
+const _qrSvgCache = new Map();
+function qrSvgDoPix(texto){
+  if(!texto) return "";
+  if(typeof window.qrcode !== "function"){ pedirQrcodeBiblioteca(); return ""; }
+  if(_qrSvgCache.has(texto)) return _qrSvgCache.get(texto);
+  let svg = "";
+  try {
+    const qr = window.qrcode(0, "M");
+    qr.addData(texto);
+    qr.make();
+    const n = qr.getModuleCount();
+    const borda = 4;
+    let d = "";
+    for(let r = 0; r < n; r++){
+      for(let c = 0; c < n; c++){
+        if(qr.isDark(r, c)) d += `M${c + borda} ${r + borda}h1v1h-1z`;
+      }
+    }
+    const tam = n + borda * 2;
+    svg = `<svg viewBox="0 0 ${tam} ${tam}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="QR Code do Pix" shape-rendering="crispEdges" style="display:block;width:100%;height:auto;"><rect width="${tam}" height="${tam}" fill="#fff"/><path d="${d}" fill="#000"/></svg>`;
+  } catch(e){ svg = ""; }
+  _qrSvgCache.set(texto, svg);
+  return svg;
+}
+
+function pixQrHtml(m){
+  const svg = qrSvgDoPix(m.pixCopiaCola);
+  if(!svg) return "";
+  return `
+    <details style="margin-top:8px;">
+      <summary style="cursor:pointer;font-size:13px;font-weight:600;color:var(--ink);">Pagar com Pix (QR Code)</summary>
+      <div style="margin-top:8px;display:flex;flex-direction:column;gap:8px;align-items:flex-start;">
+        <div style="background:#fff;padding:6px;border-radius:10px;border:1px solid var(--line, #e5e0d3);width:min(240px,100%);box-sizing:border-box;">${svg}</div>
+        <p style="font-size:12.5px;color:var(--slate);margin:0;">No app do seu banco, escolha Pix e leia o QR Code. Ou toque em "Copiar Pix" e use a opção "Pix copia e cola".</p>
+      </div>
+    </details>`;
+}
+
+/* Aviso na aba Financeiro da família: o comprovante vai pra secretaria. */
+function avisoComprovanteHtml(student){
+  const msg = `Olá! Estou enviando o comprovante de pagamento do(a) ${student?.nome || "aluno(a)"}.`;
+  return `
+    <div class="teacher-panel" style="margin:12px 0;">
+      <h3>Já pagou?</h3>
+      <p class="section-eyebrow">Envie o comprovante de pagamento para a secretaria da unidade, pelo WhatsApp, para darmos baixa no sistema. Enquanto a secretaria não der a baixa, a cobrança continua aparecendo como pendente.</p>
+      ${SECRETARIA_WHATSAPP.map(escola => `
+        <a class="secretaria-option" style="text-decoration:none;margin-top:8px;" href="${whatsappLinkComTexto(escola.numero, msg)}" target="_blank" rel="noopener">
+          <span class="secretaria-option-icon secretaria-option-icon-foto">${avatarHtml(escola.foto, "?")}</span>
+          <span>
+            <span class="secretaria-option-name">${escapeHtml(escola.nome)}</span>
+            <span class="secretaria-option-desc">Enviar comprovante pelo WhatsApp</span>
+          </span>
+          ${ICONS.chevronRight}
+        </a>`).join("")}
+    </div>`;
+}
+
+/* Exclui UMA cobrança do aluno. Se ela era de um carnê e nenhuma outra
+   parcela usa o mesmo PDF, o PDF guardado também é apagado. */
+async function excluirMensalidadeDoAluno(aluno, alvo){
+  const mensalidades = (aluno.financeiro.mensalidades || []).filter(m => m.id !== alvo.id);
+  await updateDoc(doc(db, "alunos", aluno.id), { "financeiro.mensalidades": mensalidades });
+  aluno.financeiro.mensalidades = mensalidades;
+  if(alvo.boletoArquivoId && !mensalidades.some(m => m.boletoArquivoId === alvo.boletoArquivoId)){
+    try { await apagarArquivoBoleto(alvo.boletoArquivoId, alvo.boletoArquivoPartes); }
+    catch(e){ console.warn("Não consegui apagar o PDF do carnê:", e?.code || e); }
+  }
+}
+
+/* ---------- gravar / ler / apagar o PDF do carnê ---------- */
+async function salvarArquivoBoleto({ alunoId, escolaId, arquivo }){
+  const dados = await lerArquivoComoDataUrl(arquivo);
+  const partes = [];
+  for(let i = 0; i < dados.length; i += BOLETO_ARQ_PARTE_TAMANHO) partes.push(dados.slice(i, i + BOLETO_ARQ_PARTE_TAMANHO));
+  const id = doc(collection(db, "boletosArquivos")).id;
+  // tudo ou nada: ou todos os pedaços entram, ou nenhum
+  const batch = writeBatch(db);
+  partes.forEach((parte, i) => {
+    batch.set(doc(db, "boletosArquivos", `${id}_${i}`), {
+      arquivoId: id, alunoId, escolaId, ordem: i, nome: arquivo.name || "carne.pdf", parte,
+    });
+  });
+  await batch.commit();
+  return { id, partes: partes.length };
+}
+
+async function apagarArquivoBoleto(arquivoId, partes){
+  const batch = writeBatch(db);
+  for(let i = 0; i < (Number(partes) || 1); i++) batch.delete(doc(db, "boletosArquivos", `${arquivoId}_${i}`));
+  await batch.commit();
+}
+
+/* Usado ao excluir o aluno: leva junto os PDFs de carnê dele. */
+async function apagarBoletosDoAluno(alunoId, escolaId){
+  const snaps = await getDocs(query(
+    collection(db, "boletosArquivos"),
+    where("escolaId", "==", escolaId),
+    where("alunoId", "==", alunoId),
+  ));
+  for(let i = 0; i < snaps.docs.length; i += 400){
+    const batch = writeBatch(db);
+    snaps.docs.slice(i, i + 400).forEach(d => batch.delete(d.ref));
+    await batch.commit();
+  }
+}
+
+async function baixarArquivoBoleto(arquivoId, partes, nome){
+  const snaps = await Promise.all(
+    Array.from({ length: Number(partes) || 1 }, (_, i) => getDoc(doc(db, "boletosArquivos", `${arquivoId}_${i}`)))
+  );
+  if(snaps.some(s => !s.exists())) throw new Error("boleto-incompleto");
+  const blob = dataUrlParaBlob(snaps.map(s => s.data().parte).join(""));
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = nome || "carne.pdf";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+
+/* Bloco "Importar carnê" da aba Financeiro > Lançar cobrança. Usa o aluno
+   escolhido no quadro "Nova cobrança" logo acima. */
+function financeiroCarneView(){
+  return `
+    <p class="section-eyebrow">Um PDF com vários boletos (carnê) vira uma cobrança por boleto, de uma vez.</p>
+    <div class="card" style="margin-top:10px;">
+      <p class="teacher-label" style="margin-bottom:6px;">Aluno</p>
+      ${financeiroEscolhaAlunoHtml()}
+    </div>
+    ${financeiroCarneHtml()}`;
+}
+
+function financeiroCarneHtml(){
+  const aluno = (state.instAlunos || []).find(a => a.id === state.finCobrancaAlunoId);
+  const lista = state.finCarneBoletos;
+  const ocupado = state.finCarneLendo || state.finCarneSalvando;
+  let corpo = "";
+  if(state.finCarneLendo){
+    corpo = `<p style="font-size:13px;color:var(--slate);margin:10px 0 0;">${escapeHtml(state.finCarneProgresso || "Lendo o carnê…")}</p>`;
+  } else if(lista && lista.length){
+    const total = lista.reduce((s, b) => s + b.valor, 0);
+    const comPix = lista.filter(b => b.pix).length;
+    const linhas = lista.map((b, i) => `
+      <div class="row" style="justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;font-size:13.5px;">
+        <span style="color:var(--ink);font-weight:600;">${i + 1}/${lista.length} · ${escapeHtml(competenciaLabel(b.vencimento.slice(0, 7)))}</span>
+        <span style="display:flex;align-items:center;gap:8px;color:var(--slate);">${escapeHtml(formatarMoeda(b.valor))} · vence ${escapeHtml(formatarDataBr(b.vencimento))} · ${b.pix ? "com Pix" : "sem Pix"}
+          <button type="button" class="attendance-btn" data-action="remover-fin-carne-item" data-i="${i}" ${ocupado ? "disabled" : ""} aria-label="Tirar este boleto do lançamento" title="Tirar este boleto do lançamento">${ICONS.trash}</button>
+        </span>
+        ${b.pix ? "" : `<input type="text" class="teacher-text-input" style="flex:1 1 100%;margin:0;" placeholder="Colar o Pix copia e cola desta parcela (opcional)" data-fin-carne-pix="${i}" ${ocupado ? "disabled" : ""} />`}
+      </div>`).join("");
+    corpo = `
+      <p class="section-eyebrow" style="margin:10px 0 6px;">Achei ${lista.length} boleto(s), total ${escapeHtml(formatarMoeda(total))}, Pix em ${comPix} de ${lista.length}. Confira e lance. Para não lançar algum boleto, toque na lixeira dele.</p>
+      <div class="card flush" style="max-height:300px;overflow-y:auto;">${linhas}</div>
+      ${(state.finCarneAvisos || []).map(a => `<p style="font-size:12.5px;color:var(--slate);margin:8px 0 0;">${escapeHtml(a)}</p>`).join("")}
+      ${aluno ? "" : `<p style="font-size:12.5px;color:var(--slate);margin:8px 0 0;">Escolha o aluno, acima, antes de lançar.</p>`}
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
+        <button type="button" class="teacher-primary-btn" style="margin:0;" data-action="lancar-fin-carne" ${(!aluno || ocupado) ? "disabled" : ""}>${state.finCarneSalvando ? "Salvando…" : `Lançar ${lista.length} cobranças${aluno ? ` para ${escapeHtml(primeiroNome(aluno.nome))}` : ""}`}</button>
+        <button type="button" class="btn-secondary" style="margin:0;" data-action="cancelar-fin-carne" ${ocupado ? "disabled" : ""}>Cancelar</button>
+      </div>`;
+  }
+  return `
+    <div class="card" style="margin-top:12px;">
+      <p class="teacher-label" style="margin-bottom:6px;">PDF do carnê</p>
+      <p style="font-size:12.5px;color:var(--slate);margin:0 0 8px;">Cria uma cobrança por boleto, com o código de barras, o valor, o vencimento e o Pix copia e cola de cada parcela. O PDF do carnê fica guardado para a família baixar.</p>
+      <label class="pendente-contrato-anexar">
+        ${ICONS.upload} <span>${state.finCarneArquivo ? escapeHtml(state.finCarneArquivo.name) : "Escolher PDF do carnê"}</span>
+        <input type="file" accept="application/pdf" data-fin-carne-pdf="1" style="display:none;" ${ocupado ? "disabled" : ""} />
+      </label>
+      ${corpo}
+      ${state.finCarneErro ? `<p class="teacher-error" style="color:var(--red);font-size:12.5px;margin-top:8px;">${escapeHtml(state.finCarneErro)}</p>` : ""}
+      ${state.finCarneMensagem ? `<p class="teacher-success" style="margin-top:8px;">${escapeHtml(state.finCarneMensagem)}</p>` : ""}
+    </div>`;
+}
+
 function resetarFormCobrancaFin(){
   state.finCobrancaAlunoId = "";
   state.finCobrancaBusca = "";
@@ -2098,6 +2708,11 @@ function resetarFormCobrancaFin(){
   state.finCobrancaBoletoArquivo = null;
   state.finCobrancaErro = "";
   state.finCobrancaMensagem = "";
+  state.finCarneArquivo = null;
+  state.finCarneBoletos = null;
+  state.finCarneAvisos = [];
+  state.finCarneErro = "";
+  state.finCarneMensagem = "";
 }
 
 /* Quando a família passa a ver uma cobrança: a partir do dia 01 do mês de
@@ -2116,10 +2731,14 @@ function cobrancasDisponiveisDoAluno(aluno){
 /* Botões de "Baixar boleto" / "Copiar Pix" / "Copiar código de barras"
    embaixo de uma cobrança, só com o que estiver preenchido. Usado tanto
    na ficha do aluno (secretaria) quanto na aba Financeiro da família. */
-function anexosMensalidadeHtml(m){
+function anexosMensalidadeHtml(m, opcoes = {}){
   const partes = [];
   if(m.boletoPdfDados){
     partes.push(`<a href="${escapeHtml(m.boletoPdfDados)}" download="${escapeHtml(m.boletoPdfNome || "boleto.pdf")}" class="btn-secondary" style="text-decoration:none;">${ICONS.fileText} Boleto (PDF)</a>`);
+  }
+  if(m.boletoArquivoId){
+    const baixando = state.boletoBaixando === m.boletoArquivoId;
+    partes.push(`<button type="button" class="btn-secondary" data-action="baixar-boleto-arquivo" data-arq="${escapeHtml(m.boletoArquivoId)}" data-partes="${escapeHtml(String(m.boletoArquivoPartes || 1))}" data-nome="${escapeHtml(m.boletoPdfNome || "carne.pdf")}" ${baixando ? "disabled" : ""}>${ICONS.fileText} ${baixando ? "Baixando…" : "Baixar carnê (PDF)"}</button>`);
   }
   if(m.pixCopiaCola){
     partes.push(`<button type="button" class="btn-secondary" data-action="copiar-texto" data-copiar="${escapeHtml(m.pixCopiaCola)}">Copiar Pix</button>`);
@@ -2134,7 +2753,8 @@ function anexosMensalidadeHtml(m){
     partes.push(`<a href="${escapeHtml(m.linkPagamento)}" target="_blank" rel="noopener" class="btn-secondary" style="text-decoration:none;">${ICONS.fileText} Link de pagamento</a>`);
   }
   if(!partes.length) return "";
-  return `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">${partes.join("")}</div>`;
+  const qr = opcoes.qr && m.pixCopiaCola && m.status !== "pago" ? pixQrHtml(m) : "";
+  return `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">${partes.join("")}</div>${qr}`;
 }
 
 function formatarMoeda(n){
@@ -2617,7 +3237,7 @@ function renderAluno(){
     navItems, active: state.alunoTab,
     headerSub: `ALUNO · ${escapeHtml(student.turma)}`, headerTitle: greeting(student.nome),
     headerFoto: headerFotoHtml(fotoDoAluno(student), student.nome),
-    bodyHtml: classStatusCard(student) + body,
+    bodyHtml: solicitacoes.avisoFamilia("aluno", solicitacaoEscolasDaFamilia(), state.alunoTab) + classStatusCard(student) + body,
     navAction: "set-aluno-tab",
   }) + avisosPopupHtml();
 }
@@ -2668,7 +3288,7 @@ function renderFamilia(){
     navItems, active: state.familiaTab,
     headerSub: "RESPONSÁVEL", headerTitle: greeting(state.perfil?.nome || "Responsável"),
     headerFoto: headerFotoHtml(FOTO_PADRAO.responsavel, state.perfil?.nome || "Responsável"),
-    bodyHtml: switcher + contratosAvisoFamilia() + classStatusCard(student, true) + body,
+    bodyHtml: switcher + contratosAvisoFamilia() + solicitacoes.avisoFamilia("responsavel", solicitacaoEscolasDaFamilia(), state.familiaTab) + classStatusCard(student, true) + body,
     navAction: "set-familia-tab",
   }) + avisosPopupHtml() + contratoVisualizadorModal() + contratoGuiaModal();
 }
@@ -2825,11 +3445,12 @@ function financeiroFamiliaView(student){
         <span style="color:var(--ink);font-weight:600;">${escapeHtml(competenciaLabel(m.competencia))}</span>
         <span style="color:var(--slate);">${escapeHtml(formatarMoeda(m.valor))} · vence ${escapeHtml(formatarDataBr(m.vencimento))} · ${escapeHtml(formaPagamentoLabel(m.formaPagamento))}</span>
       </div>
-      ${anexosMensalidadeHtml(m)}
+      ${anexosMensalidadeHtml(m, { qr: true })}
     </div>`).join("") || `<div style="padding:20px;font-size:14px;color:var(--slate);">Nenhum boleto disponível.</div>`;
   return `
     <h2 class="section-title">Financeiro</h2>
     <p class="section-eyebrow">Boletos e mensalidades da matrícula, mês a mês</p>
+    ${resumo.historico.some(cobrancaDisponivelParaFamilia) ? avisoComprovanteHtml(student) : ""}
     <div class="card flush">${hist}</div>`;
 }
 
@@ -2845,6 +3466,7 @@ function comunicadosView(student){
   return `
     <h2 class="section-title">Comunicados</h2>
     <p class="section-eyebrow">Avisos da turma e da escola</p>
+    ${solicitacoes.listaFamilia(solicitacaoPerfilAtual(), solicitacaoEscolasDaFamilia())}
     <div>${items}</div>`;
 }
 
@@ -4275,11 +4897,13 @@ function renderInstituicao(){
     { key:"financeiro", label:"Financeiro", icon:"wallet" },
     { key:"alunos", label:"Alunos", icon:"users" },
     { key:"aniversarios", label:"Aniversários", icon:"cake" },
+    { key:"solicitacoes", label:"Solicitações", icon:"megaphone" },
     { key:"professores", label:"Professores", icon:"users2" },
     { key:"responsaveis", label:"Responsáveis", icon:"users2" },
     { key:"contratos", label:"Contratos", icon:"fileText" },
     { key:"aval", label:"Avaliações", icon:"star" },
     { key:"certificados", label:"Certificados", icon:"award" },
+    { key:"senhas", label:"Senhas e login", icon:"key" },
     { key:"gestao", label:"Gestão", icon:"building" },
     { key:"perfil", label:"Meu perfil", icon:"user" },
     ...(state.perfil?.dev ? [{ key:"dev", label:"Painel Dev", icon:"shield" }] : []),
@@ -4293,11 +4917,13 @@ function renderInstituicao(){
   else if(state.instTab === "financeiro") body = financeiroInstituicaoView(school);
   else if(state.instTab === "alunos") body = alunosView(school);
   else if(state.instTab === "aniversarios") body = aniversariosView(school);
+  else if(state.instTab === "solicitacoes") body = solicitacoes.view();
   else if(state.instTab === "professores") body = professoresView(school);
   else if(state.instTab === "responsaveis") body = responsaveisView(school);
   else if(state.instTab === "contratos") body = contratosView(school);
   else if(state.instTab === "aval") body = avaliacoesInstituicaoView(school);
   else if(state.instTab === "certificados") body = certificadosGestaoView(state.instTurmas || []);
+  else if(state.instTab === "senhas") body = senhasLoginView(school);
   else if(state.instTab === "gestao") body = gestaoInstituicaoView(school);
   else if(state.instTab === "perfil") body = perfilInstituicaoView(school);
   else if(state.instTab === "dev") body = dev.view();
@@ -4545,19 +5171,7 @@ function gestaoCadastroView(school){
   };
   const ajuda = ajudaPorPapel[role] || ajudaPorPapel.aluno;
 
-  const ag = state.acessoGerado;
-  const painelAcessoGerado = ag ? `
-      <div class="card" style="padding:14px 16px;margin:0 0 14px;border-left:3px solid var(--green,#2E9E6B);">
-        <p style="margin:0 0 4px;font-weight:600;color:var(--ink);">Acesso de ${escapeHtml(ag.nome)} criado</p>
-        <p class="section-eyebrow" style="margin:0 0 10px;">Login: <strong style="color:var(--ink);">${escapeHtml(ag.email)}</strong> · Senha provisória: <strong style="color:var(--ink);">${escapeHtml(ag.senha)}</strong><br>A senha só aparece aqui agora; depois de fechar este aviso ela não fica guardada.</p>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button type="button" class="teacher-primary-btn" style="margin:0;" data-action="enviar-acesso-gerado" data-via="whatsapp">${telefoneValido(ag.contato) ? "Enviar por WhatsApp" : "Enviar por WhatsApp (escolher contato)"}</button>
-          ${/@/.test(ag.contato || "") ? `<button type="button" class="btn-secondary" data-action="enviar-acesso-gerado" data-via="email">Enviar por e-mail</button>` : ""}
-          <button type="button" class="btn-secondary" data-action="enviar-acesso-gerado" data-via="copiar">Copiar mensagem</button>
-          <button type="button" class="btn-secondary" data-action="fechar-acesso-gerado">Fechar</button>
-        </div>
-        ${!telefoneValido(ag.contato) ? `<p class="section-eyebrow" style="margin:8px 0 0;">Sem WhatsApp no cadastro: o botão abre o WhatsApp com a mensagem pronta e você escolhe o contato.</p>` : ""}
-      </div>` : "";
+  const painelAcessoGerado = painelAcessoGeradoHtml();
 
   const formulario = `
     <div class="management-card management-card-wide gestao-form">
@@ -4605,6 +5219,320 @@ function gestaoCadastroView(school){
    responsável não existia) e qualquer troca de senha virava chamado pro
    desenvolvedor.
    ------------------------------------------------------------------ */
+/* ==================================================================
+   Aba "Senhas e login"
+   ------------------------------------------------------------------
+   Toda senha que o sistema gera para aluno ou responsável fica guardada
+   em credenciais/{uid} (só a equipe administrativa da unidade consegue
+   ler — veja FIRESTORE-CREDENCIAIS.md). Como a família não troca a
+   senha, a que está guardada é sempre a que vale: "esqueci a senha" vira
+   localizar a pessoa e reenviar a mesma senha.
+   ================================================================== */
+async function guardarCredencial({ uid, tipo, nome, email, senha, escolaId, docId }){
+  if(!uid || !senha) return false;
+  const dados = {
+    uid, tipo: tipo || "", nome: nome || "", email: email || "", senha,
+    escolaId: escolaId || "", docId: docId || "", atualizadaEm: new Date().toISOString(),
+  };
+  try {
+    await setDoc(doc(db, "credenciais", uid), dados);
+    if(state.senhasLoginCreds && state.senhasLoginEscolaId === dados.escolaId) state.senhasLoginCreds[uid] = dados;
+    return true;
+  } catch(err){
+    console.warn("Não consegui guardar a senha em credenciais:", err?.code || err);
+    return false;
+  }
+}
+
+async function apagarCredencial(uid){
+  if(!uid) return;
+  try { await deleteDoc(doc(db, "credenciais", uid)); }
+  catch(err){ console.warn("Não consegui apagar a credencial:", err?.code || err); }
+  if(state.senhasLoginCreds) delete state.senhasLoginCreds[uid];
+}
+
+async function credencialDoUid(uid){
+  if(!uid) return null;
+  if(state.senhasLoginCreds && state.senhasLoginCreds[uid]) return state.senhasLoginCreds[uid];
+  try {
+    const snap = await getDoc(doc(db, "credenciais", uid));
+    return snap.exists() ? snap.data() : null;
+  } catch(_err){ return null; }
+}
+
+/* Recria o login de quem já tem acesso (sem Cloud Function): cria uma conta
+   NOVA (e-mail novo, senha nova), aponta o cadastro pra ela e apaga o perfil
+   e a senha guardada da conta antiga. A conta antiga continua existindo no
+   Authentication, mas sem perfil — dá pra apagá-la em lote pelo console. */
+async function recriarLoginDaPessoa(p, usados){
+  const dominio = p.tipo === "aluno" ? DOMINIO_ALUNO : DOMINIO_RESPONSAVEL;
+  // O e-mail antigo da própria pessoa não conta como "ocupado": se a conta
+  // antiga já foi apagada do Authentication ele está livre e volta limpo; se
+  // ainda existir, a criação cai sozinha na próxima variação.
+  const meu = String(p.email || "").toLowerCase();
+  const emails = variantesDeEmail(p.ref.nome, dominio).filter(e => e.toLowerCase() === meu || !usados.includes(e.toLowerCase()));
+  if(emails.length === 0) throw new Error("sem login livre para esse nome");
+  const senha = senhaProvisoria();
+  const antigoUid = p.uid;
+  const r = p.tipo === "aluno"
+    ? await criarLoginParaAluno(p.ref, emails, senha)
+    : await criarLoginParaResponsavelComAlternativas(p.ref, emails, senha);
+  let limpou = true;
+  try { await deleteDoc(doc(db, "usuarios", antigoUid)); }
+  catch(e){ limpou = false; console.warn("Não consegui apagar o perfil do login antigo:", e?.code || e); }
+  await apagarCredencial(antigoUid);
+  p.ref.uid = r.uid;
+  p.ref.email = r.email;
+  p.ref.acessoEnviadoEm = "";
+  try { await updateDoc(doc(db, p.tipo === "aluno" ? "alunos" : "responsaveis", p.ref.id), { acessoEnviadoEm: "" }); } catch(_e){ /* ignora */ }
+  usados.push(r.email.toLowerCase());
+  return { uid: r.uid, email: r.email, senha, limpou };
+}
+
+/* Login "fora do padrão": domínio errado pro tipo (aluno x responsável) ou
+   parte antes do @ que não vem do nome do cadastro (nome.sobrenome,
+   nome.i.sobrenome, nome.meio.sobrenome ou nome.sobrenome2..6). */
+function loginForaDoPadrao(tipo, nome, email){
+  const e = String(email || "").trim().toLowerCase();
+  if(!e) return false;
+  const dominio = tipo === "aluno" ? DOMINIO_ALUNO : DOMINIO_RESPONSAVEL;
+  const [local, dom] = e.split("@");
+  if(!local || dom !== dominio) return true;
+  return !variantesDeEmail(nome, dominio).map(v => v.split("@")[0]).includes(local);
+}
+
+function credenciaisCarregadas(){
+  return !!state.senhasLoginCreds && state.senhasLoginEscolaId === state.escolaSelecionadaId;
+}
+
+async function carregarCredenciais(escolaId){
+  if(!escolaId || state.senhasLoginCarregando) return;
+  state.senhasLoginCarregando = true;
+  state.senhasLoginErro = "";
+  render();
+  try {
+    const snap = await getDocs(query(collection(db, "credenciais"), where("escolaId", "==", escolaId)));
+    const mapa = {};
+    snap.forEach(d => { mapa[d.id] = d.data(); });
+    state.senhasLoginCreds = mapa;
+    state.senhasLoginEscolaId = escolaId;
+  } catch(err){
+    state.senhasLoginCreds = null;
+    state.senhasLoginErro = err?.code === "permission-denied"
+      ? "O Firebase não deixou ler as senhas guardadas. Publique as regras da coleção “credenciais” (passo a passo em FIRESTORE-CREDENCIAIS.md) e tente de novo."
+      : `Não consegui carregar as senhas agora${err?.code ? ` (${err.code})` : ""}.`;
+  } finally {
+    state.senhasLoginCarregando = false;
+    render();
+  }
+}
+
+/* Alunos (menos os só de Recreação, que não têm login) e responsáveis da
+   unidade, cada um com o login e a senha guardada, se houver. */
+function pessoasDaAbaSenhas(){
+  const creds = credenciaisCarregadas() ? state.senhasLoginCreds : {};
+  const montar = (tipo, ref) => {
+    const cred = ref.uid ? creds[ref.uid] : null;
+    const qtd = (ref.alunosIds || []).length;
+    return {
+      tipo, ref, uid: ref.uid || "", cred,
+      email: ref.email || cred?.email || "",
+      senha: cred?.senha || "",
+      detalhe: tipo === "aluno" ? (ref.turma || "Sem curso") : `${qtd} ${qtd === 1 ? "aluno vinculado" : "alunos vinculados"}`,
+    };
+  };
+  return [
+    ...(state.instAlunos || []).filter(a => a.uid || !ehTurmaDeRecreacao(a.turma)).map(a => montar("aluno", a)),
+    ...(state.gestaoResponsaveis || []).map(r => montar("responsavel", r)),
+  ].map(p => ({ ...p, foraPadrao: !!p.uid && loginForaDoPadrao(p.tipo, p.ref.nome, p.email) }));
+}
+
+/* "Esqueci a senha": a secretaria digita a informação de segurança que a
+   pessoa passou — o e-mail (de login ou o de contato do cadastro) ou o
+   telefone — e só aparece quem bate EXATAMENTE com ela. */
+function localizarPessoasParaSenha(consulta){
+  const q = String(consulta || "").trim().toLowerCase();
+  if(!q) return [];
+  const digitos = q.replace(/\D/g, "");
+  return pessoasDaAbaSenhas().filter(p => {
+    if(q.includes("@")){
+      return [p.email, p.ref.contato].filter(Boolean).map(s => String(s).trim().toLowerCase()).includes(q);
+    }
+    if(digitos.length >= 8){
+      const tel = String(p.ref.contato || "").replace(/\D/g, "");
+      return !!tel && (tel === digitos || tel.endsWith(digitos) || digitos.endsWith(tel));
+    }
+    return false;
+  });
+}
+
+function mensagemDeAcessoDaPessoa(p){
+  if(p.tipo === "responsavel"){
+    const nomes = (state.instAlunos || []).filter(a => (p.ref.alunosIds || []).includes(a.id)).map(a => a.nome).join(" e ");
+    return MENSAGEM_ACESSO.paraResponsavel(primeiroNome(p.ref.nome), nomes || "seu filho(a)", linkDoApp(), p.email, p.senha);
+  }
+  return MENSAGEM_ACESSO.paraAluno(primeiroNome(p.ref.nome), linkDoApp(), p.email, p.senha);
+}
+
+function senhasAcoesHtml(p, forcarVisivel){
+  if(!p.uid) return `<span class="status-pill status-pill-aviso">Sem login</span>`;
+  const u = escapeHtml(p.uid);
+  if(!p.senha){
+    const ocupado = state.senhasLoginPreparando === p.uid;
+    return `<span class="status-pill status-pill-aviso">Senha não registrada</span>
+      <button type="button" class="aniversario-btn" data-action="senhas-gerar" data-uid="${u}" ${state.senhasLoginPreparando ? "disabled" : ""}>${ocupado ? "Recriando…" : "Recriar login"}</button>`;
+  }
+  const visivel = forcarVisivel || !!(state.senhasLoginVisiveis || {})[p.uid];
+  const enviado = p.ref.acessoEnviadoEm
+    ? `<span class="status-pill" style="color:var(--green,#2E9E6B);background:rgba(46,158,107,.14);">Enviado ${escapeHtml(formatarDataBr(p.ref.acessoEnviadoEm))}</span>` : "";
+  return `${enviado}
+    <code style="font-family:ui-monospace,Menlo,monospace;font-size:14px;letter-spacing:.6px;color:var(--ink);min-width:62px;">${visivel ? escapeHtml(p.senha) : "••••••"}</code>
+    ${forcarVisivel ? "" : `<button type="button" class="aniversario-btn" data-action="senhas-toggle" data-uid="${u}">${visivel ? "Ocultar" : "Mostrar"}</button>`}
+    <button type="button" class="aniversario-btn" data-action="senhas-enviar" data-via="whatsapp" data-uid="${u}">WhatsApp</button>
+    ${/@/.test(p.ref.contato || "") ? `<button type="button" class="aniversario-btn" data-action="senhas-enviar" data-via="email" data-uid="${u}">E-mail</button>` : ""}
+    <button type="button" class="aniversario-btn" data-action="senhas-enviar" data-via="copiar" data-uid="${u}">Copiar mensagem</button>`;
+}
+
+function senhasEsqueciHtml(){
+  const consulta = state.senhasLoginConsulta || "";
+  let resultado = "";
+  if(consulta){
+    const achados = localizarPessoasParaSenha(consulta);
+    resultado = achados.length === 0
+      ? `<div class="aluno-modal-confirm" style="margin:12px 0 0;"><p>Não encontrei ninguém com “${escapeHtml(consulta)}”. Confira o e-mail (de login ou de contato) ou o telefone que a pessoa informou.</p></div>`
+      : achados.map(p => `
+        <div class="card" style="padding:12px 14px;margin:12px 0 0;border-left:3px solid var(--green,#2E9E6B);">
+          <p style="margin:0;font-weight:600;color:var(--ink);">${escapeHtml(p.ref.nome)} <span style="font-weight:400;color:var(--slate);">· ${p.tipo === "aluno" ? "Aluno" : "Responsável"} · ${escapeHtml(p.detalhe)}</span></p>
+          <p class="section-eyebrow" style="margin:2px 0 10px;">Login: <strong style="color:var(--ink);">${escapeHtml(p.email || "—")}</strong></p>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">${senhasAcoesHtml(p, true)}</div>
+        </div>`).join("");
+  }
+  return `
+    <div class="card" style="padding:14px 16px;margin:12px 0;">
+      <p style="margin:0 0 4px;font-weight:600;color:var(--ink);">${ICONS.shield} Esqueci a senha</p>
+      <p class="section-eyebrow" style="margin:0 0 10px;">Peça à pessoa o e-mail dela (o de login ou o que está no cadastro) ou o telefone de contato, digite abaixo e reenvie a senha que já está guardada.</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <input id="senhas-esqueci-input" class="teacher-text-input" style="flex:1;min-width:220px;margin:0;" placeholder="E-mail ou telefone informado pela pessoa" value="${escapeHtml(state.senhasLoginEsqueci || "")}" autocomplete="off" />
+        <button type="button" class="teacher-primary-btn" style="margin:0;" data-action="senhas-localizar">Localizar</button>
+        ${consulta ? `<button type="button" class="btn-secondary" data-action="senhas-limpar-busca">Limpar</button>` : ""}
+      </div>
+      ${resultado}
+    </div>`;
+}
+
+function senhasLoginView(school){
+  const carregando = state.instAlunosCarregando || state.gestaoEquipeCarregando || state.senhasLoginCarregando;
+  const pronto = credenciaisCarregadas();
+  const grupo = state.senhasLoginGrupo || "todos";
+  const busca = (state.senhasLoginBusca || "").trim().toLowerCase();
+  const todas = pessoasDaAbaSenhas();
+  const semLogin = todas.filter(p => !p.uid);
+  const semSenha = todas.filter(p => p.uid && !p.senha);
+  const foraPadrao = todas.filter(p => p.foraPadrao);
+  const alvoLista = state.senhasLoteAlvo === "padrao" ? foraPadrao : semSenha;
+
+  const contagem = {
+    todos: todas.length,
+    alunos: todas.filter(p => p.tipo === "aluno").length,
+    responsaveis: todas.filter(p => p.tipo === "responsavel").length,
+    semlogin: semLogin.length,
+    semsenha: pronto ? semSenha.length : 0,
+    foradopadrao: foraPadrao.length,
+  };
+  const filtros = [
+    { key: "todos", label: "Todos" }, { key: "alunos", label: "Alunos" },
+    { key: "responsaveis", label: "Responsáveis" }, { key: "semlogin", label: "Sem login" },
+    { key: "semsenha", label: "Senha não registrada" }, { key: "foradopadrao", label: "Login fora do padrão" },
+  ];
+  const filtroHtml = `<div class="acesso-filtros">${filtros.map(f => `
+    <button type="button" class="acesso-filtro ${grupo === f.key ? "active" : ""}" data-action="senhas-set-grupo" data-key="${f.key}">${f.label}${contagem[f.key] ? ` <span class="acesso-filtro-count">${contagem[f.key]}</span>` : ""}</button>`).join("")}</div>`;
+
+  const lista = todas
+    .filter(p => grupo === "todos" || (grupo === "alunos" && p.tipo === "aluno") || (grupo === "responsaveis" && p.tipo === "responsavel")
+      || (grupo === "semlogin" && !p.uid) || (grupo === "semsenha" && p.uid && !p.senha) || (grupo === "foradopadrao" && p.foraPadrao))
+    .filter(p => !busca || (p.ref.nome || "").toLowerCase().includes(busca) || (p.email || "").toLowerCase().includes(busca))
+    .sort((a, b) => (a.ref.nome || "").localeCompare(b.ref.nome || "", "pt-BR"));
+
+  let linhas;
+  if(carregando && !pronto) linhas = `<div style="padding:20px;font-size:14px;color:var(--slate);">Carregando pessoas e senhas da unidade…</div>`;
+  else if(!pronto) linhas = `<div style="padding:20px;font-size:14px;color:var(--slate);">As senhas ainda não foram carregadas. <button type="button" class="btn-secondary" data-action="senhas-recarregar">Tentar de novo</button></div>`;
+  else if(lista.length === 0) linhas = `<div style="padding:20px;font-size:14px;color:var(--slate);">Ninguém encontrado nesta lista.</div>`;
+  else linhas = lista.map(p => `
+    <div class="row aluno-row pessoa-row" style="cursor:default;flex-wrap:wrap;">
+      <span class="pessoa-info" style="flex:1;min-width:190px;">
+        <span class="pessoa-nome">${escapeHtml(p.ref.nome)}</span>
+        <span class="pessoa-sub">${p.tipo === "aluno" ? "Aluno" : "Responsável"} · ${escapeHtml(p.detalhe)}${p.email ? ` · ${escapeHtml(p.email)}` : ""}${p.foraPadrao ? ` · <strong style="color:var(--red,#C4544A);">fora do padrão</strong>` : ""}</span>
+      </span>
+      <span class="pessoa-meta" style="gap:6px;flex-wrap:wrap;justify-content:flex-end;">${senhasAcoesHtml(p, false)}</span>
+    </div>`).join("");
+
+  /* painel: registrar senha de quem já tem login mas não tem senha guardada */
+  let painelRegistro = "";
+  const r = state.senhasLoteResultado;
+  if(state.senhasLoteRodando){
+    painelRegistro = `<p class="section-eyebrow" style="margin:0 0 10px;">Gerando senhas… ${escapeHtml(state.senhasLoteProgresso)} Não feche esta tela.</p>`;
+  } else if(state.senhasLoteConfirmando){
+    painelRegistro = `
+      <div class="aluno-modal-confirm" style="margin:0 0 12px;">
+        <p>Vou <strong>recriar o login e a senha</strong> de ${alvoLista.length} ${alvoLista.length === 1 ? "pessoa" : "pessoas"} ${state.senhasLoteAlvo === "padrao" ? "com login fora do padrão (nome.sobrenome@alunoeduca.app ou @responsaveleduca.app)" : "que já têm acesso"}: cada uma ganha um e-mail de login no padrão e uma senha nova, guardados aqui. O login e a senha antigos deixam de funcionar, e a ficha pessoal que o próprio responsável preencheu no app é perdida (a do aluno, feita pela secretaria, continua). Depois é só enviar o acesso novo de cada um.</p>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <button type="button" class="teacher-primary-btn" style="margin:0;" data-action="senhas-registrar-lote-confirmar">Sim, recriar logins</button>
+          <button type="button" class="btn-secondary" data-action="senhas-registrar-lote-cancelar">Cancelar</button>
+        </div>
+      </div>`;
+  } else if(pronto && semSenha.length > 0){
+    painelRegistro = `
+      <div style="margin:0 0 12px;">
+        <p class="section-eyebrow" style="margin:0 0 8px;">${semSenha.length} ${semSenha.length === 1 ? "pessoa tem" : "pessoas têm"} login, mas a senha não está guardada aqui (acesso criado antes desta aba). Recrie o login deles para a senha ficar guardada.</p>
+        <button type="button" class="teacher-primary-btn" style="margin:0;" data-action="senhas-registrar-lote">Recriar login e senha de todos (${semSenha.length})</button>
+      </div>`;
+  }
+  let painelPadrao = "";
+  if(pronto && !state.senhasLoteRodando && !state.senhasLoteConfirmando && foraPadrao.length > 0){
+    painelPadrao = `
+      <div style="margin:0 0 12px;">
+        <p class="section-eyebrow" style="margin:0 0 8px;">${foraPadrao.length} ${foraPadrao.length === 1 ? "login está" : "logins estão"} fora do padrão (nome.sobrenome@alunoeduca.app para alunos e @responsaveleduca.app para responsáveis). Toque em “Login fora do padrão” para ver quem são.</p>
+        <button type="button" class="teacher-primary-btn" style="margin:0;" data-action="senhas-padronizar-lote">Padronizar logins (${foraPadrao.length})</button>
+      </div>`;
+  }
+  if(r){
+    painelRegistro = `
+      <div class="card" style="padding:12px 16px;margin:0 0 12px;border-left:3px solid var(--green,#2E9E6B);">
+        <p style="margin:0;font-weight:600;color:var(--ink);">${r.ok} ${r.ok === 1 ? "login recriado" : "logins recriados"}${r.falhas.length ? ` · ${r.falhas.length} com problema` : ""}</p>
+        ${r.interrompido ? `<p class="teacher-error" style="color:var(--red,#C4544A);font-size:12.5px;margin:6px 0 0;">Parei no primeiro erro, nenhuma senha foi trocada: ${escapeHtml(r.interrompido)}</p>` : ""}
+        ${r.falhas.length ? `<p class="teacher-error" style="color:var(--red,#C4544A);font-size:12.5px;margin:6px 0 0;">Não deu certo para: ${r.falhas.map(f => `${escapeHtml(f.nome)} (${escapeHtml(f.motivo)})`).join("; ")}. Use “Recriar login” na linha da pessoa.</p>` : ""}
+        ${(r.semLimpeza || []).length ? `<p class="teacher-error" style="color:var(--red,#C4544A);font-size:12.5px;margin:6px 0 0;">O login antigo ainda tem perfil para: ${r.semLimpeza.map(escapeHtml).join(", ")}. Apague em Gestão > Senhas &amp; acessos.</p>` : ""}
+        <button type="button" class="btn-secondary" style="margin-top:10px;" data-action="senhas-fechar-resultado-lote">Fechar</button>
+      </div>` + painelRegistro;
+  }
+
+  const aviso = state.senhasLoginMsg
+    ? `<p class="${state.senhasLoginMsg.tipo === "erro" ? "teacher-error" : "teacher-success"}" style="${state.senhasLoginMsg.tipo === "erro" ? "color:var(--red,#C4544A);font-size:12.5px;" : ""}margin:8px 0;">${escapeHtml(state.senhasLoginMsg.texto)}</p>` : "";
+
+  return `
+    <h2 class="section-title">Senhas e login</h2>
+    <p class="section-eyebrow">${escapeHtml(school.nome)} · login e senha de todos os alunos e responsáveis. A senha é gerada uma vez, fica guardada aqui e a família não precisa trocá-la.</p>
+    <div class="management-card management-card-wide">
+      ${senhasEsqueciHtml()}
+      ${aviso}
+      ${state.senhasLoginErro ? `<p class="teacher-error" style="color:var(--red,#C4544A);font-size:12.5px;margin:8px 0;">${escapeHtml(state.senhasLoginErro)}</p>` : ""}
+      ${painelRegistro}
+      ${painelPadrao}
+      ${painelGerarLoginsEmLote(semLogin.length, carregando)}
+      ${filtroHtml}
+      <div class="search-wrap" style="margin:10px 0 8px;">
+        ${ICONS.search}
+        <input class="search-input" id="senhas-busca" placeholder="Buscar por nome ou e-mail" value="${escapeHtml(state.senhasLoginBusca || "")}" />
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin:0 0 10px;">
+        <button type="button" class="btn-secondary" data-action="senhas-baixar-csv" ${pronto ? "" : "disabled"}>Baixar lista (planilha)</button>
+        <button type="button" class="btn-secondary" data-action="senhas-copiar-lista" ${pronto ? "" : "disabled"}>Copiar lista</button>
+      </div>
+      <div class="card flush">${linhas}</div>
+      <p class="section-eyebrow" style="margin-top:10px;">Visível só para a equipe administrativa. Professores e equipe continuam em Gestão &gt; Senhas &amp; acessos.</p>
+    </div>`;
+}
+
 /* Quem está sem login de verdade: alunos (menos os só de Recreação, que
    não têm login por regra) e responsáveis sem uid. Professor sempre tem. */
 function pessoasSemLogin(){
@@ -4628,7 +5556,7 @@ function painelGerarLoginsEmLote(qtdVisivel, carregando){
     painelResultado = `
       <div class="card" style="padding:14px 16px;margin:0 0 12px;border-left:3px solid var(--green,#2E9E6B);">
         <p style="margin:0 0 4px;font-weight:600;color:var(--ink);">${res.criados.length} ${res.criados.length === 1 ? "login criado" : "logins criados"}${res.falhas.length ? ` · ${res.falhas.length} com problema` : ""}</p>
-        <p class="section-eyebrow" style="margin:0 0 8px;">Anote ou copie agora: a senha provisória não aparece de novo depois que você fechar este aviso.</p>
+        <p class="section-eyebrow" style="margin:0 0 8px;">As senhas ficam guardadas na aba Senhas e login, onde você pode enviar ou consultar quando quiser.</p>
         ${res.criados.length ? `<div style="overflow-x:auto;"><table style="width:100%;font-size:13px;border-collapse:collapse;">
           <thead><tr style="text-align:left;color:var(--slate);"><th>Nome</th><th>Tipo</th><th>Login</th><th>Senha</th></tr></thead>
           <tbody>${linhasOk}</tbody></table></div>` : ""}
@@ -4673,6 +5601,7 @@ async function criarLoginParaAluno(aluno, emails, senha){
   try {
     await setDoc(doc(db, "usuarios", uid), { role: "aluno", nome: aluno.nome, email: emailFinal, alunoId: aluno.id });
     await updateDoc(doc(db, "alunos", aluno.id), { uid, email: emailFinal });
+    await guardarCredencial({ uid, tipo: "aluno", nome: aluno.nome, email: emailFinal, senha, escolaId: state.escolaSelecionadaId, docId: aluno.id });
     return { uid, email: emailFinal };
   } catch(err){
     try { await cred.user.delete(); } catch(_e){ /* ignora */ }
@@ -4693,6 +5622,7 @@ async function criarLoginParaResponsavelComAlternativas(responsavel, emails, sen
       escolaId: state.escolaSelecionadaId,
     });
     await updateDoc(doc(db, "responsaveis", responsavel.id), { uid, email: emailFinal });
+    await guardarCredencial({ uid, tipo: "responsavel", nome: responsavel.nome, email: emailFinal, senha, escolaId: state.escolaSelecionadaId, docId: responsavel.id });
     return { uid, email: emailFinal };
   } catch(err){
     try { await cred.user.delete(); } catch(_e){ /* ignora */ }
@@ -4700,6 +5630,93 @@ async function criarLoginParaResponsavelComAlternativas(responsavel, emails, sen
   } finally {
     try { await signOut(secondaryAuth); } catch(_e){ /* ignora */ }
   }
+}
+
+/* Quem ainda não entrou no app: alunos ativos (menos Recreação) e responsáveis
+   que ou não têm login ainda, ou têm login mas nunca entraram. Só dá pra saber
+   quem já entrou depois de conferir (carregarStatusAcessos). Quem entrou sai
+   da lista sozinho. */
+function pessoasAguardandoAcesso(){
+  const st = state.acessoStatus || {};
+  const conferiu = !!state.acessoStatusCarregadoEm;
+  const lista = [];
+  const classificar = (tipo, ref) => {
+    let situacao;
+    if(!ref.uid) situacao = "semlogin";
+    else if(!conferiu || st[ref.uid]?.entrou) return;          // não sei ainda, ou já entrou
+    else situacao = ref.acessoEnviadoEm ? "enviado" : "naoenviado";
+    lista.push({ tipo, ref, situacao });
+  };
+  (state.instAlunos || [])
+    .filter(a => a.situacao === "ativo" && !ehTurmaDeRecreacao(a.turma))
+    .forEach(a => classificar("aluno", a));
+  (state.gestaoResponsaveis || []).forEach(r => classificar("responsavel", r));
+  return lista;
+}
+
+/* Pergunta ao backend quem já entrou (lê o Firebase Authentication). */
+async function carregarStatusAcessos(){
+  const uids = [
+    ...(state.instAlunos || []).filter(a => a.uid).map(a => a.uid),
+    ...(state.gestaoResponsaveis || []).filter(r => r.uid).map(r => r.uid),
+  ];
+  state.acessoStatusErro = "";
+  if(uids.length === 0){
+    state.acessoStatus = {};
+    state.acessoStatusCarregadoEm = Date.now();
+    render();
+    return;
+  }
+  state.acessoStatusCarregando = true;
+  render();
+  try{
+    const r = await chamarFuncaoAdmin("statusAcessoUsuarios", { uids });
+    state.acessoStatus = r?.status || {};
+    state.acessoStatusCarregadoEm = Date.now();
+  } catch(err){
+    const code = err?.code || "";
+    state.acessoStatusErro = (code === "functions/not-found" || code === "functions/unavailable" || code === "functions/internal")
+      ? "Não consegui conferir quem já entrou: publique a Cloud Function statusAcessoUsuarios (pasta functions) e tente de novo."
+      : mensagemErroAdmin(err);
+  } finally {
+    state.acessoStatusCarregando = false;
+    render();
+  }
+}
+
+/* Guarda no cadastro que o login/senha foi enviado, pra lista mostrar
+   "Enviado em dd/mm" em vez de perder esse registro. */
+async function marcarAcessoEnviado(ag){
+  if(!ag?.docId || (ag.tipo !== "aluno" && ag.tipo !== "responsavel")) return;
+  const hoje = dataDeHojeISO();
+  try{
+    await updateDoc(doc(db, ag.tipo === "aluno" ? "alunos" : "responsaveis", ag.docId), { acessoEnviadoEm: hoje });
+    const item = (ag.tipo === "aluno" ? state.instAlunos : state.gestaoResponsaveis || []);
+    const achado = (item || []).find(x => x.id === ag.docId);
+    if(achado) achado.acessoEnviadoEm = hoje;
+  } catch(err){
+    console.error("Não consegui registrar o envio do acesso", err);
+  }
+  render();
+}
+
+/* Aviso com login + senha provisória e os botões de envio. Usado ao criar
+   um cadastro e ao gerar uma nova senha na lista "Aguardando 1º acesso". */
+function painelAcessoGeradoHtml(){
+  const ag = state.acessoGerado;
+  if(!ag) return "";
+  return `
+      <div class="card" style="padding:14px 16px;margin:0 0 14px;border-left:3px solid var(--green,#2E9E6B);">
+        <p style="margin:0 0 4px;font-weight:600;color:var(--ink);">${escapeHtml(ag.titulo || `Acesso de ${ag.nome} criado`)}</p>
+        <p class="section-eyebrow" style="margin:0 0 10px;">Login: <strong style="color:var(--ink);">${escapeHtml(ag.email)}</strong> · Senha provisória: <strong style="color:var(--ink);">${escapeHtml(ag.senha)}</strong><br>A senha fica guardada na aba Senhas e login.</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button type="button" class="teacher-primary-btn" style="margin:0;" data-action="enviar-acesso-gerado" data-via="whatsapp">${telefoneValido(ag.contato) ? "Enviar por WhatsApp" : "Enviar por WhatsApp (escolher contato)"}</button>
+          ${/@/.test(ag.contato || "") ? `<button type="button" class="btn-secondary" data-action="enviar-acesso-gerado" data-via="email">Enviar por e-mail</button>` : ""}
+          <button type="button" class="btn-secondary" data-action="enviar-acesso-gerado" data-via="copiar">Copiar mensagem</button>
+          <button type="button" class="btn-secondary" data-action="fechar-acesso-gerado">Fechar</button>
+        </div>
+        ${!telefoneValido(ag.contato) ? `<p class="section-eyebrow" style="margin:8px 0 0;">Sem WhatsApp no cadastro: o botão abre o WhatsApp com a mensagem pronta e você escolhe o contato.</p>` : ""}
+      </div>`;
 }
 
 function gestaoAcessosView(){
@@ -5316,6 +6333,30 @@ function responsavelVinculoModal(){
             <span>${escapeHtml(a.nome)}${a.turma ? ` · ${escapeHtml(a.turma)}` : ""}</span>
           </label>`).join("")}</div>`;
 
+  // Quem já tem aluno vinculado vê só a lista curta dos vinculados; o
+  // checklist com todos os alunos da unidade só abre ao clicar em "Alterar".
+  const responsavelAtual = (state.gestaoResponsaveis || []).find(r => r.id === state.respModalId);
+  const idsSalvos = responsavelAtual ? responsavelAtual.alunosIds : [];
+  const mostrarChecklist = state.respModalEditandoVinculos || idsSalvos.length === 0;
+
+  let vinculosHtml;
+  if(mostrarChecklist){
+    vinculosHtml = `
+        ${checklistHtml}
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+          <button type="button" class="teacher-primary-btn" style="margin-top:10px;" data-action="salvar-resp-vinculos" ${state.respModalSalvando ? "disabled" : ""}>${state.respModalSalvando ? "Salvando…" : "Salvar vínculos"}</button>
+          ${idsSalvos.length > 0 ? `<button type="button" class="btn-secondary" style="margin-top:10px;" data-action="cancelar-resp-vinculos">Cancelar</button>` : ""}
+        </div>`;
+  } else if(state.gestaoAlunosCarregando || !state.gestaoAlunosEscola){
+    vinculosHtml = `<p class="section-eyebrow" style="margin:6px 0;">Carregando alunos…</p>`;
+  } else {
+    const vinculados = alunosEscola.filter(a => idsSalvos.includes(a.id));
+    vinculosHtml = `
+        <div class="aluno-modal-resp-list">${vinculados.map(a => `
+          <div class="aluno-modal-resp-item"><span style="font-weight:600;color:var(--ink);font-size:13.5px;">${escapeHtml(a.nome)}${a.turma ? ` · ${escapeHtml(a.turma)}` : ""}</span></div>`).join("") || `<p class="section-eyebrow" style="margin:6px 0;">Os alunos vinculados são de outra unidade.</p>`}</div>
+        <button type="button" class="btn-secondary" style="margin-top:10px;" data-action="editar-resp-vinculos">Alterar alunos vinculados</button>`;
+  }
+
   return `
   <div class="aluno-modal-backdrop" data-action="fechar-responsavel-modal">
     <div class="aluno-modal" role="dialog" aria-modal="true" aria-label="Alunos vinculados ao responsável" data-action="noop">
@@ -5344,8 +6385,7 @@ function responsavelVinculoModal(){
 
       <div class="aluno-modal-section">
         <h3 class="teacher-label">Alunos vinculados</h3>
-        ${checklistHtml}
-        <button type="button" class="teacher-primary-btn" style="margin-top:10px;" data-action="salvar-resp-vinculos" ${state.respModalSalvando ? "disabled" : ""}>${state.respModalSalvando ? "Salvando…" : "Salvar vínculos"}</button>
+        ${vinculosHtml}
         ${state.respModalErro ? `<p class="teacher-error" style="color:var(--red,#C4544A);font-size:12.5px;margin-top:8px;">${escapeHtml(state.respModalErro)}</p>` : ""}
         ${state.respModalMensagem ? `<p class="teacher-success" style="margin-top:8px;">${escapeHtml(state.respModalMensagem)}</p>` : ""}
       </div>
@@ -5668,6 +6708,7 @@ async function carregarEquipeDaEscola(escolaId){
           alunosIds: Array.isArray(d.data().alunosIds) ? d.data().alunosIds : [],
           uid: d.data().uid || null,
           parentesco: d.data().parentesco || "",
+          acessoEnviadoEm: d.data().acessoEnviadoEm || "",
         }))
       : [];
 
@@ -6759,6 +7800,7 @@ async function excluirAlunoDaInstituicao(aluno, escolaId){
     // alunos/{id}, que deixa de existir depois do deleteDoc abaixo.
     const uid = aluno.uid || await descobrirUidDoAluno(aluno.id);
     let loginDocApagado = false;
+    if(uid) await apagarCredencial(uid);
     if(uid){
       try {
         await deleteDoc(doc(db, "usuarios", uid));
@@ -6771,6 +7813,8 @@ async function excluirAlunoDaInstituicao(aluno, escolaId){
     await deleteDoc(doc(db, "alunos", aluno.id));
     try { await apagarContratosDoAluno(aluno.id, escolaId); }
     catch(e){ console.warn("Não consegui apagar os contratos salvos do aluno:", e?.code || e); }
+    try { await apagarBoletosDoAluno(aluno.id, escolaId); }
+    catch(e){ console.warn("Não consegui apagar os carnês salvos do aluno:", e?.code || e); }
     try {
       await updateDoc(doc(db, "escolas", escolaId), {
         alunos: arrayRemove({ nome: aluno.nome, turma: aluno.turma }),
@@ -6912,6 +7956,7 @@ function alunosRecreacaoComLogin(){
 async function excluirResponsavelDaEscola(responsavel){
   await deleteDoc(doc(db, "responsaveis", responsavel.id));
   if(responsavel.uid){
+    await apagarCredencial(responsavel.uid);
     try { await deleteDoc(doc(db, "usuarios", responsavel.uid)); } catch(_e){ /* ignora */ }
     try { await excluirLoginDeOutroUsuario(responsavel.uid); } catch(_e){ /* sem backend: login fica órfão */ }
   }
@@ -6930,6 +7975,7 @@ async function criarLoginParaResponsavel(responsavel, email, senha){
       escolaId: state.escolaSelecionadaId,
     });
     await updateDoc(doc(db, "responsaveis", responsavel.id), { uid, email });
+    await guardarCredencial({ uid, tipo: "responsavel", nome: responsavel.nome, email, senha, escolaId: state.escolaSelecionadaId, docId: responsavel.id });
     return uid;
   } catch(err){
     try { await cred.user.delete(); } catch(_e){ /* ignora */ }
@@ -6997,6 +8043,7 @@ async function criarUsuarioNaInstituicao({ role, nome, email, senha, escolaId, e
       // tarde (na Gestão), editar os alunos vinculados em UM lugar só e
       // refletir no login do responsável ao mesmo tempo.
       await updateDoc(novoResponsavelRef, { uid, email: emailFinal });
+      await guardarCredencial({ uid, tipo: "responsavel", nome, email: emailFinal, senha, escolaId, docId: novoResponsavelRef.id });
       return { responsavelId: novoResponsavelRef.id, uid, email: emailFinal };
     } catch(err){
       // A gravação em "usuarios" falhou depois do login já ter sido criado.
@@ -7044,6 +8091,7 @@ async function criarUsuarioNaInstituicao({ role, nome, email, senha, escolaId, e
       // Gestão trocar a senha / excluir o login dele depois sem precisar
       // varrer a coleção "usuarios" atrás de quem tem esse alunoId.
       await updateDoc(novoAlunoRef, { uid, email: emailFinal });
+      await guardarCredencial({ uid, tipo: "aluno", nome, email: emailFinal, senha, escolaId, docId: novoAlunoRef.id });
       return { alunoId: novoAlunoRef.id, idAluno, uid, email: emailFinal };
     } catch(err){
       // A gravação em "usuarios" falhou depois do login já ter sido criado.
@@ -7211,12 +8259,58 @@ async function criarCadastrosDoContrato(c){
     return { alunoId, acesso };
   };
 
+  /* 1ª parcela já paga no ato (Pix/dinheiro, informada no contrato): lança
+     na aba Financeiro do aluno já como "paga". Não duplica se o contrato
+     for gerado de novo — se já existe cobrança da mesma competência, só
+     marca como paga (caso estivesse pendente) ou deixa como está. */
+  const lancarPrimeiraParcelaPaga = async (alunoId, nomeAluno) => {
+    const p = contratoPrimeiraParcelaPaga(c);
+    if(!p || !alunoId) return;
+    if(!p.competencia || !p.valor){
+      avisos.push("A 1ª parcela paga não foi lançada no Financeiro: faltou o mês de referência ou o valor da parcela.");
+      return;
+    }
+    try {
+      const ref = doc(db, "alunos", alunoId);
+      const snap = await getDoc(ref);
+      const atuais = Array.isArray(snap.data()?.financeiro?.mensalidades)
+        ? snap.data().financeiro.mensalidades.map(normalizeMensalidade) : [];
+      const existente = atuais.find(m => m.competencia === p.competencia);
+      let lista;
+      if(existente && existente.status === "pago"){
+        avisos.push(`Financeiro de ${nomeAluno}: a parcela de ${p.competencia} já constava como paga — não lancei de novo.`);
+        return;
+      } else if(existente){
+        lista = atuais.map(m => m.id === existente.id
+          ? { ...m, status: "pago", formaPagamento: p.formaPagamento, dataPagamento: p.dataPagamento || dataDeHojeISO() }
+          : m);
+      } else {
+        lista = [...atuais, normalizeMensalidade({
+          competencia: p.competencia, valor: p.valor, vencimento: p.vencimento,
+          status: "pago", formaPagamento: p.formaPagamento,
+          dataPagamento: p.dataPagamento || dataDeHojeISO(),
+          criadoEm: dataDeHojeISO(),
+        })];
+      }
+      await updateDoc(ref, { "financeiro.mensalidades": lista });
+      const local = (state.instAlunos || []).find(a => a.id === alunoId);
+      if(local){ local.financeiro = local.financeiro || {}; local.financeiro.mensalidades = lista; }
+      avisos.push(`1ª parcela (${p.competencia}) lançada no Financeiro de ${nomeAluno} como paga via ${p.formaPagamento === "pix" ? "Pix" : "dinheiro"}.`);
+    } catch(err){
+      console.error("Erro ao lançar a 1ª parcela paga no Financeiro:", err);
+      avisos.push(`Não consegui lançar a 1ª parcela no Financeiro de ${nomeAluno}${err?.code ? ` (${err.code})` : ""}. Lance à mão pela ficha do aluno.`);
+    }
+  };
+
   const r1 = await processarAluno({
     nome: c.alunoNome, nascimento: c.alunoNascimento, contato: c.contatoAluno,
     emailCampo: "emailAluno", senhaCampo: "senhaAluno",
   });
   resultado.aluno = r1.acesso;
   resultado.alunoId = r1.alunoId;
+  // Contrato com irmãos: o valor da parcela é do contrato inteiro, então
+  // lança só no 1º aluno pra não contar a mesma parcela duas vezes.
+  await lancarPrimeiraParcelaPaga(r1.alunoId, String(c.alunoNome || "").trim());
   const alunosIds = [r1.alunoId];
   const nomesAlunos = [String(c.alunoNome || "").trim()];
 
@@ -7728,7 +8822,8 @@ function financeiroInstituicaoView(school){
 
   const subTabs = [
     { key: "consultar", label: "Consultar boletos", icon: ICONS.wallet },
-    { key: "lancar", label: "Lançar cobrança", icon: ICONS.fileText },
+    { key: "lancar", label: "Cobrança avulsa", icon: ICONS.fileText },
+    { key: "carne", label: "Carnê", icon: ICONS.upload },
   ];
   const subNav = `<div class="subtab-bar">${subTabs.map(t => `
     <button type="button" class="subtab-btn ${state.finSubTab === t.key ? "active" : ""}" data-action="set-fin-subtab" data-key="${t.key}">
@@ -7737,7 +8832,7 @@ function financeiroInstituicaoView(school){
 
   const corpo = state.finSubTab === "lancar"
     ? financeiroLancarCobrancaView()
-    : financeiroConsultarView();
+    : (state.finSubTab === "carne" ? financeiroCarneView() : financeiroConsultarView());
 
   return `
     <h2 class="section-title">Financeiro</h2>
@@ -7873,7 +8968,10 @@ function financeiroListaConsultaHtml(){
 
   const linhas = lista.map(({ aluno, mensalidade: m }) => `
       <div class="row" style="flex-direction:column;align-items:stretch;">
-        <div style="font-size:14.5px;font-weight:600;color:var(--ink);">${escapeHtml(aluno.nome)} · ${escapeHtml(competenciaLabel(m.competencia))}</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+          <div style="font-size:14.5px;font-weight:600;color:var(--ink);">${escapeHtml(aluno.nome)} · ${escapeHtml(competenciaLabel(m.competencia))}</div>
+          <button type="button" class="attendance-btn" data-action="fin-excluir-cobranca" data-aluno-id="${escapeHtml(aluno.id)}" data-mens-id="${escapeHtml(m.id)}" ${state.finStatusSalvandoId === m.id ? "disabled" : ""} aria-label="Excluir cobrança" title="Excluir cobrança">${ICONS.trash}</button>
+        </div>
         <div style="font-size:12.5px;color:var(--slate);">${escapeHtml(formatarMoeda(m.valor))} · vence em ${escapeHtml(formatarDataBr(m.vencimento))} · ${escapeHtml(formaPagamentoLabel(m.formaPagamento))}${m.criadoEm ? ` · lançada em ${escapeHtml(formatarDataBr(m.criadoEm))}` : ""}</div>
         ${anexosMensalidadeHtml(m)}
       </div>`).join("") || `<div style="padding:20px;font-size:14px;color:var(--slate);">Nenhuma cobrança encontrada.</div>`;
@@ -9013,6 +10111,8 @@ function bindEvents(){
     if(t.dataset && t.dataset.hor){ horarios.input(t); return; }
     // Aba Suporte: guarda o texto e filtra os manuais sem re-renderizar.
     if(t.dataset && t.dataset.sup){ suporte.input(t); return; }
+    // Aba Solicitações: formulário guarda o valor sem re-renderizar.
+    if(t.dataset && t.dataset.sol){ solicitacoes.input(t); return; }
     // Aba Avaliações: campos do boletim e comentário da avaliação institucional
     // guardam o valor sem re-renderizar, pro cursor não pular.
     if(t.dataset && t.dataset.avalCampo){
@@ -9070,6 +10170,15 @@ function bindEvents(){
       if(novo){ novo.focus(); novo.setSelectionRange(cursor, cursor); }
       return;
     }
+    if(t.id === "senhas-busca"){
+      const cursor = t.selectionStart;
+      state.senhasLoginBusca = t.value;
+      render();
+      const novo = document.getElementById("senhas-busca");
+      if(novo){ novo.focus(); novo.setSelectionRange(cursor, cursor); }
+      return;
+    }
+    if(t.id === "senhas-esqueci-input"){ state.senhasLoginEsqueci = t.value; return; }
     if(t.id === "acesso-email"){ state.acessoEmail = t.value; return; }
     if(t.dataset && t.dataset.anivMsg){
       if(state.aniversarioMsgRascunho) state.aniversarioMsgRascunho[t.dataset.anivMsg] = t.value;
@@ -9264,7 +10373,7 @@ function bindEvents(){
       t.value = "";
       if(!arq) return;
       if(arq.size > BOLETO_PDF_TAMANHO_MAX){
-        state.alunoFinErro = `Esse PDF tem mais de ${Math.round(BOLETO_PDF_TAMANHO_MAX / 1024)}KB. Comprima o arquivo e tente de novo.`;
+        state.alunoFinErro = `Esse PDF tem mais de ${Math.round(BOLETO_PDF_TAMANHO_MAX / 1024)}KB. Se for um carnê com vários boletos, use Financeiro > Carnê. Se não, comprima o arquivo e tente de novo.`;
         render();
         return;
       }
@@ -9284,12 +10393,74 @@ function bindEvents(){
       }
       return;
     }
+    if(t.dataset && t.dataset.finCarnePix !== undefined){
+      const i = Number(t.dataset.finCarnePix);
+      const item = (state.finCarneBoletos || [])[i];
+      const texto = t.value.trim();
+      if(item && texto){
+        const pix = acharPixNoTexto(texto);
+        if(pix){
+          item.pix = pix;
+          state.finCarneErro = "";
+        } else {
+          state.finCarneErro = `O Pix da parcela ${i + 1} não parece válido (confira se copiou o código inteiro).`;
+        }
+        render();
+      }
+      return;
+    }
+
+    if(t.dataset && t.dataset.finCarnePdf){
+      const arq = t.files && t.files[0];
+      t.value = "";
+      if(!arq) return;
+      state.finCarneErro = "";
+      state.finCarneMensagem = "";
+      state.finCarneBoletos = null;
+      state.finCarneArquivo = null;
+      state.finCarneAvisos = [];
+      const ehPdf = arq.type === "application/pdf" || /\.pdf$/i.test(arq.name || "");
+      if(!ehPdf){
+        state.finCarneErro = `"${arq.name}" não é um PDF.`;
+        render();
+        return;
+      }
+      if(arq.size > BOLETO_ARQ_TAMANHO_MAX){
+        state.finCarneErro = `"${arq.name}" tem ${tamanhoLegivel(arq.size)} e o limite é ${tamanhoLegivel(BOLETO_ARQ_TAMANHO_MAX)}.`;
+        render();
+        return;
+      }
+      state.finCarneLendo = true;
+      state.finCarneProgresso = "Lendo o carnê…";
+      render();
+      try {
+        const { boletos, avisos } = await lerCarnePdf(arq, (p, tot, tentativa) => {
+          state.finCarneProgresso = `Lendo a página ${p} de ${tot}${tentativa ? " (nova tentativa para achar os QR Codes)" : ""}…`;
+          render();
+        });
+        if(boletos.length){
+          state.finCarneArquivo = arq;
+          state.finCarneBoletos = boletos;
+          state.finCarneAvisos = avisos;
+        } else {
+          state.finCarneErro = avisos[0] || "Não achei boletos nesse PDF.";
+        }
+      } catch(err){
+        console.error("Erro ao ler o carnê:", err);
+        state.finCarneErro = "Não consegui ler esse PDF. Tente outro arquivo.";
+      } finally {
+        state.finCarneLendo = false;
+        state.finCarneProgresso = "";
+        render();
+      }
+      return;
+    }
     if(t.dataset && t.dataset.finCobrancaBoleto){
       const arq = t.files && t.files[0];
       t.value = "";
       if(!arq) return;
       if(arq.size > BOLETO_PDF_TAMANHO_MAX){
-        state.finCobrancaErro = `Esse PDF tem mais de ${Math.round(BOLETO_PDF_TAMANHO_MAX / 1024)}KB. Comprima o arquivo e tente de novo.`;
+        state.finCobrancaErro = `Esse PDF tem mais de ${Math.round(BOLETO_PDF_TAMANHO_MAX / 1024)}KB. Se for um carnê com vários boletos, use a aba "Carnê" aqui do Financeiro. Se não, comprima o arquivo e tente de novo.`;
         render();
         return;
       }
@@ -9550,6 +10721,11 @@ function bindEvents(){
       await horarios.click(el);
       return;
     }
+    // Aba Solicitações: ações começam com "sol-" (ver solicitacoes.js)
+    if(action.startsWith("sol-")){
+      solicitacoes.click(el);
+      return;
+    }
     // Aba Suporte: ações começam com "sup-" (ver suporte.js)
     if(action.startsWith("sup-")){
       suporte.click(el);
@@ -9564,6 +10740,7 @@ function bindEvents(){
     switch(action){
       case "logout":
         suporte.resetar();
+        solicitacoes.resetar();
         state.mobileMenuOpen = false;
         await signOut(auth);
         break;
@@ -9675,6 +10852,10 @@ function bindEvents(){
         if(state.instTab === "gestao"){
           garantirPessoasDaUnidade();
         }
+        if(state.instTab === "senhas"){
+          garantirPessoasDaUnidade();
+          if(!credenciaisCarregadas()) carregarCredenciais(state.escolaSelecionadaId);
+        }
         // contratos precisa dos alunos (pendentes de assinatura, nomes já
         // cadastrados) e das turmas (seletor de turma)
         if(state.instTab === "contratos"){
@@ -9686,6 +10867,7 @@ function bindEvents(){
         if(state.instTab === "aniversarios"){
           garantirPessoasDaUnidade();
         }
+        if(state.instTab === "solicitacoes") solicitacoes.aoAbrir();
         if((state.instTab === "professores" || state.instTab === "responsaveis") && state.escolaSelecionadaId
           && (state.gestaoProfessores === null || state.gestaoEquipeEscolaId !== state.escolaSelecionadaId)
           && !state.gestaoEquipeCarregando){
@@ -9700,6 +10882,11 @@ function bindEvents(){
 
       case "set-fin-subtab":
         state.finSubTab = el.dataset.key;
+        if(state.finSubTab === "carne"){
+          resetarFormCobrancaFin();
+          state.finCobrancaAlunoId = "";
+          state.finCobrancaBusca = "";
+        }
         if(state.finSubTab === "lancar"){
           // limpa o formulário toda vez que entra na sub-aba, como fazia
           // o antigo botão "Lançar cobrança" ao abrir.
@@ -9777,8 +10964,53 @@ function bindEvents(){
       case "set-acessos-grupo":
         state.gestaoAcessosGrupo = el.dataset.key;
         state.geracaoLoteConfirmando = false;
+        state.acessoEnvioErro = "";
         render();
         break;
+
+      case "atualizar-status-acessos":
+        carregarStatusAcessos();
+        break;
+
+      case "preparar-envio-acesso": {
+        const tipo = el.dataset.tipo;
+        const id = el.dataset.id;
+        const lista = tipo === "aluno" ? state.instAlunos : state.gestaoResponsaveis;
+        const ref = (lista || []).find(x => x.id === id);
+        state.acessoEnvioErro = "";
+        if(!ref || !ref.uid) break;
+        if(!ref.email){
+          state.acessoEnvioErro = `${ref.nome} está sem e-mail de acesso no cadastro. Abra a pessoa, confira o login e tente de novo.`;
+          render();
+          break;
+        }
+        state.acessoPreparandoId = id;
+        render();
+        try {
+          // se a senha já está guardada em "Senhas e login", reenvia a mesma
+          let senha = (await credencialDoUid(ref.uid))?.senha || "";
+          if(!senha){
+            senha = senhaProvisoria();
+            await definirSenhaDeOutroUsuario(ref.uid, senha);
+            await guardarCredencial({ uid: ref.uid, tipo, nome: ref.nome, email: ref.email, senha, escolaId: state.escolaSelecionadaId, docId: ref.id });
+          }
+          const nomesAlunos = tipo === "responsavel"
+            ? (state.instAlunos || []).filter(a => (ref.alunosIds || []).includes(a.id)).map(a => a.nome).join(" e ")
+            : "";
+          state.acessoGerado = {
+            role: tipo, tipo, docId: ref.id, nome: ref.nome,
+            email: ref.email, senha, contato: ref.contato || "",
+            nomeAluno: nomesAlunos,
+            titulo: `Acesso de ${ref.nome} pronto para enviar`,
+          };
+        } catch(err){
+          state.acessoEnvioErro = mensagemErroAdmin(err);
+        } finally {
+          state.acessoPreparandoId = null;
+          render();
+        }
+        break;
+      }
 
       case "ver-sem-login":
         state.gestaoSubTab = "acessos";
@@ -9874,6 +11106,166 @@ function bindEvents(){
         state.geracaoLoteProgresso = "";
         state.geracaoLoteResultado = { criados, falhas };
         render();
+        break;
+      }
+
+      /* ---- Aba "Senhas e login" ---- */
+      case "senhas-set-grupo":
+        state.senhasLoginGrupo = el.dataset.key;
+        render();
+        break;
+
+      case "senhas-recarregar":
+        carregarCredenciais(state.escolaSelecionadaId);
+        break;
+
+      case "senhas-toggle": {
+        const uidT = el.dataset.uid;
+        state.senhasLoginVisiveis = { ...(state.senhasLoginVisiveis || {}), [uidT]: !(state.senhasLoginVisiveis || {})[uidT] };
+        render();
+        break;
+      }
+
+      case "senhas-localizar": {
+        const campo = document.getElementById("senhas-esqueci-input");
+        state.senhasLoginEsqueci = (campo?.value || "").trim();
+        state.senhasLoginConsulta = state.senhasLoginEsqueci;
+        state.senhasLoginMsg = null;
+        render();
+        break;
+      }
+
+      case "senhas-limpar-busca":
+        state.senhasLoginEsqueci = "";
+        state.senhasLoginConsulta = "";
+        render();
+        break;
+
+      case "senhas-enviar": {
+        const p = pessoasDaAbaSenhas().find(x => x.uid === el.dataset.uid);
+        if(!p || !p.senha) break;
+        const texto = mensagemDeAcessoDaPessoa(p);
+        const via = el.dataset.via;
+        const ag = { docId: p.ref.id, tipo: p.tipo };
+        if(via === "whatsapp"){
+          window.open(whatsappLinkComTexto(telefoneValido(p.ref.contato) || "", texto), "_blank", "noopener");
+          marcarAcessoEnviado(ag);
+        } else if(via === "email"){
+          marcarAcessoEnviado(ag);
+          window.location.href = `mailto:${encodeURIComponent(p.ref.contato)}?subject=${encodeURIComponent("Seu acesso ao Educa+")}&body=${encodeURIComponent(texto)}`;
+        } else {
+          try {
+            await navigator.clipboard.writeText(texto);
+            state.senhasLoginMsg = { tipo: "ok", texto: `Mensagem de acesso de ${p.ref.nome} copiada.` };
+            marcarAcessoEnviado(ag);
+          } catch(_e){
+            state.senhasLoginMsg = { tipo: "erro", texto: "Não consegui copiar. Use o botão Mostrar e copie a senha manualmente." };
+          }
+          render();
+        }
+        break;
+      }
+
+      case "senhas-gerar": {
+        const p = pessoasDaAbaSenhas().find(x => x.uid === el.dataset.uid);
+        if(!p || !p.uid) break;
+        state.senhasLoginPreparando = p.uid;
+        state.senhasLoginMsg = null;
+        render();
+        try {
+          const r = await recriarLoginDaPessoa(p, emailsUsadosDaUnidade().map(e => e.toLowerCase()));
+          state.senhasLoginMsg = { tipo: "ok", texto: `Login de ${p.ref.nome} recriado: ${r.email}${r.limpou ? "" : " (o login antigo ainda tem perfil: apague em Gestão > Senhas & acessos)"}.` };
+        } catch(err){
+          state.senhasLoginMsg = { tipo: "erro", texto: err?.code?.startsWith?.("auth/") ? mensagemErroFirebase(err.code) : `Não consegui recriar o login: ${err?.code || err?.message || "erro"}.` };
+        } finally {
+          state.senhasLoginPreparando = null;
+          render();
+        }
+        break;
+      }
+
+      case "senhas-padronizar-lote":
+        state.senhasLoteAlvo = "padrao";
+        state.senhasLoteConfirmando = true;
+        state.senhasLoteResultado = null;
+        render();
+        break;
+
+      case "senhas-registrar-lote":
+        state.senhasLoteAlvo = "semsenha";
+        state.senhasLoteConfirmando = true;
+        state.senhasLoteResultado = null;
+        render();
+        break;
+
+      case "senhas-registrar-lote-cancelar":
+        state.senhasLoteConfirmando = false;
+        render();
+        break;
+
+      case "senhas-fechar-resultado-lote":
+        state.senhasLoteResultado = null;
+        render();
+        break;
+
+      case "senhas-registrar-lote-confirmar": {
+        const alvos = pessoasDaAbaSenhas().filter(p => state.senhasLoteAlvo === "padrao" ? p.foraPadrao : (p.uid && !p.senha));
+        state.senhasLoteConfirmando = false;
+        state.senhasLoteRodando = true;
+        state.senhasLoteResultado = null;
+        let ok = 0;
+        const falhas = [];
+        const semLimpeza = [];
+        const usados = emailsUsadosDaUnidade().map(e => e.toLowerCase());
+        render();
+        for(let i = 0; i < alvos.length; i++){
+          const p = alvos[i];
+          state.senhasLoteProgresso = `${i + 1} de ${alvos.length}.`;
+          render();
+          try {
+            const r = await recriarLoginDaPessoa(p, usados);
+            ok++;
+            if(!r.limpou) semLimpeza.push(p.ref.nome);
+          } catch(err){
+            falhas.push({
+              nome: p.ref.nome,
+              motivo: err?.code?.startsWith?.("auth/") ? mensagemErroFirebase(err.code) : (err?.code || err?.message || "erro"),
+            });
+          }
+        }
+        state.senhasLoteRodando = false;
+        state.senhasLoteProgresso = "";
+        state.senhasLoteResultado = { ok, falhas, semLimpeza };
+        render();
+        break;
+      }
+
+      case "senhas-copiar-lista": {
+        const texto = pessoasDaAbaSenhas().filter(p => p.uid && p.senha)
+          .sort((a, b) => (a.ref.nome || "").localeCompare(b.ref.nome || "", "pt-BR"))
+          .map(p => `${p.ref.nome} (${p.tipo === "aluno" ? "aluno" : "responsável"})\nLogin: ${p.email}\nSenha: ${p.senha}`).join("\n\n");
+        try {
+          await navigator.clipboard.writeText(texto);
+          state.senhasLoginMsg = { tipo: "ok", texto: "Lista de logins e senhas copiada." };
+        } catch(_e){
+          state.senhasLoginMsg = { tipo: "erro", texto: "Não consegui copiar. Use “Baixar lista (planilha)”." };
+        }
+        render();
+        break;
+      }
+
+      case "senhas-baixar-csv": {
+        const protege = (v) => { const s = String(v ?? ""); return /^[=+\-@\t\r]/.test(s) ? `'${s}` : s; };
+        const cab = ["Tipo", "Nome", "Curso / vínculo", "Login", "Senha", "Contato"];
+        const linhasCsv = pessoasDaAbaSenhas().filter(p => p.uid)
+          .sort((a, b) => (a.ref.nome || "").localeCompare(b.ref.nome || "", "pt-BR"))
+          .map(p => [p.tipo === "aluno" ? "Aluno" : "Responsável", protege(p.ref.nome), protege(p.detalhe), p.email, p.senha, protege(p.ref.contato || "")]);
+        const csv = "\ufeff" + [cab, ...linhasCsv].map(l => l.map(c => `"${String(c).replace(/"/g, '""')}"`).join(";")).join("\r\n");
+        const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+        const a = document.createElement("a");
+        a.href = url; a.download = "senhas-e-login.csv";
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
         break;
       }
 
@@ -10503,6 +11895,8 @@ function bindEvents(){
             email: criado?.email || email,
             contato: contatoDigitado,
             nomeAluno: nomesVinculados.join(" e "),
+            tipo: role,
+            docId: criado?.alunoId || criado?.responsavelId || "",
           } : null;
           state.instituicaoMensagem = alunoRecreacao
             ? `Aluno "${nome}" cadastrado (Recreação, sem login). Agora cadastre o responsável e vincule a este aluno.`
@@ -11259,6 +12653,12 @@ function bindEvents(){
         render();
         try {
           await definirSenhaDeOutroUsuario(state.acessoUid, senha);
+          if(state.acessoTipo === "aluno" || state.acessoTipo === "responsavel"){
+            await guardarCredencial({
+              uid: state.acessoUid, tipo: state.acessoTipo, nome: state.acessoNome, email: state.acessoEmail,
+              senha, escolaId: state.escolaSelecionadaId, docId: state.acessoDocId,
+            });
+          }
           state.acessoMensagem = `Senha de ${state.acessoNome} alterada. Entregue a nova senha para a pessoa.`;
         } catch(err){
           state.acessoErro = mensagemErroAdmin(err);
@@ -11309,7 +12709,7 @@ function bindEvents(){
           state.acessoUid = uid;
           state.acessoEmail = emailFinalAcesso;
           state.acessoSenhaSugerida = "";
-          state.acessoMensagem = `Acesso criado. ${pessoaAcesso.nome} entra com ${emailFinalAcesso} e a senha ${senha}. Anote: ela não aparece de novo.`;
+          state.acessoMensagem = `Acesso criado. ${pessoaAcesso.nome} entra com ${emailFinalAcesso} e a senha ${senha}. Ela fica guardada na aba Senhas e login.`;
         } catch(err){
           state.acessoErro = err?.code?.startsWith("auth/")
             ? mensagemErroFirebase(err.code)
@@ -11585,12 +12985,15 @@ function bindEvents(){
             ? whatsappLinkComTexto(numeroAcesso, texto)
             : whatsappLinkComTexto("", texto);   // sem número: o WhatsApp deixa escolher o contato
           window.open(linkAcesso, "_blank", "noopener");
+          marcarAcessoEnviado(ag);
         } else if(via === "email"){
+          marcarAcessoEnviado(ag);
           window.location.href = `mailto:${encodeURIComponent(ag.contato)}?subject=${encodeURIComponent("Seu acesso ao Educa+")}&body=${encodeURIComponent(texto)}`;
         } else {
           try {
             await navigator.clipboard.writeText(texto);
             state.instituicaoMensagem = "Mensagem de acesso copiada.";
+            marcarAcessoEnviado(ag);
           } catch(_e){
             state.instituicaoErro = "Não consegui copiar. Selecione e copie o login e a senha mostrados no aviso.";
           }
@@ -11769,6 +13172,139 @@ function bindEvents(){
         break;
       }
 
+      /* ---------- Financeiro > Lançar cobrança > Importar carnê ---------- */
+      case "remover-fin-carne-item": {
+        const i = Number(el.dataset.i);
+        const lista = state.finCarneBoletos || [];
+        if(!Number.isInteger(i) || i < 0 || i >= lista.length) break;
+        lista.splice(i, 1);
+        state.finCarneErro = "";
+        if(!lista.length){
+          state.finCarneBoletos = null;
+          state.finCarneArquivo = null;
+          state.finCarneAvisos = [];
+        }
+        render();
+        break;
+      }
+
+      case "fin-excluir-cobranca": {
+        const aluno = (state.instAlunos || []).find(a => a.id === el.dataset.alunoId);
+        const alvo = aluno && (aluno.financeiro.mensalidades || []).find(m => m.id === el.dataset.mensId);
+        if(!alvo || state.finStatusSalvandoId) break;
+        const ok = window.confirm(`Excluir a cobrança de ${aluno.nome} (${competenciaLabel(alvo.competencia)}, ${formatarMoeda(alvo.valor)})? Essa ação não pode ser desfeita.`);
+        if(!ok) break;
+        state.finStatusSalvandoId = alvo.id;
+        render();
+        try {
+          await excluirMensalidadeDoAluno(aluno, alvo);
+        } catch(err){
+          console.error("Erro ao excluir a cobrança:", err);
+          window.alert("Não foi possível excluir a cobrança agora. Tente de novo.");
+        } finally {
+          state.finStatusSalvandoId = "";
+          render();
+        }
+        break;
+      }
+
+      case "cancelar-fin-carne": {
+        state.finCarneArquivo = null;
+        state.finCarneBoletos = null;
+        state.finCarneAvisos = [];
+        state.finCarneErro = "";
+        state.finCarneMensagem = "";
+        render();
+        break;
+      }
+
+      case "lancar-fin-carne": {
+        const aluno = (state.instAlunos || []).find(a => a.id === state.finCobrancaAlunoId);
+        const lista = state.finCarneBoletos || [];
+        const arq = state.finCarneArquivo;
+        state.finCarneErro = "";
+        state.finCarneMensagem = "";
+        if(!aluno){
+          state.finCarneErro = "Escolha o aluno, acima.";
+          render();
+          break;
+        }
+        if(!lista.length || !arq){
+          state.finCarneErro = "Escolha o PDF do carnê primeiro.";
+          render();
+          break;
+        }
+        const escolaId = aluno.escolaId || state.escolaSelecionadaId;
+        state.finCarneSalvando = true;
+        render();
+        let arquivoSalvo = null;
+        try {
+          const existentes = aluno.financeiro.mensalidades || [];
+          const jaLancados = new Set(existentes.map(m => m.codigoBarras).filter(Boolean));
+          const aLancar = lista.filter(b => !jaLancados.has(b.codigoBarras));
+          if(!aLancar.length){
+            state.finCarneErro = "Todos os boletos desse carnê já estão lançados para esse aluno.";
+          } else {
+            arquivoSalvo = await salvarArquivoBoleto({ alunoId: aluno.id, escolaId, arquivo: arq });
+            const hoje = dataDeHojeISO();
+            const novas = aLancar.map(b => normalizeMensalidade({
+              competencia: b.vencimento.slice(0, 7),
+              valor: b.valor,
+              vencimento: b.vencimento,
+              status: "pendente",
+              criadoEm: hoje,
+              formaPagamento: "boleto",
+              pixTipo: b.pix ? "copiaCola" : "",
+              pixCopiaCola: b.pix || "",
+              codigoBarras: b.codigoBarras,
+              boletoPdfNome: arq.name || "carne.pdf",
+              boletoArquivoId: arquivoSalvo.id,
+              boletoArquivoPartes: arquivoSalvo.partes,
+            }));
+            const mensalidades = [...existentes, ...novas];
+            await updateDoc(doc(db, "alunos", aluno.id), { "financeiro.mensalidades": mensalidades });
+            aluno.financeiro.mensalidades = mensalidades;
+            arquivoSalvo = null;   // gravou tudo: o PDF fica
+            const ignoradas = lista.length - aLancar.length;
+            state.finCarneMensagem = `Carnê lançado para ${aluno.nome}: ${novas.length} cobrança(s)${ignoradas ? ` (${ignoradas} já existia(m) e foi(ram) ignorada(s))` : ""}.`;
+            state.finCarneArquivo = null;
+            state.finCarneBoletos = null;
+            state.finCarneAvisos = [];
+            state.finCobrancaAlunoId = "";
+            state.finCobrancaBusca = "";
+          }
+        } catch(err){
+          console.error("Erro ao lançar o carnê:", err);
+          state.finCarneErro = err?.code === "permission-denied"
+            ? "O Firestore recusou gravar o carnê (permission-denied). Publique a regra de `boletosArquivos` (arquivo firestore-boletos.rules)."
+            : "Não foi possível lançar o carnê agora. Tente de novo.";
+          if(arquivoSalvo){
+            try { await apagarArquivoBoleto(arquivoSalvo.id, arquivoSalvo.partes); } catch(e){ /* sobra de PDF não atrapalha */ }
+          }
+        } finally {
+          state.finCarneSalvando = false;
+          render();
+        }
+        break;
+      }
+
+      case "baixar-boleto-arquivo": {
+        const arquivoId = el.dataset.arq;
+        if(!arquivoId || state.boletoBaixando) break;
+        state.boletoBaixando = arquivoId;
+        render();
+        try {
+          await baixarArquivoBoleto(arquivoId, el.dataset.partes, el.dataset.nome);
+        } catch(err){
+          console.error("Erro ao baixar o PDF do boleto:", err);
+          window.alert("Não consegui baixar o PDF agora. Tente de novo ou fale com a secretaria.");
+        } finally {
+          state.boletoBaixando = "";
+          render();
+        }
+        break;
+      }
+
       case "lancar-mensalidade": {
         const aluno = (state.instAlunos || []).find(a => a.id === state.alunoDetalheId);
         if(!aluno) break;
@@ -11874,6 +13410,11 @@ function bindEvents(){
           const mensalidades = (aluno.financeiro.mensalidades || []).filter(m => m.id !== mensId);
           await updateDoc(doc(db, "alunos", aluno.id), { "financeiro.mensalidades": mensalidades });
           aluno.financeiro.mensalidades = mensalidades;
+          // carnê: o PDF é compartilhado pelas parcelas; só apaga quando nenhuma outra o usa
+          if(alvo.boletoArquivoId && !mensalidades.some(m => m.boletoArquivoId === alvo.boletoArquivoId)){
+            try { await apagarArquivoBoleto(alvo.boletoArquivoId, alvo.boletoArquivoPartes); }
+            catch(e){ console.warn("Não consegui apagar o PDF do carnê:", e?.code || e); }
+          }
           state.alunoFinMensagem = "Cobrança excluída.";
         } catch(err){
           state.alunoFinErro = "Não foi possível excluir a cobrança agora. Tente de novo.";
@@ -12271,6 +13812,7 @@ function bindEvents(){
         state.respModalDadosMsg = "";
         state.respModalErro = "";
         state.respModalMensagem = "";
+        state.respModalEditandoVinculos = false;
         render();
         if(!state.gestaoAlunosEscola && state.escolaSelecionadaId) carregarAlunosParaVinculo(state.escolaSelecionadaId);
         break;
@@ -12354,6 +13896,22 @@ function bindEvents(){
         break;
       }
 
+      case "editar-resp-vinculos": {
+        state.respModalEditandoVinculos = true;
+        state.respModalErro = "";
+        state.respModalMensagem = "";
+        render();
+        break;
+      }
+
+      case "cancelar-resp-vinculos": {
+        const responsavel = (state.gestaoResponsaveis || []).find(r => r.id === state.respModalId);
+        state.respModalAlunosIds = responsavel ? [...responsavel.alunosIds] : [];
+        state.respModalEditandoVinculos = false;
+        render();
+        break;
+      }
+
       case "salvar-resp-vinculos": {
         const id = state.respModalId;
         const responsavel = (state.gestaoResponsaveis || []).find(r => r.id === id);
@@ -12370,6 +13928,7 @@ function bindEvents(){
           }
           responsavel.alunosIds = [...state.respModalAlunosIds];
           state.respModalMensagem = "Vínculos atualizados.";
+          state.respModalEditandoVinculos = false;
         } catch(err){
           state.respModalErro = `Não foi possível salvar os vínculos agora${err.code ? ` (${err.code})` : ""}.`;
         } finally {

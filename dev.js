@@ -8,6 +8,7 @@
      aviso:      { ativo, tipo: "info" | "alerta", texto, inicio, fim }
      liberacao:  { ativa, mensagem, itens: { [perfil]: [moduloKey] }, publicadoEm, ate }
      modulos:    { [perfil]: { [moduloKey]: false } }   // só guarda o BLOQUEADO
+     novidades:  [{ id, titulo, texto, perfis: [perfil], publicadoEm, ate }]   // "o que há de novo"
      assinatura: string                                  // fecha todas as mensagens
                  perfil = instituicao | professor | familia | aluno
 
@@ -35,8 +36,8 @@ export const CATALOGO_MODULOS = {
   instituicao: [
     ["turmas", "Turmas"], ["calendario", "Calendário"], ["horarios", "Horários"],
     ["estatisticas", "Estatísticas"], ["financeiro", "Financeiro"], ["alunos", "Alunos"],
-    ["aniversarios", "Aniversários"], ["professores", "Professores"], ["responsaveis", "Responsáveis"],
-    ["contratos", "Contratos"], ["aval", "Avaliações"], ["certificados", "Certificados"], ["gestao", "Gestão"],
+    ["aniversarios", "Aniversários"], ["solicitacoes", "Solicitações"], ["professores", "Professores"], ["responsaveis", "Responsáveis"],
+    ["contratos", "Contratos"], ["aval", "Avaliações"], ["certificados", "Certificados"], ["senhas", "Senhas e login"], ["gestao", "Gestão"],
   ],
   professor: [
     ["calendario", "Calendário"], ["horarios", "Horários"], ["turmas", "Turmas"],
@@ -61,6 +62,7 @@ const TIPOS_MENSAGEM = [
   ["instabilidade", "Instabilidade"],
   ["aviso", "Aviso geral"],
   ["liberado", "Processos liberados"],
+  ["novidade", "Novidade do app"],
 ];
 
 /* ---------- Gerador de mensagens (modelos + as palavras que você digitar) ---------- */
@@ -80,6 +82,7 @@ function gerarMensagens(tipo, palavras){
     instabilidade: (i) => `${pick(["Identificamos uma instabilidade no app", "O app está passando por uma instabilidade momentânea"], i)}${L ? ` envolvendo ${L}` : ""}. ${pick(["Nossa equipe já está trabalhando na solução. Por gentileza, tente acessar novamente em instantes.", "Seus dados estão seguros. Pedimos que tente novamente em alguns minutos."], i)}`,
     aviso: (i) => `${pick(["Atenção:", "Comunicado importante:", "Informamos:"], i)} ${L ? cap(L) + "." : "há uma novidade no app."} ${pick(["Agradecemos a sua atenção.", "Em caso de dúvidas, procure a secretaria da sua unidade."], i)}`,
     liberado: (i) => `${pick(["O app está retornando o seu funcionamento.", "O Educa+ voltou a funcionar normalmente.", "Os processos do app foram liberados e o funcionamento está sendo normalizado."], i)} ${L ? `Foram liberados: ${L}. ` : ""}${pick(["Em caso de dúvidas, melhorias ou sugestões, entre em contato com a secretaria da sua unidade.", "Para dúvidas, melhorias ou sugestões, fale com a secretaria da sua unidade."], i)}`,
+    novidade: (i) => `${pick(["Novidade no Educa+!", "O Educa+ ficou ainda melhor!", "Chegou novidade no app!"], i)} ${L ? `${pick(["Confira o que chegou:", "Já disponível no app:", "O que mudou:"], i)} ${L}.` : "Confira as melhorias que acabamos de lançar."} ${pick(["Em caso de dúvidas ou sugestões, fale com a secretaria da sua unidade.", "Sugestões são sempre bem-vindas: fale com a secretaria da sua unidade."], i)}`,
   };
   const gerar = modelos[tipo] || modelos.programada;
   const saida = [gerar(0)];                       // a 1ª é sempre o modelo-base
@@ -138,7 +141,13 @@ export function criarDev(ctx){
   const estadoManut = () => estadoJanela(cfg().manutencao?.ativa, cfg().manutencao?.inicio, cfg().manutencao?.fim);
   const estadoAviso = () => estadoJanela(cfg().aviso?.ativo, cfg().aviso?.inicio, cfg().aviso?.fim);
   const libAtiva = () => !!cfg().liberacao?.ativa && (tempo(cfg().liberacao.ate) === null || Date.now() <= tempo(cfg().liberacao.ate));
-  const sigEstados = () => estadoManut() + "|" + estadoAviso() + "|" + libAtiva();
+  const listaNov = () => Array.isArray(cfg().novidades) ? cfg().novidades : [];
+  const novNoAr = (n) => !n.ate || Date.now() <= tempo(n.ate);
+  const sigEstados = () => estadoManut() + "|" + estadoAviso() + "|" + libAtiva() + "|" + listaNov().filter(novNoAr).map(n => n.id).join(",");
+
+  /* Novidades já vistas ficam gravadas no aparelho: o pop-up aparece uma vez por pessoa/aparelho. */
+  const jaVisto = (id) => { try{ return localStorage.getItem("educa_nov_visto_" + id) === "1"; }catch(e){ return false; } };
+  const marcarVisto = (id) => { try{ localStorage.setItem("educa_nov_visto_" + id, "1"); }catch(e){} };
 
   /* ---------- Ouvinte em tempo real ---------- */
   function iniciarConfig(){
@@ -225,6 +234,12 @@ export function criarDev(ctx){
     return { key: `l|${lib.publicadoEm}`, icone: "✅", cor: "green", titulo: "Processos liberados", texto: comAss(lib.mensagem), extra };
   }
 
+  function itemNovidade(n){
+    const quem = (n.perfis || []).map(k => PERFIS_DEV.find(p => p.key === k)?.label).filter(Boolean).join(", ");
+    return { key: `n|${n.id}`, novId: n.id, icone: "🆕", cor: "green", titulo: n.titulo || "Novidade no Educa+",
+      texto: n.texto, extra: n.id === "preview" ? `Aparece para: ${quem || "—"}` : (n.publicadoEm ? `Publicado em ${fmtDT(n.publicadoEm)}` : "") };
+  }
+
   function itensDe(manut, aviso, estM, estA){
     const out = [];
     const periodoM = periodoTxt(manut.inicio, manut.fim);
@@ -245,6 +260,11 @@ export function criarDev(ctx){
   function popupItens(){
     const itens = itensDe(cfg().manutencao || {}, cfg().aviso || {}, estadoManut(), estadoAviso());
     if(libAtiva() && cfg().liberacao.mensagem) itens.push(itemLiberacao(cfg().liberacao, PERFIL_DA_TELA[state.screen], false));
+    const perfilNov = PERFIL_DA_TELA[state.screen];
+    if(perfilNov && state.authUser){
+      listaNov().filter(n => novNoAr(n) && (n.perfis || []).includes(perfilNov) && !jaVisto(n.id))
+        .forEach(n => itens.push(itemNovidade(n)));
+    }
     return itens;
   }
 
@@ -261,6 +281,8 @@ export function criarDev(ctx){
       const d = ui.draft;
       if(ui.aba === "liberados"){
         itens = d.libMensagem.trim() ? [itemLiberacao({ mensagem: d.libMensagem, itens: d.libItens, publicadoEm: "preview" }, null, true)] : [];
+      } else if(ui.aba === "novidades"){
+        itens = d.novTexto.trim() ? [itemNovidade({ id: "preview", titulo: d.novTitulo.trim(), texto: comAss(d.novTexto), perfis: d.novPerfis })] : [];
       } else {
         itens = itensDe({ mensagem: d.mensagem, previsao: d.previsao, inicio: d.mInicio, fim: d.mFim },
           { texto: d.avisoTexto, tipo: d.avisoTipo, inicio: d.aInicio, fim: d.aFim },
@@ -330,12 +352,13 @@ export function criarDev(ctx){
       assinatura: assin(),
       libMensagem: semAss(c.liberacao?.mensagem) || TEXTO_LIBERADO_PADRAO,
       libDias: "3",
+      novTitulo: "", novTexto: "", novDias: "7", novPerfis: ["instituicao", "professor", "familia", "aluno"],
       libItens: JSON.parse(JSON.stringify(c.liberacao?.itens || {})),
     };
   }
 
   function abasHtml(){
-    const abas = [["status", "Status"], ["avisos", "Manutenção e avisos"], ["liberados", "Processos liberados"], ["modulos", "Módulos"], ["historico", "Histórico"]];
+    const abas = [["status", "Status"], ["avisos", "Manutenção e avisos"], ["liberados", "Processos liberados"], ["novidades", "Novidades"], ["modulos", "Módulos"], ["historico", "Histórico"]];
     return `<div class="subtab-bar">${abas.map(([k, l]) => `
       <button type="button" class="subtab-btn ${ui.aba === k ? "active" : ""}" data-action="dev-aba" data-key="${k}"><span>${l}</span></button>`).join("")}</div>`;
   }
@@ -345,6 +368,7 @@ export function criarDev(ctx){
     garantirDraft();
     const corpo = ui.aba === "avisos" ? avisosHtml()
       : ui.aba === "liberados" ? liberadosHtml()
+      : ui.aba === "novidades" ? novidadesHtml()
       : ui.aba === "modulos" ? modulosHtml()
       : ui.aba === "historico" ? logHtml()
       : statusHtml();
@@ -391,6 +415,7 @@ export function criarDev(ctx){
     const manutAtiva = !!c.manutencao?.ativa;
     const rotuloEstado = { ativo: "ATIVA", agendado: "AGENDADA", encerrado: "encerrada", desligado: "desligada" }[estadoManut()];
     return `
+    ${noArHtml()}
     ${geradorHtml([["manut", "Manutenção"], ["aviso", "Aviso"]])}
 
     <div class="dev-card ${estadoManut() === "ativo" ? "dev-card-alerta" : ""}">
@@ -478,6 +503,78 @@ export function criarDev(ctx){
     ${grupos}`;
   }
 
+  /* ----- Card "No ar agora": tudo que está publicado, cada item com botão de excluir ----- */
+  function noArHtml(){
+    const c = cfg(), m = c.manutencao || {}, av = c.aviso || {}, lib = c.liberacao || {};
+    const linhas = [];
+    const linha = (rotulo, estado, texto, botao) => `
+      <li class="dev-log-item">
+        <span class="dev-log-acao">${rotulo} <span class="dev-badge dev-badge-gold">${escapeHtml(estado)}</span></span>
+        <small>${escapeHtml(String(texto || "").slice(0, 160))}</small>
+        <div class="dev-acoes">${botao}</div>
+      </li>`;
+    const excluir = (attrs) => `<button type="button" class="btn-danger dev-chip" ${attrs} ${ui.salvando ? "disabled" : ""}>Excluir agora</button>`;
+    if(m.ativa) linhas.push(linha("🛠 Manutenção", { ativo: "ATIVA", agendado: "agendada", encerrado: "encerrada", desligado: "—" }[estadoManut()], semAss(m.mensagem), excluir('data-action="dev-excluir" data-tipo="manut"')));
+    if(av.ativo) linhas.push(linha("📣 Aviso", { ativo: "no ar", agendado: "agendado", encerrado: "encerrado", desligado: "—" }[estadoAviso()], semAss(av.texto), excluir('data-action="dev-excluir" data-tipo="aviso"')));
+    if(lib.ativa) linhas.push(linha("✅ Processos liberados", libAtiva() ? "no ar" : "expirado", semAss(lib.mensagem), excluir('data-action="dev-excluir" data-tipo="lib"')));
+    listaNov().forEach(n => linhas.push(linha("🆕 " + (n.titulo || "Novidade"), novNoAr(n) ? "no ar" : "expirada", semAss(n.texto), excluir(`data-action="dev-nov-excluir" data-id="${escapeHtml(n.id)}"`))));
+    return `
+    <div class="dev-card">
+      <div class="dev-card-head"><h3>📌 No ar agora</h3></div>
+      <p class="section-eyebrow">Tudo o que está publicado. “Excluir agora” tira do ar na hora, sem esperar o prazo.</p>
+      ${linhas.length ? `<ul class="dev-log">${linhas.join("")}</ul>` : `<p class="section-eyebrow">Nada publicado no momento.</p>`}
+    </div>`;
+  }
+
+  /* ----- Aba: Novidades ----- */
+  function novidadesHtml(){
+    const d = ui.draft;
+    const chips = PERFIS_DEV.map(p => {
+      const on = d.novPerfis.includes(p.key);
+      return `<button type="button" class="dev-modulo ${on ? "on" : "off-neutro"}" data-action="dev-nov-perfil" data-perfil="${p.key}" aria-pressed="${on}">
+        <span class="dev-modulo-dot"></span>${escapeHtml(p.label)}<small>${on ? "vai receber" : "—"}</small></button>`;
+    }).join("");
+    const lista = listaNov().slice().sort((a, b) => String(b.publicadoEm).localeCompare(String(a.publicadoEm)));
+    const publicadas = lista.map(n => {
+      const quem = (n.perfis || []).map(k => PERFIS_DEV.find(p => p.key === k)?.label).filter(Boolean).join(", ");
+      const prazo = !n.ate ? "sem prazo (até você excluir)" : (novNoAr(n) ? `no ar até ${fmtData(n.ate)}` : `expirou em ${fmtData(n.ate)}`);
+      return `
+      <li class="dev-log-item">
+        <span class="dev-log-acao">🆕 ${escapeHtml(n.titulo || "Novidade")}</span>
+        <small>${escapeHtml(semAss(n.texto).slice(0, 200))}</small>
+        <small>Para: ${escapeHtml(quem || "—")} · publicada em ${escapeHtml(fmtData(n.publicadoEm))} · ${escapeHtml(prazo)}</small>
+        <div class="dev-acoes"><button type="button" class="btn-danger dev-chip" data-action="dev-nov-excluir" data-id="${escapeHtml(n.id)}" ${ui.salvando ? "disabled" : ""}>Excluir</button></div>
+      </li>`;
+    }).join("");
+    return `
+    <div class="dev-card">
+      <div class="dev-card-head"><h3>🆕 Novidades do app</h3></div>
+      <p class="section-eyebrow">Escreva o que foi lançado e escolha quem recebe. Cada pessoa vê um pop-up “Novidade” uma única vez, ao entrar no app.</p>
+    </div>
+
+    ${geradorHtml([["nov", "Novidade"]])}
+
+    <div class="dev-card">
+      <label class="teacher-label">Título</label>
+      <input class="dev-input" type="text" data-dev="novTitulo" value="${escapeHtml(d.novTitulo)}" placeholder="ex.: Novo painel de avaliações" />
+      <label class="teacher-label">O que mudou</label>
+      <textarea class="dev-input" rows="5" data-dev="novTexto" placeholder="Descreva o lançamento (a assinatura entra sozinha no fim)">${escapeHtml(d.novTexto)}</textarea>
+      <label class="teacher-label">Quem recebe</label>
+      <div class="dev-modulos">${chips}</div>
+      <label class="teacher-label" style="margin-top:12px;">Exibir por quantos dias (vazio = até você excluir)</label>
+      <input class="dev-input" type="number" min="1" max="90" data-dev="novDias" value="${escapeHtml(d.novDias)}" style="max-width:120px;" />
+      <div class="dev-acoes">
+        <button type="button" class="btn-gold" data-action="dev-nov-publicar" ${ui.salvando ? "disabled" : ""}>Publicar novidade</button>
+        <button type="button" class="btn-secondary" data-action="dev-preview-popup">Pré-visualizar pop-up</button>
+      </div>
+    </div>
+
+    <div class="dev-card">
+      <div class="dev-card-head"><h3>Novidades publicadas</h3></div>
+      ${publicadas ? `<ul class="dev-log">${publicadas}</ul>` : `<p class="section-eyebrow">Nenhuma novidade publicada ainda.</p>`}
+    </div>`;
+  }
+
   /* ----- Aba: Módulos ----- */
   function modulosHtml(){
     const c = cfg();
@@ -513,6 +610,7 @@ export function criarDev(ctx){
     const corA = { ativo: "dev-badge-gold", agendado: "dev-badge-gold", encerrado: "dev-badge-green", desligado: "dev-badge-green" }[ea];
     const txA = { ativo: "No ar", agendado: "Agendado", encerrado: "Encerrado", desligado: "Nenhum" }[ea];
     return `
+    ${noArHtml()}
     <div class="dev-card">
       <div class="dev-card-head"><h3>📊 Status atual</h3></div>
       <div class="dev-status">
@@ -628,7 +726,7 @@ export function criarDev(ctx){
     // Fechar o pop-up vale pra qualquer pessoa (não só o dev).
     if(a === "dev-popup-fechar"){
       if(ehDev()) ui.preview = false;
-      else popupItens().forEach(i => vistos.add(i.key));
+      else popupItens().forEach(i => { vistos.add(i.key); if(i.novId) marcarVisto(i.novId); });
       render();
       return;
     }
@@ -645,6 +743,7 @@ export function criarDev(ctx){
       const destino = el.dataset.destino;
       if(destino === "manut") d.mensagem = texto;
       else if(destino === "aviso") d.avisoTexto = texto;
+      else if(destino === "nov") d.novTexto = texto;
       else d.libMensagem = texto;
       ui.msg = "Mensagem aplicada. Revise e clique em salvar/publicar."; ui.erro = ""; render();
     } else if(a === "dev-assinatura-salvar"){
@@ -690,6 +789,44 @@ export function criarDev(ctx){
       await salvar({ liberacao: montarLiberacao(d) }, "Processos liberados publicados.", semAss(d.libMensagem));
     } else if(a === "dev-lib-remover"){
       await salvar({ liberacao: { ...(cfg().liberacao || {}), ativa: false } }, "Aviso de processos liberados retirado.");
+    } else if(a === "dev-excluir"){
+      const tipo = el.dataset.tipo;
+      const nomes = { manut: "a manutenção", aviso: "o aviso", lib: "o aviso de processos liberados" };
+      if(!window.confirm(`Excluir ${nomes[tipo] || "este item"} agora? Ele some para todo mundo na hora.`)) return;
+      if(tipo === "manut"){
+        await salvar({ manutencao: { ativa: false, mensagem: "", previsao: "", inicio: "", fim: "" } }, "Manutenção excluída.");
+        Object.assign(d, { mensagem: "", previsao: "", mInicio: "", mFim: "" });
+      } else if(tipo === "aviso"){
+        await salvar({ aviso: { ativo: false, texto: "", inicio: "", fim: "" } }, "Aviso excluído.");
+        Object.assign(d, { avisoTexto: "", aInicio: "", aFim: "" });
+      } else if(tipo === "lib"){
+        await salvar({ liberacao: { ativa: false, mensagem: "", publicadoEm: "", ate: "" } }, "Aviso de processos liberados excluído.");
+        d.libMensagem = TEXTO_LIBERADO_PADRAO;
+      }
+      render();
+    } else if(a === "dev-nov-perfil"){
+      const k = el.dataset.perfil, i = d.novPerfis.indexOf(k);
+      if(i >= 0) d.novPerfis.splice(i, 1); else d.novPerfis.push(k);
+      render();
+    } else if(a === "dev-nov-publicar"){
+      if(!d.novTexto.trim()){ ui.erro = "Escreva o que foi lançado."; ui.msg = ""; render(); return; }
+      if(!d.novPerfis.length){ ui.erro = "Marque pelo menos um perfil para receber."; ui.msg = ""; render(); return; }
+      const dias = String(d.novDias).trim() === "" ? null : Math.min(90, Math.max(1, Number(d.novDias) || 7));
+      const agora = new Date();
+      const nova = {
+        id: "n" + agora.getTime().toString(36),
+        titulo: d.novTitulo.trim() || "Novidade no Educa+",
+        texto: comAss(d.novTexto),
+        perfis: [...d.novPerfis],
+        publicadoEm: agora.toISOString(),
+        ate: dias ? new Date(agora.getTime() + dias * 86400000).toISOString() : "",
+      };
+      await salvar({ novidades: [nova, ...listaNov()].slice(0, 50) }, "Novidade publicada.", `${nova.titulo} › ${nova.perfis.join(", ")}`);
+      if(!ui.erro){ d.novTitulo = ""; d.novTexto = ""; ui.sugestoes = []; render(); }
+    } else if(a === "dev-nov-excluir"){
+      if(!window.confirm("Excluir esta novidade? Ela some para todo mundo na hora.")) return;
+      const id = el.dataset.id;
+      await salvar({ novidades: listaNov().filter(n => n.id !== id) }, "Novidade excluída.");
     } else if(a === "dev-log-atualizar"){
       await carregarLog();
     } else if(a === "dev-modulo"){

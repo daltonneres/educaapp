@@ -386,6 +386,11 @@ export function contratoEstadoInicial(){
     // cada cobrança já lançada para o aluno.
     pixCopiaCola: "",
     codigoBarras: "",
+    // 1ª parcela já paga no ato (opcional): "" | "PIX" | "DINHEIRO". Sai como
+    // frase no fim do § 1º: "A 1ª parcela, referente ao mês de ..., foi paga ...".
+    primeiraParcelaPaga: "",
+    primeiraParcelaMes: "",    // "AAAA-MM" (vazio = mês do 1º vencimento)
+    primeiraParcelaData: "",   // data em que foi paga
     // fechamento
     foro: "", cidadeAssinatura: "", dataAssinatura: "",
     // acessos ao app criados junto com o contrato
@@ -469,6 +474,30 @@ export function contratoValorAvista(c){
   const total = numeroLimpo(c.valorCurso) + numeroLimpo(c.valorMaterial);
   const desc = Math.min(Math.max(numeroLimpo(c.descontoVista), 0), 100);
   return Math.round(total * (1 - desc / 100) * 100) / 100;
+}
+
+/* Dados da 1ª parcela quando o contrato diz que ela já foi paga (Pix ou
+   dinheiro), no formato que a aba Financeiro entende. Devolve null se o
+   contrato não informa isso (ou é à vista, que não tem "1ª parcela").
+   O valor é o das "primeiras parcelas" (curso + material) ou o da parcela
+   única do modelo de parcelas iguais. */
+export function contratoPrimeiraParcelaPaga(c){
+  if(c.tipoPagamento === "avista") return null;
+  const forma = String(c.primeiraParcelaPaga || "").toUpperCase();
+  if(forma !== "PIX" && forma !== "DINHEIRO") return null;
+  const n = Number(c.numParcelas) || 0;
+  const qtdIni = Math.min(Number(c.qtdParcelasIniciais) || 0, n);
+  const usaInicial = c.formatoValor === "curso-material" && numeroLimpo(c.valorMaterial) > 0 && qtdIni > 0;
+  const valor = numeroLimpo(usaInicial ? c.valorParcelaInicial : c.valorParcelaDemais);
+  const vencimento = c.primeiroVencimento || "";
+  const competencia = String(c.primeiraParcelaMes || vencimento).slice(0, 7);
+  return {
+    competencia,
+    valor,
+    vencimento: vencimento || (c.primeiraParcelaData || ""),
+    formaPagamento: forma === "PIX" ? "pix" : "dinheiro",
+    dataPagamento: c.primeiraParcelaData || "",
+  };
 }
 
 /* Aplica os padrões da unidade quando o CNPJ é escolhido. Só preenche
@@ -564,6 +593,24 @@ function clausulaPagamento(c, empresa){
   }
 
   return `O valor total do contrato, incluídos todos os cursos vinculados descritos na prévia cláusula 1, é de <b><u>${moeda(total)}</u></b>, importância que será dividida em ${n} parcelas de <b><u>${moeda(numeroLimpo(c.valorParcelaDemais))}</u></b> cada, no <b><u>${esc(forma)}</u></b> com o primeiro pagamento em <b><u>${venc}</u></b>. As demais prestações vencer-se-ão nos mesmos dias dos meses subsequentes.`;
+}
+
+/* "AAAA-MM" (ou "AAAA-MM-DD") -> "março de 2026" */
+function mesAnoExtenso(iso){
+  const [a, m] = String(iso || "").split("-").map(Number);
+  if(!a || !m || m < 1 || m > 12) return "______________ de ______";
+  return `${MESES[m - 1]} de ${a}`;
+}
+
+/* Frase opcional no fim do § 1º, quando a 1ª parcela já foi paga (Pix ou
+   dinheiro) e a escola quer deixar isso registrado no contrato. */
+function frasePrimeiraParcelaPaga(c){
+  if(c.tipoPagamento === "avista") return "";
+  const forma = String(c.primeiraParcelaPaga || "").toUpperCase();
+  if(forma !== "PIX" && forma !== "DINHEIRO") return "";
+  const mes = mesAnoExtenso(c.primeiraParcelaMes || c.primeiroVencimento);
+  const como = forma === "PIX" ? "via <b><u>PIX</u></b>" : "em <b><u>DINHEIRO</u></b>";
+  return ` A 1ª parcela, referente ao mês de <b><u>${esc(mes)}</u></b>, foi paga ${como} no dia <b><u>${dataBr(c.primeiraParcelaData)}</u></b>.`;
 }
 
 /* Parágrafo extra com Pix copia-e-cola e/ou código de barras do boleto,
@@ -693,7 +740,7 @@ export function contratoHtml(c, logoUrl){
   <p class="solta">O pacote terá início em <b><u>${dataBr(c.dataInicio)}</u></b>, com término previsto para <b><u>${dataBr(c.dataTermino || calcularTermino(c.dataInicio, meses))}</u></b>. O tempo de duração do pacote é de <b><u>${meses} ${meses === 1 ? "MÊS" : "MESES"}</u></b> incluindo férias, feriados e recessos, ressaltando que o pagamento da importância devida do mês deverá ser pago normalmente, levando em conta que está sendo parcelado o valor do curso. Ao aluno serão ministradas <b>${esc(c.cargaHoraria || "2")} horas</b> de aulas semanais, nos seguintes dias e horários: <b><u>${esc(listaDias(c.dias))}, das ${hora(c.horaInicio)} às ${hora(c.horaFim)}</u></b>.</p>
 
   <p class="solta">2. <b>PREÇO E FORMA DE PAGAMENTO</b>. O contratante não pagará taxa de matrícula.</p>
-  <p class="solta">§1º. ${clausulaPagamento(c, empresa)}</p>
+  <p class="solta">§1º. ${clausulaPagamento(c, empresa)}${frasePrimeiraParcelaPaga(c)}</p>
   ${blocoDadosPagamento(c)}
   ${c.tipoPagamento === "avista" ? `
   <p class="solta"><b>PARAGRAFO PRIMEIRO:</b> O pagamento do valor total do curso é feito à vista, em parcela única, na data fixada no parágrafo anterior, não havendo cobrança de mensalidades durante a vigência deste contrato, inclusive em tempo de recesso (férias de aula).</p>
@@ -1088,6 +1135,15 @@ export function interpretarContratoTexto(texto){
     : tPlano.match(/no\s*(BOLETO|PIX|CART[ÃA]O|DINHEIRO)\s*com o primeiro pagamento/i);
   if(mForma) c.formaPagamento = mForma[1].toUpperCase();
 
+  // --- 1ª parcela já paga (frase opcional no § 1º) ---
+  const mPaga = tPlano.match(/1ª parcela,\s*referente ao mês de\s*([a-zçãéô]+)\s*de\s*(\d{4}),\s*foi paga\s*(?:via|em)\s*(PIX|DINHEIRO)\s*no dia\s*(\d{2}\/\d{2}\/\d{4})/i);
+  if(mPaga){
+    const idxMes = MESES_BUSCA.findIndex(m => semAcento(m) === semAcento(mPaga[1]).toLowerCase());
+    if(idxMes >= 0) c.primeiraParcelaMes = `${mPaga[2]}-${String(idxMes + 1).padStart(2, "0")}`;
+    c.primeiraParcelaPaga = mPaga[3].toUpperCase();
+    c.primeiraParcelaData = dataBrParaIso(mPaga[4]);
+  }
+
   // --- assinatura (data e cidade, no rodapé do contrato) ---
   const mAssinatura = tPlano.match(/(\d{1,2})\s*de\s*([a-zçãéô]+)\s*de\s*(\d{4}),\s*([^–—\-]+?)\s*[–—\-]\s*PR/i);
   if(mAssinatura){
@@ -1388,6 +1444,18 @@ export function contratoModal(c, { cursos = [], alunos = [], turmas = [] } = {})
         ${total ? (avista
           ? `<p class="contrato-resumo" style="margin-top:6px;">Total do contrato: <b>${moeda(total)}</b>${numeroLimpo(c.descontoVista) > 0 ? ` · com ${esc(c.descontoVista)}% de desconto: <b>${moeda(contratoValorAvista(c))}</b>` : ""} · à vista, parcela única${meses ? ` · pacote de ${meses} ${meses === 1 ? "mês" : "meses"}` : ""}</p>`
           : `<p class="contrato-resumo" style="margin-top:6px;">Total do contrato: <b>${moeda(total)}</b>${Number(c.numParcelas) ? ` em ${esc(c.numParcelas)}x` : ""}${meses ? ` · pacote de ${meses} ${meses === 1 ? "mês" : "meses"}` : ""}</p>`) : ""}
+        ${avista ? "" : `
+        <p class="section-eyebrow" style="margin:10px 0 6px;">1ª parcela já paga (opcional — sai como frase no fim do § 1º)</p>
+        <div class="contrato-linha">
+          ${selectCampo("1ª parcela foi paga?", "primeiraParcelaPaga", c.primeiraParcelaPaga || "", [
+            { valor: "", texto: "Não informar" },
+            { valor: "PIX", texto: "Sim, via Pix" },
+            { valor: "DINHEIRO", texto: "Sim, em dinheiro" },
+          ], { largura: "190px" })}
+          ${c.primeiraParcelaPaga ? `
+          ${campo("Referente ao mês", "primeiraParcelaMes", c.primeiraParcelaMes || (c.primeiroVencimento || "").slice(0, 7), { tipo: "month", largura: "170px" })}
+          ${campo("Paga no dia", "primeiraParcelaData", c.primeiraParcelaData, { tipo: "date", largura: "160px" })}` : ""}
+        </div>`}
         <p class="section-eyebrow" style="margin:10px 0 6px;">Dados para pagamento (opcional — sai impresso no contrato, logo abaixo do § 1º)</p>
         <div class="contrato-linha">
           ${campo("Pix copia e cola", "pixCopiaCola", c.pixCopiaCola, { largura: "320px" })}

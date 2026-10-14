@@ -1,7 +1,7 @@
 /* ==================================================================
    Educa+ — Cloud Functions administrativas
    ------------------------------------------------------------------
-   Quatro funções:
+   Cinco funções:
 
      definirSenhaUsuario({ uid, senha })  — define a senha de outra
        pessoa na hora (o caso do aluno que não tem e-mail de verdade e
@@ -20,6 +20,11 @@
        cadastro, mantendo o aluno, a turma e o histórico. Descobre o uid
        sozinha (pelo alunoId ou pelo e-mail), o que o navegador não
        consegue fazer nos cadastros antigos.
+
+     statusAcessoUsuarios({ uids })       — diz, pra cada uid, se a pessoa
+       já entrou no app alguma vez (lê o último login do Authentication).
+       Alimenta a lista "Aguardando 1º acesso" em Gestão > Senhas &
+       acessos: quem entrou sai da lista sozinho.
 
    Por que isso precisa de backend: o SDK do Firebase que roda no
    navegador só consegue mexer na conta que está logada naquele
@@ -152,6 +157,9 @@ exports.excluirUsuarioAuth = onCall({ region: REGIAO }, async (request) => {
     if (err.code !== "auth/user-not-found") throw err;
   }
 
+  // A senha guardada em "Senhas e login" não pode sobreviver ao login.
+  await db.doc(`credenciais/${uid}`).delete();
+
   return { ok: true };
 });
 
@@ -201,6 +209,7 @@ exports.removerLoginAluno = onCall({ region: REGIAO }, async (request) => {
       if (err.code !== "auth/user-not-found") throw err;
     }
     await db.doc(`usuarios/${uid}`).delete();
+    await db.doc(`credenciais/${uid}`).delete();
   }
 
   // 3) Limpa o acesso no cadastro do aluno.
@@ -243,5 +252,49 @@ exports.atualizarEmailUsuario = onCall({ region: REGIAO }, async (request) => {
   }
 
   await db.doc(`usuarios/${uid}`).update({ email });
+
+  // Mantém o login mostrado em "Senhas e login" igual ao novo e-mail.
+  const cred = db.doc(`credenciais/${uid}`);
+  if ((await cred.get()).exists) await cred.update({ email });
+
   return { ok: true };
+});
+
+/* ------------------------------------------------------------------
+   Diz quem já entrou no app. "Entrou" = o último login (lastSignInTime)
+   é pelo menos 2 minutos DEPOIS da criação da conta — a própria criação
+   pelo app já conta como um login, então sem essa margem todo mundo
+   pareceria ter entrado. Só a equipe administrativa pode perguntar, e
+   a resposta é só "entrou ou não" + a data, nada além disso.
+   ------------------------------------------------------------------ */
+exports.statusAcessoUsuarios = onCall({ region: REGIAO }, async (request) => {
+  await escolasDoChamador(request);
+
+  const uids = Array.isArray(request.data && request.data.uids)
+    ? [...new Set(request.data.uids.filter((u) => typeof u === "string" && u))]
+    : [];
+  if (uids.length === 0) return { status: {} };
+  if (uids.length > 1000) {
+    throw new HttpsError("invalid-argument", "Muitas pessoas de uma vez (máximo 1000).");
+  }
+
+  const MARGEM_MS = 2 * 60 * 1000;
+  const status = {};
+
+  // getUsers aceita até 100 identificadores por chamada.
+  for (let i = 0; i < uids.length; i += 100) {
+    const lote = uids.slice(i, i + 100).map((uid) => ({ uid }));
+    const res = await admin.auth().getUsers(lote);
+    res.users.forEach((u) => {
+      const criou = Date.parse(u.metadata.creationTime) || 0;
+      const entrou = Date.parse(u.metadata.lastSignInTime) || 0;
+      status[u.uid] = {
+        entrou: entrou > 0 && entrou - criou > MARGEM_MS,
+        ultimoAcesso: entrou > 0 ? new Date(entrou).toISOString() : null,
+      };
+    });
+    // uids que não existem mais no Authentication simplesmente ficam de fora.
+  }
+
+  return { status };
 });
