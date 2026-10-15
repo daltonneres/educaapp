@@ -489,8 +489,19 @@ export function contratoPrimeiraParcelaPaga(c){
   const qtdIni = Math.min(Number(c.qtdParcelasIniciais) || 0, n);
   const usaInicial = c.formatoValor === "curso-material" && numeroLimpo(c.valorMaterial) > 0 && qtdIni > 0;
   const valor = numeroLimpo(usaInicial ? c.valorParcelaInicial : c.valorParcelaDemais);
-  const vencimento = c.primeiroVencimento || "";
+  let vencimento = c.primeiroVencimento || "";
   const competencia = String(c.primeiraParcelaMes || vencimento).slice(0, 7);
+  // Parcela paga de um mês ANTES do 1º boleto (ex.: fevereiro paga no Pix e o
+  // boleto começa em março): as parcelas vencem "nos mesmos dias dos meses
+  // subsequentes", então o vencimento dela é o mesmo dia, no mês dela.
+  if(c.primeiraParcelaMes && vencimento && vencimento.slice(0, 7) !== competencia){
+    const dia = Number(vencimento.slice(8, 10)) || 1;
+    const [a, m] = competencia.split("-").map(Number);
+    if(a && m){
+      const ultimo = new Date(a, m, 0).getDate();
+      vencimento = `${competencia}-${String(Math.min(dia, ultimo)).padStart(2, "0")}`;
+    }
+  }
   return {
     competencia,
     valor,
@@ -957,20 +968,72 @@ function separarEndereco(bruto){
   return { rua: antesDoNumero, numero, bairro, completo };
 }
 
+/* Arruma os erros mais comuns do OCR ANTES de interpretar o contrato.
+   Um escaneado raramente sai igual ao outro: o OCR troca ":" por ";",
+   separa letras ("C P F"), lê "R$" como "RS", troca o 0 por "O" e o 1 por
+   "l" dentro de números, espalha espaços nas datas, etc. Aqui reescrevemos
+   esses trechos pro formato que o resto da leitura espera. Em PDF digital
+   (texto limpo) isso não muda nada. */
+export function normalizarTextoOcr(texto){
+  let t = String(texto || "")
+    .replace(/[\u00A0\u2007\u202F]/g, " ")
+    .replace(/[“”]/g, '"').replace(/[‘’´`]/g, "'")
+    .replace(/(\p{L})-\s*\n\s*(\p{L})/gu, "$1$2");        // palavra quebrada no fim da linha
+
+  // rótulos com pontuação/espaço trocados: "ALUNO CONTRATANTE ;" -> "ALUNO CONTRATANTE:"
+  t = t.replace(/(ALUNO\s*CONTRATANTE|RESPONS[ÁÂAÃ]VEL\s*CONTRATANTE[^:;\n]{0,40}?)\s*[;:.,|]\s*/gi,
+    (_, r) => r.replace(/\s+/g, " ").toUpperCase() + ": ");
+
+  // "C P F", "CPE", "CPF." -> "CPF:" (só quando vem um número depois)
+  t = t.replace(/\bC\s*P\s*[FE]\s*[:;.]?\s*(?=[\dOoIl|])/g, "CPF: ");
+  t = t.replace(/\bR\s*G\s*[:;.]?\s*(?=[\dOoIl|])/g, "RG: ");
+
+  // dentro de um CPF: O->0, l/I/| -> 1, e tira espaços entre os grupos
+  t = t.replace(/(CPF:\s*)([\dOoIl|.\-\s]{11,20})/g, (_, ini, num) => {
+    const dig = num.replace(/[Oo]/g, "0").replace(/[Il|]/g, "1").replace(/\D/g, "");
+    if(dig.length < 11) return ini + num;
+    const d = dig.slice(0, 11);
+    const resto = num.replace(/[Oo]/g, "0").replace(/[Il|]/g, "1");
+    // devolve formatado + o que sobrou depois dos 11 dígitos (pra não comer texto)
+    let usados = 0, fim = 0;
+    for(let i = 0; i < resto.length && usados < 11; i++){ if(/\d/.test(resto[i])) usados++; fim = i + 1; }
+    return `${ini}${d.slice(0,3)}.${d.slice(3,6)}.${d.slice(6,9)}-${d.slice(9,11)}${resto.slice(fim).replace(/^[\s.\-]+$/, " ")}`;
+  });
+
+  // datas: "15 / 03 / 2012", "15-03-2012", "15.03.2012" -> "15/03/2012"
+  t = t.replace(/\b(\d{1,2})\s*[\/\-.]\s*(\d{1,2})\s*[\/\-.]\s*(\d{4})\b/g,
+    (_, d, m, a) => `${d.padStart(2, "0")}/${m.padStart(2, "0")}/${a}`);
+
+  // dinheiro: "RS 2.520,00", "R $ 210,00", "R5 210,00" -> "R$ 2.520,00"
+  t = t.replace(/\bR\s*[S$5]\s*(?=\d)/g, "R$ ");
+
+  // "N°", "N.º", "No" antes de número -> "Nº"
+  t = t.replace(/\bN\s*[°º.o]{1,2}\s*(?=\d)/g, "Nº ");
+
+  // horas: "13 h 30", "13h 30", "13:30" -> "13h30"
+  t = t.replace(/\b(\d{1,2})\s*[h:]\s*(\d{2})\b/gi, "$1h$2");
+  t = t.replace(/\b(\d{1,2})\s+h\b/gi, "$1h");
+
+  // "e" "as"/"ás"/"às" vira sempre "às" depois de um horário
+  t = t.replace(/(\d{1,2}h\d{0,2})\s+[aàáâ]s\s+(?=\d)/gi, "$1 às ");
+
+  return t;
+}
+
 /* Lê o texto de um contrato já extraído do PDF e devolve um objeto no
    mesmo formato do estado do formulário (contratoEstadoInicial),
    pronto pra entrar direto no preview de importação. Nenhum campo é
    inventado: o que não for encontrado fica em branco, e `_avisos`
    lista o que a secretaria deve conferir antes de confirmar. */
 export function interpretarContratoTexto(texto){
-  const t = (texto || "").replace(/\r/g, " ").replace(/[ \t]+/g, " ");
+  const t = normalizarTextoOcr(texto).replace(/\r/g, " ").replace(/[ \t]+/g, " ");
   const tPlano = t.replace(/\n/g, " ").replace(/\s+/g, " ");
   const c = contratoEstadoInicial();
   const avisos = [];
 
   // --- empresa (CNPJ) ---
-  const mCnpj = tPlano.match(/CNPJ:?\s*([\d.\/\- ]{14,22})/i);
-  const empresa = mCnpj ? empresaPorCnpjAproximado(mCnpj[1]) : null;
+  const mCnpj = tPlano.match(/CNPJ\s*[:;.]?\s*([\dOo.\/\-\s]{14,24})/i);
+  const empresa = mCnpj ? empresaPorCnpjAproximado(mCnpj[1].replace(/[Oo]/g, "0")) : null;
   if(empresa){
     contratoAplicarEmpresa(c, empresa.cnpj);
   } else {
@@ -981,7 +1044,7 @@ export function interpretarContratoTexto(texto){
   // O contrato pode ter dois "ALUNO CONTRATANTE:" (irmãos). Cada bloco vai
   // até o próximo aluno, o responsável ou o "Pelo presente instrumento".
   const blocosAluno = [];
-  const reAluno = /ALUNO CONTRATANTE:([\s\S]*?)(?=ALUNO CONTRATANTE:|RESPONS[ÁA]VEL CONTRATANTE|Pelo presente instrumento|$)/gi;
+  const reAluno = /ALUNO CONTRATANTE:([\s\S]*?)(?=ALUNO CONTRATANTE:|RESPONS[ÁÂAÃ]VEL CONTRATANTE|Pelo\s+presente\s+instrumento|$)/gi;
   let mAl;
   while((mAl = reAluno.exec(tPlano)) !== null){
     if(mAl[1].trim()) blocosAluno.push(mAl[1].trim());
@@ -996,9 +1059,9 @@ export function interpretarContratoTexto(texto){
     if(mCpf) dados.cpf = mCpf[1].replace(/\s+/g, "");
     const mRg = bloco.match(/RG:?\s*([^,]+?)(?:,\s*DATA|,\s*RESIDENTE|$)/i);
     if(mRg) dados.rg = mRg[1].trim();
-    const mNasc = bloco.match(/DATA DE NASCIMENTO:\s*(\d{2}\/\d{2}\/\d{4})/i);
+    const mNasc = bloco.match(/DATA\s*DE\s*NASC\w*\s*[:;.]?\s*(\d{2}\/\d{2}\/\d{4})/i);
     if(mNasc) dados.nascimento = dataBrParaIso(mNasc[1]);
-    const mEndereco = bloco.match(/RESIDENTE E DOMICILIAD[OA]\s*NA\s*(.+?),?\s*NA CIDADE DE\s*([^,]+)/i);
+    const mEndereco = bloco.match(/RESIDENTE\s*E\s*DOMICILIAD[OA]\s*N[AO]\s*(.+?),?\s*NA\s*CIDADE\s*DE\s*([^,]+)/i);
     if(mEndereco){
       const partes = separarEndereco(mEndereco[1]);
       dados.endereco = { rua: partes.rua, numero: partes.numero, bairro: partes.bairro, cidade: mEndereco[2].trim() };
@@ -1033,7 +1096,7 @@ export function interpretarContratoTexto(texto){
   if(!c.alunoNome) avisos.push("Nome do aluno não identificado — preencha antes de importar.");
 
   // --- responsável ---
-  const blocoResp = blocoEntre(tPlano, "RESPONS[ÁA]VEL CONTRATANTE[^:]*:", "Pelo presente instrumento");
+  const blocoResp = blocoEntre(tPlano, "RESPONS[ÁÂAÃ]VEL CONTRATANTE[^:]*:", "Pelo\\s+presente\\s+instrumento");
   if(blocoResp){
     const nome = blocoResp.split(",")[0]?.trim();
     if(nome){
@@ -1044,7 +1107,7 @@ export function interpretarContratoTexto(texto){
     if(mCpf) c.respCpf = mCpf[1].replace(/\s+/g, "");
     const mRg = blocoResp.match(/RG:?\s*([^,]+?)(?:,\s*DATA|,\s*RESIDENTE|$)/i);
     if(mRg) c.respRg = mRg[1].trim();
-    const mEndereco = blocoResp.match(/RESIDENTE E DOMICILIAD[OA]\s*NA\s*(.+?),?\s*NA CIDADE DE\s*([^,]+)/i);
+    const mEndereco = blocoResp.match(/RESIDENTE\s*E\s*DOMICILIAD[OA]\s*N[AO]\s*(.+?),?\s*NA\s*CIDADE\s*DE\s*([^,]+)/i);
     if(mEndereco){
       const partes = separarEndereco(mEndereco[1]);
       c.respEndereco = partes.rua;
@@ -1058,7 +1121,7 @@ export function interpretarContratoTexto(texto){
   }
 
   // --- curso e carga horária ---
-  const mCurso = tPlano.match(/seguinte\(?s?\)?\s*cursos?:\s*([^,]+?),\s*com carga hor[áa]ria de\s*(\d+)\s*horas/i);
+  const mCurso = tPlano.match(/seguinte\(?s?\)?\s*cursos?\s*[:;.]?\s*([^,]+?)\s*,\s*com\s*carga\s*hor[áa]ria\s*de\s*(\d+)\s*horas/i);
   if(mCurso){
     c.curso = mCurso[1].trim().toLowerCase().replace(/(^|\s)\p{L}/gu, l => l.toUpperCase());
     c.cargaHoraria = mCurso[2];
@@ -1067,7 +1130,7 @@ export function interpretarContratoTexto(texto){
   }
 
   // --- dias e horário ---
-  const mHorario = tPlano.match(/dias e hor[áa]rios:\s*([^.]+?),\s*das\s*(\d{1,2}\s*h\s*\d{0,2})\s*[àa]s\s*(\d{1,2}\s*h\s*\d{0,2})/i);
+  const mHorario = tPlano.match(/dias\s*e\s*hor[áa]rios\s*[:;.]?\s*([^.]+?),\s*das\s*(\d{1,2}\s*h\s*\d{0,2})\s*[àáâa]s\s*(\d{1,2}\s*h\s*\d{0,2})/i);
   if(mHorario){
     c.dias = extrairDias(mHorario[1]);
     c.horaInicio = horaParaHHMM(mHorario[2]);
@@ -1075,14 +1138,14 @@ export function interpretarContratoTexto(texto){
   }
 
   // --- datas do pacote ---
-  const mDatas = tPlano.match(/in[íi]cio em\s*(\d{2}\/\d{2}\/\d{4}),\s*com t[ée]rmino previsto para\s*(\d{2}\/\d{2}\/\d{4})/i);
+  const mDatas = tPlano.match(/in[íi]cio\s*em\s*(\d{2}\/\d{2}\/\d{4})\s*[,.;]?\s*com\s*t[ée]rmino\s*previsto\s*para\s*(\d{2}\/\d{2}\/\d{4})/i);
   if(mDatas){
     c.dataInicio = dataBrParaIso(mDatas[1]);
     c.dataTermino = dataBrParaIso(mDatas[2]);
   } else {
     avisos.push("Não encontrei as datas de início/término do pacote.");
   }
-  const mDuracao = tPlano.match(/dura[çc][ãa]o do pacote [ée] de\s*(\d+)\s*MESES?/i);
+  const mDuracao = tPlano.match(/dura[çc][ãa]o\s*do\s*pacote\s*[ée]\s*de\s*(\d+)\s*MES(?:ES)?/i);
   if(mDuracao) c.duracao = ["3","6","12"].includes(mDuracao[1]) ? mDuracao[1] : "custom";
   if(c.duracao === "custom") c.duracaoCustom = mDuracao[1];
 
@@ -1091,8 +1154,8 @@ export function interpretarContratoTexto(texto){
   // uma classe negada exclui tanto "R" quanto "r", e a palavra "cursos"
   // tem um "r" minúsculo bem no meio do caminho, o que cortava a busca
   // cedo demais).
-  const mCursoMaterial = tPlano.match(/R\$\s*([\d.,]+),?\s*sendo o valor do curso de[\s\S]*?R\$\s*([\d.,]+)\s*e o material\s*R\$\s*([\d.,]+)[\s\S]*?dividida em\s*(\d+)\s*parcelas/i);
-  const mTotalUnico = tPlano.match(/valor total do contrato[\s\S]*?R\$\s*([\d.,]+),[\s\S]*?dividida em\s*(\d+)\s*parcelas de\s*R\$\s*([\d.,]+)/i);
+  const mCursoMaterial = tPlano.match(/R\$\s*([\d.,]+),?\s*sendo\s*o\s*valor\s*do\s*curso\s*de[\s\S]*?R\$\s*([\d.,]+)\s*e\s*o\s*material\s*R\$\s*([\d.,]+)[\s\S]*?dividida\s*em\s*(\d+)\s*parcelas/i);
+  const mTotalUnico = tPlano.match(/valor\s*total\s*do\s*contrato[\s\S]*?R\$\s*([\d.,]+)\s*,[\s\S]*?dividida\s*em\s*(\d+)\s*parcelas\s*de\s*R\$\s*([\d.,]+)/i);
   const ehAvista = /em parcela [úu]nica/i.test(tPlano);
   if(ehAvista){
     c.tipoPagamento = "avista";
@@ -1136,12 +1199,35 @@ export function interpretarContratoTexto(texto){
   if(mForma) c.formaPagamento = mForma[1].toUpperCase();
 
   // --- 1ª parcela já paga (frase opcional no § 1º) ---
-  const mPaga = tPlano.match(/1ª parcela,\s*referente ao mês de\s*([a-zçãéô]+)\s*de\s*(\d{4}),\s*foi paga\s*(?:via|em)\s*(PIX|DINHEIRO)\s*no dia\s*(\d{2}\/\d{2}\/\d{4})/i);
+  // Aceita as redações que a escola usa:
+  //   "A 1ª parcela, referente ao mês de fevereiro de 2026, foi paga via PIX no dia 09/02/2026."
+  //   "sendo que a parcela referente a fevereiro foi paga via pix no dia 09/02/2026,"
+  // Tolera erro de digitação/OCR na forma ("vix", "plx", "p1x"). Sem o ano,
+  // deduz pelo dia do pagamento.
+  const mPaga = tPlano.match(/parcela[^.]{0,40}?referente\s+(?:ao\s+m[êe]s\s+de\s+|ao\s+m[êe]s\s+|ao\s+|a\s+|de\s+)?([a-zçãéôê]+)(?:\s+de\s+(\d{4}))?\s*[,;]?\s*foi\s+paga\s+(?:(?:via|em|no|por|com)\s+)?([a-zçãA-Z1|]{2,12})\s*[,;]?\s*(?:no\s+dia|em|dia|na\s+data)\s+(\d{2}\/\d{2}\/\d{4})/i);
   if(mPaga){
     const idxMes = MESES_BUSCA.findIndex(m => semAcento(m) === semAcento(mPaga[1]).toLowerCase());
-    if(idxMes >= 0) c.primeiraParcelaMes = `${mPaga[2]}-${String(idxMes + 1).padStart(2, "0")}`;
-    c.primeiraParcelaPaga = mPaga[3].toUpperCase();
-    c.primeiraParcelaData = dataBrParaIso(mPaga[4]);
+    const dataPaga = dataBrParaIso(mPaga[4]);
+    const forma = String(mPaga[3] || "").toLowerCase();
+    const formaOk = /^(p[il1|j]x|v[il1|]x)$/.test(forma) ? "PIX"
+      : /^(dinheiro|dinhe\w*|esp[ée]cie)$/.test(forma) ? "DINHEIRO" : "";
+    if(idxMes >= 0 && formaOk){
+      let ano = Number(mPaga[2]) || 0;
+      if(!ano && dataPaga){
+        // sem ano escrito: usa o ano do pagamento, ajustando a virada de ano
+        // (pago em dezembro um mês de janeiro -> ano seguinte, e vice-versa)
+        const anoPag = Number(dataPaga.slice(0, 4));
+        const mesPag = Number(dataPaga.slice(5, 7));
+        ano = anoPag;
+        if(idxMes + 1 < mesPag - 6) ano = anoPag + 1;
+        else if(idxMes + 1 > mesPag + 6) ano = anoPag - 1;
+      }
+      if(ano) c.primeiraParcelaMes = `${ano}-${String(idxMes + 1).padStart(2, "0")}`;
+      c.primeiraParcelaPaga = formaOk;
+      c.primeiraParcelaData = dataPaga;
+    } else {
+      avisos.push("O contrato diz que a 1ª parcela foi paga, mas não consegui entender a forma ou o mês — confira no bloco \"Documentos, datas e valores\".");
+    }
   }
 
   // --- assinatura (data e cidade, no rodapé do contrato) ---
@@ -1584,6 +1670,16 @@ export function camposFaltandoLeitura(c){
   if(!String(c.respNome || "").trim() && (!c.semResponsavel || alunoMenorOuIncerto(c))){
     f.push({ campo: "respNome", rotulo: "nome do responsável", obrigatorio: false });
   }
+  // documentos, datas e valores (ficam no bloco "Documentos, datas e valores")
+  if(c.semResponsavel && !String(c.alunoCpf || "").trim()) f.push({ campo: "alunoCpf", rotulo: "CPF do aluno", obrigatorio: false });
+  if(!c.semResponsavel && String(c.respNome || "").trim() && !String(c.respCpf || "").trim()){
+    f.push({ campo: "respCpf", rotulo: "CPF do responsável", obrigatorio: false });
+  }
+  if(!c.dataInicio) f.push({ campo: "dataInicio", rotulo: "data de início", obrigatorio: false });
+  if(!(numeroLimpo(c.valorCurso) > 0)) f.push({ campo: "valorCurso", rotulo: "valor do contrato", obrigatorio: false });
+  if(c.primeiraParcelaPaga && c.tipoPagamento !== "avista" && !c.primeiraParcelaData){
+    f.push({ campo: "primeiraParcelaData", rotulo: "dia em que a 1ª parcela foi paga", obrigatorio: false });
+  }
   return f;
 }
 
@@ -1636,10 +1732,67 @@ function itemImportacaoHtml(item, i, cursosDisponiveis, turmas = []){
       <span>Não achei no PDF: <b>${faltando.map(f => esc(f.rotulo)).join(", ")}</b>. Preencha nos campos marcados abaixo${faltando.some(f => f.obrigatorio) ? " — sem os obrigatórios este contrato não é importado" : ""}.</span>
     </div>` : "";
 
-  const avisosHtml = item.avisos.length ? `
+  // some o aviso de "não consegui ler" assim que a secretaria preenche o campo
+  const avisosVisiveis = item.avisos.filter(a => {
+    if(/^Não consegui ler os valores/.test(a)) return !(numeroLimpo(c.valorCurso) > 0);
+    if(/^Não encontrei as datas de início/.test(a)) return !(c.dataInicio && c.dataTermino);
+    return true;
+  });
+  const avisosHtml = avisosVisiveis.length ? `
     <div class="import-contrato-avisos">
-      ${item.avisos.map(a => `<span>${ICONS_IMPORT.warn} ${esc(a)}</span>`).join("")}
+      ${avisosVisiveis.map(a => `<span>${ICONS_IMPORT.warn} ${esc(a)}</span>`).join("")}
     </div>` : "";
+
+  /* Documentos, datas e valores lidos do PDF — editáveis aqui mesmo, pra
+     corrigir na hora (o OCR erra CPF, RG, datas e valores com frequência).
+     O bloco já abre sozinho quando falta algo ou depois da primeira edição. */
+  const CAMPOS_DETALHES = ["alunoCpf", "respCpf", "dataInicio", "valorCurso", "primeiraParcelaData"];
+  const detalhesPendentes = faltando.filter(f => CAMPOS_DETALHES.includes(f.campo));
+  const detalhesAbertos = detalhesPendentes.length > 0 || item.editouDetalhes;
+  const campoDet = (rotulo, campo, valor, { tipo = "text", largura = "150px", placeholder = "", modo = "", marcar = false } = {}) => `
+    <label class="contrato-campo" style="flex:1 1 ${largura};">
+      <span>${esc(rotulo)}</span>
+      <input type="${tipo}" class="teacher-text-input${marcar ? ` ${mc(campo)}` : ""}" ${marcar ? ma(campo) : ""} value="${esc(valor || "")}" placeholder="${esc(placeholder)}" ${tipo === "date" ? 'min="2000-01-01" max="2100-12-31"' : ""} ${modo ? `inputmode="${modo}"` : ""} data-import-campo="${campo}" data-row="${i}" />
+    </label>`;
+  const rotuloValor = c.formatoValor === "curso-material" ? "Valor do curso (R$)" : "Valor total (R$)";
+  const pPaga = contratoPrimeiraParcelaPaga(c);
+  const dicaPaga = pPaga && pPaga.competencia && pPaga.valor > 0
+    ? `<p class="section-eyebrow" style="margin:0 0 8px;">Vai ser lançada no Financeiro do aluno como <b>paga via ${pPaga.formaPagamento === "pix" ? "Pix" : "dinheiro"}</b>: ${esc(pPaga.competencia.slice(5, 7))}/${esc(pPaga.competencia.slice(0, 4))} · R$ ${esc(pPaga.valor.toFixed(2).replace(".", ","))}${pPaga.dataPagamento ? ` · pago em ${esc(pPaga.dataPagamento.split("-").reverse().join("/"))}` : ""}.</p>` : "";
+  const detalhesHtml = `
+        <details class="import-detalhes" ${detalhesAbertos ? "open" : ""}>
+          <summary>Documentos, datas e valores${detalhesPendentes.length ? `<span class="import-detalhes-aviso">faltam dados</span>` : ""}</summary>
+          <div class="contrato-linha">
+            ${campoDet("CPF do aluno", "alunoCpf", c.alunoCpf, { placeholder: "000.000.000-00", modo: "numeric", marcar: !!c.semResponsavel })}
+            ${campoDet("RG do aluno", "alunoRg", c.alunoRg)}
+            ${c.semResponsavel ? "" : campoDet("CPF do responsável", "respCpf", c.respCpf, { placeholder: "000.000.000-00", modo: "numeric", marcar: !!String(c.respNome || "").trim() })}
+            ${c.semResponsavel ? "" : campoDet("RG do responsável", "respRg", c.respRg)}
+          </div>
+          <div class="contrato-linha">
+            ${campoDet("Início do pacote", "dataInicio", c.dataInicio, { tipo: "date", marcar: true })}
+            ${campoDet("Término previsto", "dataTermino", c.dataTermino, { tipo: "date" })}
+            ${c.tipoPagamento === "avista" ? "" : campoDet("1º vencimento", "primeiroVencimento", c.primeiroVencimento, { tipo: "date" })}
+          </div>
+          <div class="contrato-linha">
+            ${campoDet(rotuloValor, "valorCurso", c.valorCurso, { placeholder: "2520,00", modo: "decimal", marcar: true })}
+            ${c.formatoValor === "curso-material" ? campoDet("Material (R$)", "valorMaterial", c.valorMaterial, { placeholder: "0,00", modo: "decimal" }) : ""}
+            ${c.tipoPagamento === "avista" ? "" : campoDet("Nº de parcelas", "numParcelas", c.numParcelas, { modo: "numeric", largura: "110px" })}
+          </div>
+          ${c.tipoPagamento === "avista" ? "" : `
+          <p class="section-eyebrow" style="margin:2px 0 6px;">1ª parcela já paga (Pix ou dinheiro) — deixe em branco se não foi</p>
+          <div class="contrato-linha">
+            <label class="contrato-campo" style="flex:1 1 170px;">
+              <span>Foi paga?</span>
+              <select class="teacher-text-input" data-import-campo="primeiraParcelaPaga" data-row="${i}">
+                <option value="" ${!c.primeiraParcelaPaga ? "selected" : ""}>Não informar</option>
+                <option value="PIX" ${c.primeiraParcelaPaga === "PIX" ? "selected" : ""}>Sim, via Pix</option>
+                <option value="DINHEIRO" ${c.primeiraParcelaPaga === "DINHEIRO" ? "selected" : ""}>Sim, em dinheiro</option>
+              </select>
+            </label>
+            ${campoDet("Referente ao mês", "primeiraParcelaMes", c.primeiraParcelaMes, { tipo: "month", largura: "150px" })}
+            ${campoDet("Paga no dia", "primeiraParcelaData", c.primeiraParcelaData, { tipo: "date", marcar: !!c.primeiraParcelaPaga })}
+          </div>
+          ${dicaPaga}`}
+        </details>`;
 
   return `
     <div class="import-contrato-item${item.selecionado ? "" : " is-desmarcado"}" data-import-row="${i}">
@@ -1674,6 +1827,7 @@ function itemImportacaoHtml(item, i, cursosDisponiveis, turmas = []){
           <select class="teacher-text-input import-campo${c.respNome && !c.respParentesco ? " is-faltando" : ""}" data-importante="2" style="flex:0 1 190px;" data-import-campo="respParentesco" data-row="${i}" aria-label="Mãe, pai ou responsável legal">${parentescoOpcoesHtml(c.respParentesco, "Mãe, pai ou resp. legal?")}</select>
         </div>
         ${respsExtrasHtml(c, "import", i)}
+        ${detalhesHtml}
         <div class="import-contrato-assinatura" role="group" aria-label="Situação da assinatura">
           <span class="import-contrato-assinatura-rotulo">Este contrato já foi assinado?</span>
           <div class="import-assinatura-opcoes">
@@ -1698,6 +1852,70 @@ function itemImportacaoHtml(item, i, cursosDisponiveis, turmas = []){
     </div>`;
 }
 
+/* Porcentagem de cada etapa, usada pela janela e pelo aviso flutuante. */
+function importContratosPctLeitura(state_){
+  const l = state_.importContratosLeitura || { feito: 0, total: 0, pg: 0, paginas: 0 };
+  const frac = l.paginas ? Math.max(0, l.pg - 1) / l.paginas : 0;
+  return l.total ? ((l.feito + frac) / l.total) * 100 : 0;
+}
+
+/* O que o aviso flutuante mostra agora (ou null se não há nada a mostrar).
+   estado: salvando | lendo | concluido | pronto. Fica escondido com a
+   janela de importação aberta. */
+export function importContratosChipInfo(state_){
+  if(state_.importContratosModalAberto) return null;
+  const itens = state_.importContratosItens || [];
+  if(state_.importContratosSalvando){
+    const p = state_.importContratosProgresso || { feito: 0, total: 0 };
+    const pct = p.total ? Math.round((p.feito / p.total) * 100) : 0;
+    return { estado: "salvando", texto: `Importando contratos · ${p.feito} de ${p.total}`, pct: Math.min(100, pct) };
+  }
+  if(state_.importContratosLendo){
+    const l = state_.importContratosLeitura || { feito: 0, total: 0 };
+    const pct = Math.round(importContratosPctLeitura(state_));
+    return { estado: "lendo", texto: `Lendo contratos · arquivo ${Math.min(l.feito + 1, l.total)} de ${l.total}`, pct: Math.max(0, Math.min(100, pct)) };
+  }
+  const r = state_.importContratosResumo;
+  if(r && state_.importContratosFimNaoVisto){
+    const feitos = (r.criados || 0) + (r.atualizados || 0);
+    return { estado: "concluido", texto: `Importação concluída · ${feitos} contrato(s)${r.erros ? ` · ${r.erros} com erro` : ""}`, pct: 100 };
+  }
+  const aguardando = itens.filter(it => it.status !== "ok").length;
+  if(!r && aguardando){
+    return { estado: "pronto", texto: `${aguardando} contrato(s) lido(s) — toque pra conferir e importar`, pct: 100 };
+  }
+  return null;
+}
+
+export function importContratosChipHtml(state_){
+  const info = importContratosChipInfo(state_);
+  if(!info) return "";
+  const andando = info.estado === "lendo" || info.estado === "salvando";
+  const icone = andando ? ICONS_IMPORT.spinner : (info.estado === "concluido" ? ICONS_IMPORT.check : ICONS_IMPORT.upload);
+  return `
+    <div class="import-chip is-${info.estado}" id="import-chip" data-estado="${info.estado}" role="status" aria-live="polite">
+      <button type="button" class="import-chip-main" data-action="reabrir-importar-contratos-modal" title="Abrir a importação de contratos">
+        <span class="import-chip-icone">${icone}</span>
+        <span class="import-chip-corpo">
+          <span class="import-chip-texto" id="import-chip-texto">${esc(info.texto)}</span>
+          ${andando ? `<span class="import-chip-track"><span class="import-chip-fill" id="import-chip-fill" style="width:${info.pct}%"></span></span>` : ""}
+        </span>
+        ${andando ? `<b class="import-chip-pct" id="import-chip-pct">${info.pct}%</b>` : ""}
+      </button>
+      ${info.estado === "concluido" ? `<button type="button" class="import-chip-x" data-action="dispensar-import-chip" aria-label="Dispensar">${ICONS_IMPORT.close}</button>` : ""}
+    </div>`;
+}
+
+/* Barra de progresso com porcentagem (usada na leitura dos PDFs e na importação). */
+function barraProgressoImportHtml(pct, legenda){
+  const p = Math.max(0, Math.min(100, Math.round(pct)));
+  return `
+    <div class="import-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${p}">
+      <div class="import-progress-top"><span>${esc(legenda || "")}</span><b>${p}%</b></div>
+      <div class="import-progress-track"><div class="import-progress-fill" style="width:${p}%"></div></div>
+    </div>`;
+}
+
 export function importarContratosModal(state_, { cursos = [], turmas = [] } = {}){
   if(!state_.importContratosModalAberto) return "";
   const itens = state_.importContratosItens;
@@ -1707,6 +1925,13 @@ export function importarContratosModal(state_, { cursos = [], turmas = [] } = {}
   const bannerFaltaHtml = comFalta.length ? `
       <p class="import-contrato-faltando" style="margin:0 0 10px;">${ICONS_IMPORT.warn}<span><b>${comFalta.length}</b> contrato(s) com campos que não consegui ler — estão destacados abaixo pra você preencher.${bloqueados ? ` <b>${bloqueados}</b> sem dado obrigatório (não serão importados até preencher).` : ""}</span></p>` : "";
 
+  const leit = state_.importContratosLeitura || { feito: 0, total: 0, pg: 0, paginas: 0 };
+  const leituraFrac = leit.paginas ? Math.max(0, leit.pg - 1) / leit.paginas : 0; // páginas já concluídas do arquivo atual
+  const leituraPct = leit.total ? ((leit.feito + leituraFrac) / leit.total) * 100 : 0;
+  const leituraBarraHtml = state_.importContratosLendo && leit.total
+    ? barraProgressoImportHtml(leituraPct, `Arquivo ${Math.min(leit.feito + 1, leit.total)} de ${leit.total}${leit.paginas ? ` · página ${leit.pg} de ${leit.paginas}` : ""}`)
+    : "";
+
   const areaUploadHtml = `
     <div class="aluno-modal-section">
       <h3 class="teacher-label">Selecionar PDFs</h3>
@@ -1714,11 +1939,14 @@ export function importarContratosModal(state_, { cursos = [], turmas = [] } = {}
       <label class="upload-dropzone${state_.importContratosLendo ? " is-loading" : ""}" for="import-contratos-pdf-files">
         <span class="upload-dropzone-icon">${state_.importContratosLendo ? ICONS_IMPORT.spinner : ICONS_IMPORT.upload}</span>
         <span class="upload-dropzone-text">
-          <strong>${state_.importContratosLendo ? "Lendo os PDFs…" : "Toque pra escolher os contratos"}</strong>
+          <strong>${state_.importContratosLendo ? "Lendo os PDFs… toque aqui pra adicionar mais" : "Toque pra escolher os contratos"}</strong>
           <span>${state_.importContratosLendo && state_.importContratosOcrAndamento ? esc(state_.importContratosOcrAndamento) : "Pode selecionar vários PDFs de uma vez — digitais ou escaneados"}</span>
         </span>
-        <input type="file" id="import-contratos-pdf-files" accept="application/pdf" multiple style="display:none;" ${state_.importContratosLendo ? "disabled" : ""} />
+        <input type="file" id="import-contratos-pdf-files" accept="application/pdf" multiple style="display:none;" ${state_.importContratosSalvando ? "disabled" : ""} />
       </label>
+      ${leituraBarraHtml}
+      ${state_.importContratosDuplicados ? `<p class="section-eyebrow" style="margin:8px 0 0;">${state_.importContratosDuplicados} arquivo(s) já estavam na lista e foram ignorados.</p>` : ""}
+      ${(state_.importContratosLendo || state_.importContratosSalvando) ? `<p class="section-eyebrow" style="margin:8px 0 0;">Pode fechar esta janela e usar o app normalmente: o processo continua e um aviso com a porcentagem fica no canto da tela.</p>` : ""}
     </div>`;
 
   const listaHtml = itens.length ? `
@@ -1728,6 +1956,7 @@ export function importarContratosModal(state_, { cursos = [], turmas = [] } = {}
         <span>Assinatura de todos:</span>
         <button type="button" class="import-assinatura-btn is-assinado" data-action="import-contrato-assinatura-todos" data-valor="assinado">Já assinados</button>
         <button type="button" class="import-assinatura-btn is-pendente" data-action="import-contrato-assinatura-todos" data-valor="pendente">Pendentes</button>
+        ${(state_.importContratosLendo || state_.importContratosSalvando) ? "" : `<button type="button" class="import-assinatura-btn" style="margin-left:auto;" data-action="import-contratos-limpar">Limpar lista</button>`}
       </div>
       <div class="import-contrato-lista">${itens.map((it, i) => itemImportacaoHtml(it, i, cursos, turmas)).join("")}</div>
     </div>` : "";
@@ -1740,7 +1969,7 @@ export function importarContratosModal(state_, { cursos = [], turmas = [] } = {}
 
   const progresso = state_.importContratosProgresso;
   const progressoHtml = state_.importContratosSalvando
-    ? `<p class="section-eyebrow" style="margin:0 0 10px;">Importando ${progresso.feito} de ${progresso.total}…</p>`
+    ? barraProgressoImportHtml(progresso.total ? (progresso.feito / progresso.total) * 100 : 0, `Importando ${progresso.feito} de ${progresso.total}…`)
     : "";
 
   return `

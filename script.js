@@ -243,6 +243,8 @@ import {
   DOMINIO_RESPONSAVEL,
   interpretarContratoTexto,
   importarContratosModal,
+  importContratosChipHtml,
+  importContratosChipInfo,
 } from "./contratos.js";
 import {
   calendarioHtml,
@@ -1115,30 +1117,81 @@ async function extrairTextoDoPdf(file){
    uma vez e reaproveitado entre as páginas/arquivos; os dados do idioma
    (~2 MB) baixam na primeira vez e ficam em cache.
    ------------------------------------------------------------------ */
-let _ocrWorker = null;
-async function obterOcrWorker(){
+let _ocrWorkers = [];
+/* Quantos workers de OCR rodam juntos: 2 em aparelhos com 4+ núcleos (a
+   maioria dos computadores e celulares atuais), 1 nos mais fracos pra não
+   estourar a memória. Cada worker lê uma página enquanto o outro lê outra. */
+function quantidadeWorkersOcr(){
+  const nucleos = Number(navigator.hardwareConcurrency) || 2;
+  return nucleos >= 4 ? 2 : 1;
+}
+async function obterOcrWorkers(){
   if(!window.Tesseract) throw new Error("tesseract-nao-carregado");
-  if(!_ocrWorker){
-    _ocrWorker = await window.Tesseract.createWorker("por");
-    // modo 6 = "bloco único de texto": foi o que melhor leu o modelo de contrato
-    await _ocrWorker.setParameters({ tessedit_pageseg_mode: "6" });
+  if(!_ocrWorkers.length){
+    const n = quantidadeWorkersOcr();
+    _ocrWorkers = await Promise.all(Array.from({ length: n }, async () => {
+      const w = await window.Tesseract.createWorker("por");
+      // modo 6 = "bloco único de texto": foi o que melhor leu o modelo de contrato
+      await w.setParameters({ tessedit_pageseg_mode: "6" });
+      return w;
+    }));
   }
-  return _ocrWorker;
+  return _ocrWorkers;
 }
 async function encerrarOcrWorker(){
-  if(_ocrWorker){ try { await _ocrWorker.terminate(); } catch(e){} _ocrWorker = null; }
+  const lista = _ocrWorkers;
+  _ocrWorkers = [];
+  for(const w of lista){ try { await w.terminate(); } catch(e){} }
+}
+
+/* Deixa a página em tons de cinza e estica o contraste: escaneados claros,
+   apagados ou cinzentos (papel amarelado, impressora fraca) passam a ter
+   fundo branco e letra escura, o que o OCR lê bem melhor. Em página que já
+   está nítida quase não muda nada. */
+function melhorarContrasteParaOcr(canvas){
+  const ctx = canvas.getContext("2d");
+  const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const d = img.data;
+  const n = d.length / 4;
+  const cinza = new Uint8Array(n);
+  const hist = new Uint32Array(256);
+  for(let i = 0, j = 0; j < n; i += 4, j++){
+    const g = (d[i] * 299 + d[i + 1] * 587 + d[i + 2] * 114) / 1000 | 0;
+    cinza[j] = g; hist[g]++;
+  }
+  // ignora 1% dos pixels mais escuros e 1% dos mais claros (poeira, bordas)
+  const corte = n * 0.01;
+  let acc = 0, lo = 0, hi = 255;
+  for(let v = 0; v < 256; v++){ acc += hist[v]; if(acc >= corte){ lo = v; break; } }
+  acc = 0;
+  for(let v = 255; v >= 0; v--){ acc += hist[v]; if(acc >= corte){ hi = v; break; } }
+  const faixa = hi - lo;
+  if(faixa < 40){ return; } // página quase uniforme: não mexe
+  const fator = 255 / faixa;
+  for(let i = 0, j = 0; j < n; i += 4, j++){
+    let v = (cinza[j] - lo) * fator;
+    v = v < 0 ? 0 : v > 255 ? 255 : v;
+    d[i] = d[i + 1] = d[i + 2] = v;
+  }
+  ctx.putImageData(img, 0, 0);
 }
 
 /* Lê um PDF escaneado página por página. `aoProgresso(paginaAtual, total)`
    é opcional, só pra mostrar "página 3 de 6" na tela. */
 async function extrairTextoDoPdfComOcr(file, aoProgresso){
   if(!window.pdfjsLib) throw new Error("pdfjs-nao-carregado");
-  const worker = await obterOcrWorker();
+  const workers = await obterOcrWorkers();
   const buffer = await file.arrayBuffer();
   const pdf = await window.pdfjsLib.getDocument({ data: buffer }).promise;
-  const paginas = [];
-  for(let p = 1; p <= pdf.numPages; p++){
-    if(aoProgresso) aoProgresso(p, pdf.numPages);
+  const total = pdf.numPages;
+  const paginas = new Array(total).fill("");
+  const livres = workers.slice();
+  const emAndamento = new Set();
+  let concluidas = 0;
+  if(aoProgresso) aoProgresso(1, total);
+  for(let p = 1; p <= total; p++){
+    // espera algum worker ficar livre antes de desenhar a próxima página
+    while(livres.length === 0) await Promise.race(emAndamento);
     const page = await pdf.getPage(p);
     // escala 2.5 ≈ 180 dpi numa folha A4: nítido o bastante pro OCR sem pesar
     const viewport = page.getViewport({ scale: 2.5 });
@@ -1149,10 +1202,20 @@ async function extrairTextoDoPdfComOcr(file, aoProgresso){
     ctx.fillStyle = "#fff";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     await page.render({ canvasContext: ctx, viewport }).promise;
-    const { data } = await worker.recognize(canvas);
-    paginas.push(data.text || "");
-    canvas.width = canvas.height = 0; // libera memória
+    try { melhorarContrasteParaOcr(canvas); } catch(e){ /* sem o ajuste, lê assim mesmo */ }
+    const worker = livres.pop();
+    const tarefa = worker.recognize(canvas)
+      .then(({ data }) => { paginas[p - 1] = data.text || ""; })
+      .finally(() => {
+        canvas.width = canvas.height = 0; // libera memória
+        livres.push(worker);
+        emAndamento.delete(tarefa);
+        concluidas++;
+        if(aoProgresso) aoProgresso(Math.min(concluidas + 1, total), total);
+      });
+    emAndamento.add(tarefa);
   }
+  await Promise.all(emAndamento);
   return paginas.join("\n");
 }
 
@@ -1692,6 +1755,9 @@ const state = {
   importContratosModalAberto: false,
   importContratosLendo: false,          // true enquanto extrai texto de algum PDF
   importContratosOcrAndamento: "",       // andamento do OCR (PDF escaneado)
+  importContratosLeitura: { feito: 0, total: 0, pg: 0, paginas: 0 }, // alimenta a barra de % da leitura
+  importContratosFimNaoVisto: false,    // terminou a importação com a janela fechada: o aviso flutuante fica verde até a pessoa abrir
+  importContratosDuplicados: 0,         // quantos PDFs foram ignorados por já estarem na lista
   importContratosItens: [],             // [{ id, arquivoNome, contrato, avisos, selecionado, criarAcesso, status, erro }]
   importContratosSalvando: false,
   importContratosProgresso: { feito: 0, total: 0 },
@@ -4949,7 +5015,7 @@ function renderInstituicao(){
   }) + importarContratosModal(state, {
     cursos: cursosEModalidadesDaEscola(school?.nome || ""),
     turmas: state.instTurmas || [],
-  }) + contratoVisualizadorModal();
+  }) + importContratosChipHtml(state) + contratoVisualizadorModal();
 }
 
 function gestaoInstituicaoView(school){
@@ -7413,6 +7479,138 @@ async function sincronizarResumoContratos(alunoId, escolaId){
   if(c.escolaId === escolaId) c.itens = c.itens.filter(x => x.alunoId !== alunoId).concat(lista);
 }
 
+/* ------------------------------------------------------------------
+   Leitura de contratos em fila, em segundo plano.
+   A pessoa pode escolher vários PDFs, fechar a janela e continuar usando
+   o app: a leitura segue rodando e um aviso flutuante mostra a porcentagem.
+   Também dá pra acrescentar mais PDFs enquanto ainda está lendo — eles
+   entram no fim da fila. Com a janela fechada só o aviso é atualizado
+   (sem redesenhar o app inteiro, pra não atrapalhar quem está digitando).
+   ------------------------------------------------------------------ */
+const filaLeituraContratos = [];
+
+function importContratosOcupado(){
+  return !!(state.importContratosLendo || state.importContratosSalvando);
+}
+
+function importContratosResetar(){
+  state.importContratosModalAberto = false;
+  state.importContratosItens = [];
+  state.importContratosResumo = null;
+  state.importContratosFimNaoVisto = false;
+  state.importContratosDuplicados = 0;
+  filaLeituraContratos.length = 0;
+}
+
+// avisa antes de fechar/recarregar a aba no meio de uma leitura ou importação
+window.addEventListener("beforeunload", (e) => {
+  if(importContratosOcupado()){ e.preventDefault(); e.returnValue = ""; }
+});
+
+/* Atualiza só o aviso flutuante. Devolve false se ele precisa ser
+   (re)desenhado — aí quem chamou faz um render completo. */
+function atualizarChipImportContratos(){
+  const chip = document.getElementById("import-chip");
+  const info = importContratosChipInfo(state);
+  if(!chip || !info || chip.dataset.estado !== info.estado) return false;
+  const texto = document.getElementById("import-chip-texto");
+  const pct = document.getElementById("import-chip-pct");
+  const fill = document.getElementById("import-chip-fill");
+  if(texto) texto.textContent = info.texto;
+  if(pct) pct.textContent = `${info.pct}%`;
+  if(fill) fill.style.width = `${info.pct}%`;
+  return true;
+}
+
+function renderImportContratos(){
+  if(state.importContratosModalAberto){ render(); return; }
+  if(!atualizarChipImportContratos()) renderPreservandoFoco();
+}
+
+async function enfileirarLeituraContratos(arquivos){
+  // PDFs que já estão na lista (ou na fila) não entram de novo
+  const repetido = (a) =>
+    state.importContratosItens.some(it => it.arquivo && it.arquivo.name === a.name && it.arquivo.size === a.size)
+    || filaLeituraContratos.some(f => f.name === a.name && f.size === a.size);
+  const novos = [];
+  arquivos.forEach(a => { if(!repetido(a) && !novos.some(n => n.name === a.name && n.size === a.size)) novos.push(a); });
+  state.importContratosDuplicados = arquivos.length - novos.length;
+  state.importContratosResumo = null;
+  state.importContratosFimNaoVisto = false;
+  if(!novos.length){ render(); return; }
+
+  filaLeituraContratos.push(...novos);
+
+  // já tem uma leitura andando: só soma na fila e na porcentagem
+  if(state.importContratosLendo){
+    state.importContratosLeitura.total += novos.length;
+    renderImportContratos();
+    return;
+  }
+
+  state.importContratosLendo = true;
+  state.importContratosLeitura = { feito: 0, total: novos.length, pg: 0, paginas: 0 };
+  render();
+  try {
+    while(filaLeituraContratos.length){
+      const arquivo = filaLeituraContratos.shift();
+      state.importContratosLeitura.pg = 0;
+      state.importContratosLeitura.paginas = 0;
+      try {
+        const { texto, ocr } = await extrairTextoContrato(arquivo, (pg, tot) => {
+          state.importContratosLeitura.pg = pg;
+          state.importContratosLeitura.paginas = tot;
+          state.importContratosOcrAndamento = `${arquivo.name} — lendo página ${pg} de ${tot} (escaneado)…`;
+          renderImportContratos();
+        });
+        const { contrato, avisos } = interpretarContratoTexto(texto);
+        if(ocr) avisos.unshift("Documento escaneado, lido por OCR — confira CPF, RG, datas e valores com o PDF antes de importar.");
+        const precisaLogin = contratoPrecisaLoginAluno(contrato);
+        if(precisaLogin) contratoSugerirAcessos(contrato, emailsUsadosDaUnidade());
+        state.importContratosItens.push({
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          arquivoNome: arquivo.name,
+          arquivo,            // fica só na memória, pra poder mandar o PDF pra assinatura
+          assinado: true,     // padrão: já assinado; a secretaria troca pra "pendente" se for o caso
+          contrato,
+          avisos,
+          selecionado: true,
+          // por padrão cria acesso se o curso reconhecido permitir —
+          // some antes de confirmar a lista inteira, se for o caso
+          criarAcesso: precisaLogin || !contrato.curso,
+          status: "",
+          erro: "",
+        });
+      } catch(err){
+        console.error("Erro ao ler PDF de contrato:", arquivo.name, err);
+        state.importContratosItens.push({
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          arquivoNome: arquivo.name,
+          arquivo,
+          assinado: true,
+          contrato: contratoEstadoInicial(),
+          avisos: [err?.message === "pdfjs-nao-carregado"
+            ? "A biblioteca de leitura de PDF não carregou (conexão bloqueada?). Tente de novo."
+            : (err?.message === "tesseract-nao-carregado" ? "A biblioteca de leitura de escaneados (OCR) não carregou (conexão bloqueada?). Tente de novo." : "Não consegui ler este PDF. Preencha manualmente ou pule este arquivo.")],
+          selecionado: false,
+          criarAcesso: false,
+          status: "",
+          erro: "",
+        });
+      }
+      state.importContratosLeitura.feito++;
+      renderImportContratos();
+    }
+  } finally {
+    filaLeituraContratos.length = 0;
+    state.importContratosLendo = false;
+    state.importContratosOcrAndamento = "";
+    state.importContratosLeitura = { feito: 0, total: 0, pg: 0, paginas: 0 };
+    encerrarOcrWorker();  // libera a memória do OCR
+    renderImportContratos();
+  }
+}
+
 async function anexarContratosDoAluno(aluno, arquivos){
   const escolaId = state.escolaSelecionadaId;
   const status = state.contratoUpStatus;
@@ -7420,9 +7618,10 @@ async function anexarContratosDoAluno(aluno, arquivos){
   render();
   let salvos = 0;
   const erros = [];
-  for(const arq of arquivos){
+  // os PDFs são independentes entre si: envia todos ao mesmo tempo
+  await Promise.all(arquivos.map(async (arq) => {
     const problema = validarArquivoContrato(arq);
-    if(problema){ erros.push(problema); continue; }
+    if(problema){ erros.push(problema); return; }
     try {
       await salvarContratoPdf({ alunoId: aluno.id, escolaId, arquivo: arq, status });
       salvos++;
@@ -7430,7 +7629,7 @@ async function anexarContratosDoAluno(aluno, arquivos){
       console.error("Erro ao salvar contrato:", arq.name, err);
       erros.push(`Não consegui salvar "${arq.name}"${err?.code ? ` (${err.code})` : ""}.`);
     }
-  }
+  }));
   if(salvos){
     try { await sincronizarResumoContratos(aluno.id, escolaId); }
     catch(err){ console.warn("Contratos salvos, mas não atualizei o resumo do aluno:", err?.code || err); }
@@ -10272,9 +10471,20 @@ function bindEvents(){
       const item = state.importContratosItens[i];
       const dataParcial = t.type === "date" && t.value && !contratoDataPlausivel(t.value);
       if(item && !dataParcial){
-        item.contrato[t.dataset.importCampo] = t.value;
+        const campoImp = t.dataset.importCampo;
+        item.contrato[campoImp] = t.value;
         // quem digita um responsável quer que ele seja cadastrado
-        if(t.dataset.importCampo === "respNome") item.contrato.semResponsavel = !t.value.trim();
+        if(campoImp === "respNome") item.contrato.semResponsavel = !t.value.trim();
+        // bloco "Documentos, datas e valores": mantém aberto e recalcula as parcelas
+        if(["alunoCpf","alunoRg","respCpf","respRg","dataInicio","dataTermino","primeiroVencimento","valorCurso","valorMaterial","numParcelas","primeiraParcelaPaga","primeiraParcelaMes","primeiraParcelaData"].includes(campoImp)){
+          item.editouDetalhes = true;
+          if(["dataInicio","valorCurso","valorMaterial","numParcelas"].includes(campoImp)){
+            // a data de término lida do PDF só é recalculada se a data de início mudou
+            const terminoLido = item.contrato.dataTermino;
+            contratoRecalcular(item.contrato);
+            if(campoImp !== "dataInicio" && terminoLido) item.contrato.dataTermino = terminoLido;
+          }
+        }
       }
       // tira (ou volta) o realce do campo na hora, sem redesenhar a tela
       if(t.dataset.importante) t.classList.toggle("is-faltando", !String(t.value).trim());
@@ -10500,57 +10710,8 @@ function bindEvents(){
     }
     if(t.id === "import-contratos-pdf-files"){
       const arquivos = Array.from(t.files || []);
-      if(!arquivos.length) return;
-      state.importContratosLendo = true;
-      state.importContratosResumo = null;
-      render();
-      for(const arquivo of arquivos){
-        try {
-          const { texto, ocr } = await extrairTextoContrato(arquivo, (pg, tot) => {
-            state.importContratosOcrAndamento = `${arquivo.name} — lendo página ${pg} de ${tot} (escaneado)…`;
-            render();
-          });
-          const { contrato, avisos } = interpretarContratoTexto(texto);
-          if(ocr) avisos.unshift("Documento escaneado, lido por OCR — confira CPF, RG, datas e valores com o PDF antes de importar.");
-          const precisaLogin = contratoPrecisaLoginAluno(contrato);
-          if(precisaLogin) contratoSugerirAcessos(contrato, emailsUsadosDaUnidade());
-          state.importContratosItens.push({
-            id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-            arquivoNome: arquivo.name,
-            arquivo,            // fica só na memória, pra poder mandar o PDF pra assinatura
-            assinado: true,     // padrão: já assinado; a secretaria troca pra "pendente" se for o caso
-            contrato,
-            avisos,
-            selecionado: true,
-            // por padrão cria acesso se o curso reconhecido permitir —
-            // some antes de confirmar a lista inteira, se for o caso
-            criarAcesso: precisaLogin || !contrato.curso,
-            status: "",
-            erro: "",
-          });
-        } catch(err){
-          console.error("Erro ao ler PDF de contrato:", arquivo.name, err);
-          state.importContratosItens.push({
-            id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-            arquivoNome: arquivo.name,
-            arquivo,
-            assinado: true,
-            contrato: contratoEstadoInicial(),
-            avisos: [err?.message === "pdfjs-nao-carregado"
-              ? "A biblioteca de leitura de PDF não carregou (conexão bloqueada?). Tente de novo."
-              : (err?.message === "tesseract-nao-carregado" ? "A biblioteca de leitura de escaneados (OCR) não carregou (conexão bloqueada?). Tente de novo." : "Não consegui ler este PDF. Preencha manualmente ou pule este arquivo.")],
-            selecionado: false,
-            criarAcesso: false,
-            status: "",
-            erro: "",
-          });
-        }
-      }
-      state.importContratosLendo = false;
-      state.importContratosOcrAndamento = "";
-      encerrarOcrWorker();  // libera a memória do OCR
       t.value = "";  // permite escolher o mesmo arquivo de novo, se precisar
-      render();
+      if(arquivos.length) enfileirarLeituraContratos(arquivos);
       return;
     }
     if(t.dataset && t.dataset.importCampo === "curso" && t.tagName === "SELECT"){
@@ -10739,6 +10900,8 @@ function bindEvents(){
 
     switch(action){
       case "logout":
+        if(importContratosOcupado() && !confirm("Ainda há contratos sendo lidos ou importados. Se sair agora, isso será interrompido. Sair mesmo assim?")) break;
+        importContratosResetar();
         suporte.resetar();
         solicitacoes.resetar();
         state.mobileMenuOpen = false;
@@ -10746,6 +10909,13 @@ function bindEvents(){
         break;
 
       case "select-escola":
+        if(el.dataset.escola !== state.escolaSelecionadaId){
+          if(importContratosOcupado()){
+            alert("Ainda há contratos sendo lidos ou importados nesta unidade. Espere terminar antes de trocar de unidade.");
+            break;
+          }
+          importContratosResetar();  // a lista de contratos lidos é desta unidade
+        }
         state.escolaSelecionadaId = el.dataset.escola;
         state.instTab = "turmas";
         state.instAlunos = null;
@@ -11937,12 +12107,40 @@ function bindEvents(){
         break;
       }
 
-      case "abrir-importar-contratos-modal":
+      case "abrir-importar-contratos-modal": {
+        // Se ainda tem leitura/importação andando, ou contratos lidos esperando
+        // conferência, reabre sem apagar nada. Só começa do zero quando acabou.
+        const pendentes = state.importContratosItens.some(it => it.status !== "ok");
         state.importContratosModalAberto = true;
-        state.importContratosItens = [];
-        state.importContratosResumo = null;
+        state.importContratosFimNaoVisto = false;
+        state.importContratosDuplicados = 0;
+        if(!importContratosOcupado() && !pendentes){
+          state.importContratosItens = [];
+          state.importContratosResumo = null;
+        }
         render();
         garantirPessoasDaUnidade();
+        break;
+      }
+
+      case "reabrir-importar-contratos-modal":
+        state.importContratosModalAberto = true;
+        state.importContratosFimNaoVisto = false;
+        render();
+        break;
+
+      case "dispensar-import-chip":
+        state.importContratosFimNaoVisto = false;
+        render();
+        break;
+
+      case "import-contratos-limpar":
+        if(!importContratosOcupado()){
+          state.importContratosItens = [];
+          state.importContratosResumo = null;
+          state.importContratosDuplicados = 0;
+        }
+        render();
         break;
 
       case "fechar-importar-contratos-modal":
@@ -12221,7 +12419,7 @@ function bindEvents(){
         state.importContratosSalvando = true;
         state.importContratosProgresso = { feito: 0, total: itens.length };
         state.importContratosResumo = null;
-        render();
+        renderImportContratos();
 
         // acumula os logins já usados/escolhidos NESTA leva, pra dois
         // homônimos do mesmo lote não saírem com o mesmo login antes
@@ -12232,7 +12430,7 @@ function bindEvents(){
         for(const item of itens){
           const c = item.contrato;
           item.status = "salvando";
-          render();
+          renderImportContratos();
 
           const problema = !c.alunoNome.trim() ? "Falta o nome do aluno."
             : (c.segundoAluno && !(c.aluno2Nome || "").trim()) ? "Falta o nome do segundo aluno."
@@ -12244,7 +12442,7 @@ function bindEvents(){
             item.erro = problema;
             resumo.erros++;
             state.importContratosProgresso.feito++;
-            render();
+            renderImportContratos();
             continue;
           }
 
@@ -12311,12 +12509,13 @@ function bindEvents(){
           }
 
           state.importContratosProgresso.feito++;
-          render();
+          renderImportContratos();
         }
 
         state.importContratosSalvando = false;
         state.importContratosResumo = resumo;
-        render();
+        state.importContratosFimNaoVisto = !state.importContratosModalAberto;
+        renderImportContratos();
         garantirPessoasDaUnidade();
         break;
       }
