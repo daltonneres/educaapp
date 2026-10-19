@@ -897,6 +897,14 @@ export function criarHorarios(ctx){
     return ctx.cursosDaEscola(nomeDaEscola(f.escolaId));
   }
 
+  /* Salas cadastradas na aba "Cursos e turmas" viram sugestões no campo
+     "Sala" — dá pra digitar outra mesmo assim. */
+  function salasSugeridasHtml(escolaId){
+    const salas = ctx.salasDaEscola ? ctx.salasDaEscola(escolaId) : [];
+    if(!salas.length) return "";
+    return `<datalist id="hor-salas-lista">${salas.map(n => `<option value="${esc(n)}"></option>`).join("")}</datalist>`;
+  }
+
   function modalTurma(m){
     const f = m.f;
     const e = eu();
@@ -930,7 +938,7 @@ export function criarHorarios(ctx){
           <option value="" disabled ${!f.disciplina ? "selected" : ""}>Escolha</option>
           ${disciplinas.map(d => `<option value="${esc(d)}" ${f.disciplina === d ? "selected" : ""}>${esc(d)}</option>`).join("")}
         </select>`)}
-        ${campo("Sala (opcional)", inp("sala", f.sala))}
+        ${campo("Sala (opcional)", inp("sala", f.sala, `list="hor-salas-lista" autocomplete="off"`) + salasSugeridasHtml(f.escolaId))}
       </div>
       ${multiEscola && e.papel === "professor" && !m.editId ? campo("Unidade", `<select class="teacher-text-input" data-hor="f" data-c="escolaId">
           ${e.escolasIds.map(id => `<option value="${esc(id)}" ${f.escolaId === id ? "selected" : ""}>${esc(nomeDaEscola(id) || id)}</option>`).join("")}

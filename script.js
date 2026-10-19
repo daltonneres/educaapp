@@ -46,6 +46,11 @@
 
    escolas/{escolaId}
      nome, uf, data
+     catalogo?: { cursos: [{ id, nome, titulo, descricao, ativo }],
+                  modalidades: [{ id, nome, descricao, ativo }],
+                  salas: [{ id, nome, capacidade, descricao, ativo }] }
+                // aba "Cursos e turmas" (ver cursos.js). Sem `catalogo`, valem as listas
+                // padrão do código (CURSOS_POR_ESCOLA / MODALIDADES_POR_ESCOLA).
      turmas: [{ nome, alunos, faltasHoje, frequencia }]
      faltantes: [{ nome, turma, faltasMes, ultima }]
      alunos: [{ nome, turma }]
@@ -55,6 +60,7 @@
 
    turmas/{turmaId}      (turmas de um professor — coleção própria)
      nome, horario, sala, escola, escolaId, disciplina, professorId
+     descricao?: string     // texto livre, editado na aba "Cursos e turmas"
      alunos: [nomes]
      encontros: [{ dia: 0–6 (0 = domingo), inicio: "HH:MM", fim: "HH:MM" }]   // aba Horários;
                 // `horario` (texto) continua sendo gravado a partir dele. Turmas antigas
@@ -222,6 +228,7 @@ import { firebaseConfig } from "./firebase-config.js";
 import { criarHorarios } from "./horarios.js";
 import { criarSuporte } from "./suporte.js";
 import { criarSolicitacoes } from "./solicitacoes.js";
+import { criarCursos, normalizarCatalogo, cursosAtivosDoCatalogo, modalidadesAtivasDoCatalogo, tituloDoCurso } from "./cursos.js";
 import { criarDev } from "./dev.js";
 import {
   contratoEstadoInicial,
@@ -970,10 +977,34 @@ function cursosDaModalidade(nome){
 /* Cursos avulsos + modalidades da unidade (nessa ordem). */
 function cursosEModalidadesDaEscola(nomeEscola){
   const nome = (nomeEscola || "").toLowerCase();
-  const combos = nome.includes("prata") ? MODALIDADES_POR_ESCOLA.prata
+  const doCatalogo = modalidadesAtivasDoCatalogo(catalogoDaEscolaPeloNome(nomeEscola));
+  const combos = doCatalogo
+    || (nome.includes("prata") ? MODALIDADES_POR_ESCOLA.prata
     : nome.includes("salto") ? MODALIDADES_POR_ESCOLA.salto
-    : [...new Set([...MODALIDADES_POR_ESCOLA.salto, ...MODALIDADES_POR_ESCOLA.prata])];
+    : [...new Set([...MODALIDADES_POR_ESCOLA.salto, ...MODALIDADES_POR_ESCOLA.prata])]);
   return [...cursosDaEscola(nomeEscola), ...combos];
+}
+
+/* Catálogo personalizado da unidade (aba "Cursos e turmas"), achado pelo
+   nome porque essas funções recebem o nome da escola. null = usa o padrão
+   acima. */
+function catalogoDaEscolaPeloNome(nomeEscola){
+  if(!nomeEscola) return null;
+  const escola = Object.values(state.data?.escolas || {}).find(e => e && e.nome === nomeEscola);
+  return escola?.catalogo || null;
+}
+
+/* Lista padrão (a do código) de cursos e modalidades de uma unidade —
+   é o ponto de partida da aba "Cursos e turmas". */
+function padraoDoCatalogo(nomeEscola){
+  const nome = (nomeEscola || "").toLowerCase();
+  const chave = nome.includes("prata") ? "prata" : nome.includes("salto") ? "salto" : null;
+  return {
+    cursos: chave ? [...CURSOS_POR_ESCOLA[chave]] : [...TODOS_OS_CURSOS],
+    modalidades: chave
+      ? [...MODALIDADES_POR_ESCOLA[chave]]
+      : [...new Set([...MODALIDADES_POR_ESCOLA.salto, ...MODALIDADES_POR_ESCOLA.prata])],
+  };
 }
 
 /* Versão de cursosDasEscolas (professor em mais de uma unidade) que inclui as modalidades. */
@@ -1001,6 +1032,8 @@ const MESES_CURTOS = ["jan","fev","mar","abr","mai","jun","jul","ago","set","out
 const MESES_LONGOS = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
 
 function cursosDaEscola(nomeEscola){
+  const doCatalogo = cursosAtivosDoCatalogo(catalogoDaEscolaPeloNome(nomeEscola));
+  if(doCatalogo) return doCatalogo;
   const nome = (nomeEscola || "").toLowerCase();
   if(nome.includes("prata")) return CURSOS_POR_ESCOLA.prata;
   if(nome.includes("salto")) return CURSOS_POR_ESCOLA.salto;
@@ -1853,6 +1886,7 @@ const horarios = criarHorarios({
   fs: { doc, setDoc, updateDoc, deleteDoc, collection, query, where, getDocs, getDoc },
   ICONS, escapeHtml,
   cursosDaEscola, todosOsCursos: TODOS_OS_CURSOS,
+  salasDaEscola: (escolaId) => cursosCfg.salasDaEscola(escolaId),   // sugestões no campo "Sala" (ver cursos.js)
   // itens do calendário (sem aula, avisos) — os mesmos que a aba Calendário já carrega
   eventosCalendario: () => state.screen === "professor"
     ? state.cal.prof.eventos
@@ -1881,6 +1915,15 @@ const horarios = criarHorarios({
     render();
     if(turma) await Promise.all([carregarRegistroDoDia(turma), carregarAtividadesDaTurma(turma)]);
   },
+});
+
+/* Aba "Cursos e turmas" (secretaria): personaliza cursos, modalidades, salas
+   e turmas da unidade. Tela e gravação ficam em cursos.js. */
+const cursosCfg = criarCursos({
+  state, render, ICONS, escapeHtml, db, doc, updateDoc, deleteField,
+  padraoDoCatalogo,
+  garantirTurmas: () => garantirTurmasDaUnidade(),
+  abrirHorarios: () => { state.instTab = "horarios"; render(); horarios.aoAbrir(); },
 });
 
 /* ================================================================== */
@@ -2002,6 +2045,7 @@ function normalizeEscola(dados){
     turmas: Array.isArray(dados.turmas) ? dados.turmas : [],
     faltantes: Array.isArray(dados.faltantes) ? dados.faltantes : [],
     alunos: Array.isArray(dados.alunos) ? dados.alunos : [],
+    catalogo: normalizarCatalogo(dados.catalogo),   // cursos, modalidades e salas personalizados (aba "Cursos e turmas"); null = lista padrão
   };
 }
 
@@ -5069,6 +5113,7 @@ function renderInstituicao(){
   const school = state.data.escolas[state.escolaSelecionadaId];
   const navItems = [
     { key:"turmas", label:"Turmas", icon:"clipboard" },
+    { key:"cursos", label:"Cursos e turmas", icon:"book" },
     { key:"calendario", label:"Calendário", icon:"calendar" },
     { key:"horarios", label:"Horários", icon:"horarios" },
     { key:"relatorio", label:"Relatório do dia", icon:"clipboard" },
@@ -5090,6 +5135,7 @@ function renderInstituicao(){
 
   let body = "";
   if(state.instTab === "turmas") body = turmasView(school);
+  else if(state.instTab === "cursos") body = cursosCfg.view();
   else if(state.instTab === "calendario") body = calendarioInstituicaoView(school);
   else if(state.instTab === "horarios") body = horarios.view();
   else if(state.instTab === "relatorio") body = relatorioDiaView(school);
@@ -8992,7 +9038,8 @@ function turmasView(school){
         <div class="turma-card-head">
           <div>
             <div class="turma-card-nome">${escapeHtml(t.nome)}</div>
-            ${t.disciplina ? `<div class="turma-card-disciplina">${escapeHtml(t.disciplina)}</div>` : ""}
+            ${t.disciplina ? `<div class="turma-card-disciplina">${escapeHtml(tituloDoCurso(school?.catalogo, t.disciplina))}</div>` : ""}
+            ${t.descricao ? `<div class="turma-card-descricao" style="font-size:12.5px;color:var(--slate);margin-top:3px;">${escapeHtml(t.descricao)}</div>` : ""}
           </div>
           <span class="turma-card-chevron">${ICONS.chevronRight}</span>
         </div>
@@ -9040,10 +9087,11 @@ function turmaDetalheModal(){
       <div class="aluno-modal-head">
         <div>
           <h2>${escapeHtml(turma.nome)}</h2>
-          <p class="section-eyebrow" style="margin:2px 0 0;">${escapeHtml(turma.disciplina || "")}${turma.disciplina && turma.horario ? " · " : ""}${escapeHtml(turma.horario || "")}${turma.sala ? ` · Sala ${escapeHtml(turma.sala)}` : ""}</p>
+          <p class="section-eyebrow" style="margin:2px 0 0;">${escapeHtml(tituloDoCurso(state.data.escolas?.[state.escolaSelecionadaId]?.catalogo, turma.disciplina || ""))}${turma.disciplina && turma.horario ? " · " : ""}${escapeHtml(turma.horario || "")}${turma.sala ? ` · Sala ${escapeHtml(turma.sala)}` : ""}</p>
         </div>
         <button type="button" class="secretaria-modal-close" style="color:var(--slate);" data-action="fechar-turma-detalhe-modal" aria-label="Fechar">${ICONS.close}</button>
       </div>
+      ${turma.descricao ? `<div class="aluno-modal-section"><p style="margin:0;font-size:13.5px;color:var(--slate);white-space:pre-wrap;">${escapeHtml(turma.descricao)}</p></div>` : ""}
       <div class="aluno-modal-section">
         <h3 class="teacher-label">${alunos.length} aluno${alunos.length===1?"":"s"}</h3>
         ${listaAlunosHtml}
@@ -10570,6 +10618,8 @@ function bindEvents(){
     if(t.dataset && t.dataset.sup){ suporte.input(t); return; }
     // Aba Solicitações: formulário guarda o valor sem re-renderizar.
     if(t.dataset && t.dataset.sol){ solicitacoes.input(t); return; }
+    // Aba Cursos e turmas: formulários guardam o valor sem re-renderizar.
+    if(t.dataset && t.dataset.cur){ cursosCfg.input(t); return; }
     // Aba Avaliações: campos do boletim e comentário da avaliação institucional
     // guardam o valor sem re-renderizar, pro cursor não pular.
     if(t.dataset && t.dataset.avalCampo){
@@ -11145,6 +11195,11 @@ function bindEvents(){
       solicitacoes.click(el);
       return;
     }
+    // Aba Cursos e turmas: ações começam com "cur-" (ver cursos.js)
+    if(action.startsWith("cur-")){
+      cursosCfg.click(el);
+      return;
+    }
     // Aba Suporte: ações começam com "sup-" (ver suporte.js)
     if(action.startsWith("sup-")){
       suporte.click(el);
@@ -11162,6 +11217,7 @@ function bindEvents(){
         importContratosResetar();
         suporte.resetar();
         solicitacoes.resetar();
+        cursosCfg.resetar();
         state.mobileMenuOpen = false;
         await signOut(auth);
         break;
@@ -11300,6 +11356,7 @@ function bindEvents(){
           garantirPessoasDaUnidade();
         }
         if(state.instTab === "solicitacoes") solicitacoes.aoAbrir();
+        if(state.instTab === "cursos") cursosCfg.aoAbrir();   // carrega as turmas da unidade
         if((state.instTab === "professores" || state.instTab === "responsaveis") && state.escolaSelecionadaId
           && (state.gestaoProfessores === null || state.gestaoEquipeEscolaId !== state.escolaSelecionadaId)
           && !state.gestaoEquipeCarregando){
