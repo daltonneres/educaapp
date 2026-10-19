@@ -41,7 +41,7 @@ export const CATALOGO_MODULOS = {
   ],
   professor: [
     ["calendario", "Calendário"], ["horarios", "Horários"], ["turmas", "Turmas"],
-    ["aulas", "Aulas & chamada"], ["conteudos", "Conteúdos"], ["avaliacoes", "Notas & atividades"],
+    ["aulas", "Aulas & Chamadas"], ["conteudos", "Conteúdos"], ["avaliacoes", "Notas & atividades"],
     ["aval", "Avaliações"], ["certificados", "Certificados"], ["suporte", "Suporte"],
   ],
   familia: [

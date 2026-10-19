@@ -4107,7 +4107,7 @@ function renderProfessor(){
     { key:"calendario", label:"Calendário", icon:"calendar" },
     { key:"horarios", label:"Horários", icon:"horarios" },
     { key:"turmas", label:"Turmas", icon:"users" },
-    { key:"aulas", label:"Aulas & chamada", icon:"clipboard" },
+    { key:"aulas", label:"Aulas & Chamadas", icon:"clipboard" },
     { key:"conteudos", label:"Conteúdos", icon:"book" },
     { key:"avaliacoes", label:"Notas & atividades", icon:"cap" },
     { key:"aval", label:"Avaliações", icon:"star" },
