@@ -3007,3 +3007,24 @@ img, svg, video { max-width: 100%; }
 @media (max-width: 760px) {
     .import-chip { left: 12px; right: 12px; max-width: none; }
 }
+
+
+/* ---- Professor > Aulas de hoje ---- */
+.aula-hoje-list { display: grid; gap: 10px; margin-bottom: 18px; }
+.aula-hoje-card { display: grid; grid-template-columns: 64px 1fr auto; align-items: center; gap: 14px; padding: 14px 16px; text-align: left; border: 1px solid rgba(18,32,50,.12); border-radius: 12px; background: #fff; cursor: pointer; color: var(--ink); width: 100%; }
+.aula-hoje-card:hover { border-color: var(--gold); background: rgba(201,162,74,.08); }
+.aula-hoje-card.feita { border-left: 4px solid #2f6b4f; }
+.aula-hoje-hora { font-family: var(--font-display); font-size: 20px; line-height: 1.1; display: flex; flex-direction: column; }
+.aula-hoje-hora small { font-size: 12px; color: var(--slate); font-family: inherit; }
+.aula-hoje-info { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.aula-hoje-info strong { font-size: 15.5px; }
+.aula-hoje-info span { font-size: 12.5px; color: var(--slate); }
+.aula-hoje-info .aula-hoje-conteudo { color: var(--ink); }
+.aula-hoje-status { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.aula-hoje-ir { font-size: 12.5px; color: var(--slate); display: inline-flex; align-items: center; gap: 4px; }
+.aula-hoje-outras { margin-top: 8px; }
+.aula-hoje-outras summary { cursor: pointer; font-size: 13.5px; color: var(--slate); margin-bottom: 12px; }
+@media (max-width: 640px) {
+  .aula-hoje-card { grid-template-columns: 1fr; gap: 8px; }
+  .aula-hoje-status { flex-direction: row; justify-content: space-between; align-items: center; }
+}

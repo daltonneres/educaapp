@@ -1323,5 +1323,26 @@ export function criarHorarios(ctx){
     }
   }
 
-  return { view, modais, aoAbrir, click, input, change };
+  /* Aulas de um dia, sem os filtros da tela (usado por "Aulas de hoje" do
+     professor e pelo "Relatório do dia" da secretaria). Cada item tem
+     { turma, inicio, fim, sala, status } — status: normal | alterada |
+     reposicao | cancelada | saiu | semaula. Precisa que as exceções já
+     tenham sido carregadas (ver preparar). */
+  function aulasDoDia(iso){
+    const salvo = { p: H.filtroProf, t: H.filtroTurma };
+    H.filtroProf = ""; H.filtroTurma = "";
+    try { return ocorrencias(iso); } finally { H.filtroProf = salvo.p; H.filtroTurma = salvo.t; }
+  }
+
+  /* Carrega remarcações/cancelamentos e itens "sem aula" do calendário,
+     sem depender de a aba Horários ter sido aberta antes. */
+  function preparar(forcar = false){
+    const e = eu();
+    const chave = `${e.papel}:${e.uid}:${e.escolaId}`;
+    if(H.chave !== chave){ resetar(); H.chave = chave; }
+    ctx.carregarEventosCalendario();
+    return carregar(forcar);
+  }
+
+  return { view, modais, aoAbrir, click, input, change, aulasDoDia, preparar };
 }

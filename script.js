@@ -1435,6 +1435,9 @@ const state = {
   professorConteudosNovoTextoGerenciar: "", // texto do novo conteúdo digitado na aba "Conteúdos"
   professorAvisoEnviado: "",
   professorRegistroSalvo: false,
+  professorChamadasHoje: {},              // { [turmaId]: resumo da chamada de hoje } — alimenta "Aulas de hoje"
+  professorChamadasHojeCarregando: false,
+  relDia: { data: "", escolaId: "", registros: {}, carregando: false, erro: "" },   // Relatório do dia (secretaria)
 
   // --- Notas & atividades (boletim) ---
   professorAvaliacaoBimestre: 1,        // 1 ou 2 — etapa escolhida na aba "Notas & atividades"
@@ -4686,14 +4689,123 @@ function professorPerfilView(){
     : fichaFormCardHtml()}`;
 }
 
+/* ---------------- PROFESSOR > AULAS DE HOJE ----------------
+   Tela 1: só as turmas que têm aula hoje (pelo horário + remarcações),
+   cada uma com o status da chamada. Tela 2 (ao tocar numa turma): a
+   chamada em si, com botão pra voltar. */
+const AULA_OK = ["normal", "alterada", "reposicao"];
+
+function hhmmParaMin(hhmm){
+  if(!/^\d{2}:\d{2}$/.test(hhmm || "")) return null;
+  const [h, m] = hhmm.split(":").map(Number);
+  return h * 60 + m;
+}
+
+/* Status de uma aula frente à chamada: feita | andamento | atrasada | aguardando */
+function statusChamadaDaAula(aula, registro, dataIso){
+  if(registro) return "feita";
+  const hoje = dataDeHojeISO();
+  if(dataIso < hoje) return "atrasada";
+  if(dataIso > hoje) return "aguardando";
+  const agora = new Date().getHours() * 60 + new Date().getMinutes();
+  const ini = hhmmParaMin(aula.inicio);
+  const fim = hhmmParaMin(aula.fim) ?? (ini !== null ? ini + 60 : null);
+  if(fim !== null && agora >= fim) return "atrasada";
+  if(ini !== null && agora >= ini) return "andamento";
+  return "aguardando";
+}
+
+function pillStatusChamada(st, registro){
+  if(st === "feita"){
+    const hora = registro?.registradoEm ? new Date(registro.registradoEm).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : "";
+    return `<span class="pill pill-green">Chamada feita${hora ? ` · ${hora}` : ""}</span>`;
+  }
+  if(st === "atrasada") return `<span class="pill pill-red">Chamada pendente</span>`;
+  if(st === "andamento") return `<span class="pill pill-gold">Em andamento</span>`;
+  return `<span class="pill" style="background:rgba(18,32,50,.06);color:var(--slate);">Aguardando</span>`;
+}
+
+function resumoDeRegistro(d){
+  const presencas = d.presencas || {};
+  const valores = Object.values(presencas);
+  return {
+    conteudoTexto: d.conteudoTexto || "",
+    observacao: d.observacao || "",
+    presentes: valores.filter(v => v === "presente").length,
+    faltas: valores.filter(v => v === "falta").length,
+    justificadas: valores.filter(v => v === "justificada").length,
+    total: valores.length,
+    faltaram: Object.keys(presencas).filter(n => presencas[n] === "falta").sort((a, b) => a.localeCompare(b, "pt-BR")),
+    registradoEm: d.registradoEm || "",
+    professorNome: d.professorNome || "",
+    professorId: d.professorId || "",
+    turmaId: d.turmaId || "",
+  };
+}
+
+/* Lê a chamada de hoje de cada turma do professor (um getDoc por turma —
+   o id do documento já é turmaId_data). */
+async function carregarChamadasDeHojeProfessor(){
+  const turmas = state.data.professorTurmas || [];
+  const data = dataDeHojeISO();
+  state.professorChamadasHojeCarregando = true;
+  render();
+  try {
+    const snaps = await Promise.all(turmas.map(t =>
+      getDoc(doc(db, "registrosAula", `${t.id}_${data}`)).catch(() => null)));
+    const out = {};
+    snaps.forEach((snap, i) => { if(snap && snap.exists()) out[turmas[i].id] = resumoDeRegistro(snap.data()); });
+    state.professorChamadasHoje = out;
+  } finally {
+    state.professorChamadasHojeCarregando = false;
+    render();
+  }
+}
+
+function professorAulasHojeView(){
+  const hoje = dataDeHojeISO();
+  const todas = horarios.aulasDoDia(hoje).filter(o => AULA_OK.includes(o.status));
+  // uma turma com dois encontros no mesmo dia aparece uma vez só (a chamada é por turma/dia)
+  const porTurma = new Map();
+  todas.forEach(o => { if(!porTurma.has(o.turma.id)) porTurma.set(o.turma.id, o); });
+  const aulas = [...porTurma.values()];
+  const feitas = aulas.filter(a => state.professorChamadasHoje[a.turma.id]).length;
+
+  const cards = aulas.map(a => {
+    const reg = state.professorChamadasHoje[a.turma.id];
+    const st = statusChamadaDaAula(a, reg, hoje);
+    const t = a.turma;
+    const qtd = (t.alunos || []).length;
+    return `
+      <button type="button" class="aula-hoje-card ${st === "feita" ? "feita" : ""}" data-action="set-professor-class" data-id="${escapeHtml(t.id)}">
+        <div class="aula-hoje-hora">${escapeHtml(a.inicio)}${a.fim ? `<small>${escapeHtml(a.fim)}</small>` : ""}</div>
+        <div class="aula-hoje-info">
+          <strong>${escapeHtml(t.nome)}</strong>
+          <span>${escapeHtml([t.disciplina, a.sala ? "Sala " + a.sala : "", `${qtd} aluno${qtd === 1 ? "" : "s"}`].filter(Boolean).join(" · "))}</span>
+          ${reg && reg.conteudoTexto ? `<span class="aula-hoje-conteudo">Conteúdo: ${escapeHtml(reg.conteudoTexto)}</span>` : ""}
+        </div>
+        <div class="aula-hoje-status">${pillStatusChamada(st, reg)}<span class="aula-hoje-ir">${st === "feita" ? "Revisar" : "Fazer chamada"} ${ICONS.chevronRight}</span></div>
+      </button>`;
+  }).join("");
+
+  const vazio = `<div class="teacher-empty-state"><strong>Você não tem aula hoje.</strong><span>Se precisar registrar uma chamada fora do horário (reposição, por exemplo), use a opção abaixo.</span></div>`;
+  const outras = (state.data.professorTurmas || []).length ? `
+    <details class="aula-hoje-outras">
+      <summary>Registrar chamada de outra turma</summary>
+      ${professorTurmaSelect()}
+    </details>` : "";
+
+  return `
+    <h2 class="section-title">Aulas de hoje</h2>
+    <p class="section-eyebrow">${escapeHtml(dataDeHojeExtenso())}${aulas.length ? ` · ${feitas} de ${aulas.length} chamada${aulas.length === 1 ? "" : "s"} feita${feitas === 1 ? "" : "s"}` : ""}</p>
+    ${state.professorChamadasHojeCarregando && aulas.length ? `<p class="section-eyebrow">Verificando as chamadas de hoje…</p>` : ""}
+    <div class="aula-hoje-list">${cards || vazio}</div>
+    ${outras}`;
+}
+
 function professorAulasView(){
   const turma = professorTurmaAtual();
-  if(!turma){
-    return `
-      <h2 class="section-title">Aulas de hoje</h2>
-      <p class="section-eyebrow">Escolha uma turma para abrir a chamada, registrar observações e o conteúdo da aula.</p>
-      ${professorTurmaSelect()}`;
-  }
+  if(!turma) return professorAulasHojeView();
   const present = turma.alunos.filter(aluno => (state.professorPresencas[`${turma.id}-${aluno}`] || "presente") === "presente").length;
   const rows = turma.alunos.map(aluno => {
     const key = `${turma.id}-${aluno}`;
@@ -4728,9 +4840,9 @@ function professorAulasView(){
   const carregandoAviso = state.professorRegistroCarregando ? `<p class="section-eyebrow" style="margin-top:10px;">Carregando a chamada de hoje…</p>` : "";
 
   return `
-    <h2 class="section-title">Aulas de hoje</h2>
-    <p class="section-eyebrow">Selecione uma turma para fazer a chamada e registrar a aula.</p>
-    ${professorTurmaSelect()}
+    <button type="button" class="attendance-btn" style="margin-bottom:12px;" data-action="professor-voltar-aulas">‹ Voltar às aulas de hoje</button>
+    <h2 class="section-title">Chamada</h2>
+    <p class="section-eyebrow">${escapeHtml(dataDeHojeExtenso())}</p>
     <div class="teacher-panel">
       <div class="teacher-panel-head"><div><h2>${escapeHtml(turma.nome)} · ${escapeHtml(turma.disciplina)}</h2><p>${escapeHtml(turma.escola)} · ${escapeHtml(turma.horario)} · ${escapeHtml(turma.sala)}</p></div><span class="pill pill-green">${present}/${turma.alunos.length} presentes</span></div>
       <h3>Chamada</h3>
@@ -4959,6 +5071,7 @@ function renderInstituicao(){
     { key:"turmas", label:"Turmas", icon:"clipboard" },
     { key:"calendario", label:"Calendário", icon:"calendar" },
     { key:"horarios", label:"Horários", icon:"horarios" },
+    { key:"relatorio", label:"Relatório do dia", icon:"clipboard" },
     { key:"estatisticas", label:"Estatísticas", icon:"chart" },
     { key:"financeiro", label:"Financeiro", icon:"wallet" },
     { key:"alunos", label:"Alunos", icon:"users" },
@@ -4979,6 +5092,7 @@ function renderInstituicao(){
   if(state.instTab === "turmas") body = turmasView(school);
   else if(state.instTab === "calendario") body = calendarioInstituicaoView(school);
   else if(state.instTab === "horarios") body = horarios.view();
+  else if(state.instTab === "relatorio") body = relatorioDiaView(school);
   else if(state.instTab === "estatisticas") body = estatisticasView(school);
   else if(state.instTab === "financeiro") body = financeiroInstituicaoView(school);
   else if(state.instTab === "alunos") body = alunosView(school);
@@ -7039,6 +7153,150 @@ async function carregarFrequenciaDaInstituicao(escolaId){
     state.instFrequenciaCarregando = false;
     render();
   }
+}
+
+/* ---------------- SECRETARIA > RELATÓRIO DO DIA ----------------
+   Pra cada aula prevista no dia (horário fixo + remarcações, sem as
+   canceladas), mostra se o professor fez a chamada, o conteúdo, quem
+   faltou e a observação da aula. Lê `registrosAula` do dia da unidade
+   (escolaId + data, só igualdades — não precisa de índice composto). */
+function relSomarDias(iso, n){
+  const [a, m, d] = iso.split("-").map(Number);
+  const dt = new Date(a, m - 1, d + n);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+}
+
+function relDataExtenso(iso){
+  const [a, m, d] = iso.split("-").map(Number);
+  const t = new Date(a, m - 1, d).toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  return t.charAt(0).toUpperCase() + t.slice(1);
+}
+
+async function carregarRelatorioDoDia(escolaId, data){
+  if(!escolaId) return;
+  state.relDia = { data, escolaId, registros: {}, carregando: true, erro: "" };
+  render();
+  try {
+    const snaps = await getDocs(query(collection(db, "registrosAula"), where("escolaId", "==", escolaId), where("data", "==", data)));
+    if(state.relDia.data !== data) return;   // o usuário já mudou de dia
+    const registros = {};
+    snaps.forEach(d => { const x = d.data(); if(x.turmaId) registros[x.turmaId] = resumoDeRegistro(x); });
+    state.relDia.registros = registros;
+  } catch(err){
+    console.error("Erro ao carregar o relatório do dia:", err?.code, err);
+    if(state.relDia.data === data) state.relDia.erro = `Não foi possível carregar as chamadas deste dia${err?.code ? ` (${err.code})` : ""}. Tente de novo.`;
+  } finally {
+    if(state.relDia.data === data) state.relDia.carregando = false;
+    render();
+  }
+}
+
+function relatorioDiaView(school){
+  const data = state.relDia.data || dataDeHojeISO();
+  const hoje = dataDeHojeISO();
+  const turmas = state.instTurmas || [];
+  const nomeProf = (id, fallback) => (state.gestaoProfessores || []).find(p => p.id === id)?.nome || fallback || "";
+
+  const barra = `
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0 16px;">
+      <button type="button" class="attendance-btn" data-action="rel-dia-mover" data-d="-1" aria-label="Dia anterior">‹ Dia anterior</button>
+      <button type="button" class="attendance-btn ${data === hoje ? "active present" : ""}" data-action="rel-dia-mover" data-d="0">Hoje</button>
+      <button type="button" class="attendance-btn" data-action="rel-dia-mover" data-d="1" aria-label="Próximo dia">Próximo dia ›</button>
+    </div>`;
+  const cab = `
+    <h2 class="section-title">Relatório do dia</h2>
+    <p class="section-eyebrow">${escapeHtml(school.nome)} · ${escapeHtml(relDataExtenso(data))}</p>
+    ${barra}`;
+
+  if(state.instTurmasCarregando || state.relDia.carregando || state.instTurmas === null){
+    return `${cab}<div style="padding:20px;font-size:14px;color:var(--slate);">Carregando o relatório…</div>`;
+  }
+  if(state.instTurmasErro || state.relDia.erro){
+    return `${cab}<div style="padding:20px;font-size:14px;color:var(--red);">${escapeHtml(state.instTurmasErro || state.relDia.erro)}</div>`;
+  }
+
+  const registros = state.relDia.registros || {};
+  const todas = horarios.aulasDoDia(data);
+  const previstas = todas.filter(o => AULA_OK.includes(o.status));
+  const naoPrevistas = todas.filter(o => !AULA_OK.includes(o.status));
+
+  // uma linha por turma (duas aulas da mesma turma no dia compartilham a chamada)
+  const porTurma = new Map();
+  previstas.forEach(o => {
+    const faixa = `${o.inicio}${o.fim ? "–" + o.fim : ""}`;
+    if(!porTurma.has(o.turma.id)) porTurma.set(o.turma.id, { ...o, horarios: [faixa] });
+    else porTurma.get(o.turma.id).horarios.push(faixa);
+  });
+  const linhas = [...porTurma.values()].map(a => {
+    const reg = registros[a.turma.id] || null;
+    return { a, reg, st: statusChamadaDaAula(a, reg, data) };
+  });
+  const nFeitas = linhas.filter(l => l.st === "feita").length;
+  const nPendentes = linhas.filter(l => l.st === "atrasada").length;
+
+  const resumo = `
+    <div class="grid-cards">
+      ${estCard("Aulas previstas", linhas.length, "Já considerando remarcações")}
+      ${estCard("Chamadas feitas", nFeitas, linhas.length ? `${Math.round(nFeitas / linhas.length * 100)}% das aulas` : "", "var(--green, #2f6b4f)")}
+      ${estCard("Pendentes", nPendentes, nPendentes ? "Aula já terminou e não há chamada" : "Nenhuma em atraso", nPendentes ? "var(--red)" : "")}
+    </div>`;
+
+  const itens = linhas.map(({ a, reg, st }) => {
+    const t = a.turma;
+    const prof = nomeProf(t.professorId, reg?.professorNome);
+    const detalhe = reg ? `
+      <div style="margin-top:10px;font-size:13.5px;color:var(--ink);display:grid;gap:4px;">
+        <div><strong>Conteúdo:</strong> ${reg.conteudoTexto ? escapeHtml(reg.conteudoTexto) : `<span style="color:var(--slate);">não informado</span>`}</div>
+        <div><strong>Presença:</strong> ${reg.presentes}/${reg.total} presentes${reg.faltas ? ` · ${reg.faltas} falta${reg.faltas === 1 ? "" : "s"}` : ""}${reg.justificadas ? ` · ${reg.justificadas} justificada${reg.justificadas === 1 ? "" : "s"}` : ""}</div>
+        ${reg.faltaram.length ? `<div><strong>Faltaram:</strong> ${escapeHtml(reg.faltaram.join(", "))}</div>` : ""}
+        ${reg.observacao ? `<div><strong>Observação:</strong> ${escapeHtml(reg.observacao)}</div>` : ""}
+        ${reg.professorNome && reg.professorNome !== prof ? `<div style="color:var(--slate);">Registrado por ${escapeHtml(reg.professorNome)}</div>` : ""}
+      </div>` : "";
+    return `
+      <div class="card" style="margin-bottom:10px;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">
+          <div>
+            <div style="font-size:15.5px;font-weight:600;color:var(--ink);">${escapeHtml(t.nome)}</div>
+            <div style="font-size:12.5px;color:var(--slate);margin-top:2px;">${escapeHtml([a.horarios.join(" · "), t.disciplina, prof ? "Prof. " + prof : "", a.sala ? "Sala " + a.sala : ""].filter(Boolean).join(" · "))}</div>
+          </div>
+          ${pillStatusChamada(st, reg)}
+        </div>
+        ${detalhe}
+      </div>`;
+  }).join("") || `<div class="turmas-empty-state"><strong>Nenhuma aula prevista para este dia.</strong><span>Confira os horários das turmas na aba Horários.</span></div>`;
+
+  const idsPrevistos = new Set(linhas.map(l => l.a.turma.id));
+  const extras = Object.values(registros).filter(r => !idsPrevistos.has(r.turmaId)).map(r => {
+    const t = turmas.find(x => x.id === r.turmaId);
+    return `
+      <div class="card" style="margin-bottom:10px;">
+        <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+          <div>
+            <div style="font-size:15.5px;font-weight:600;color:var(--ink);">${escapeHtml(t?.nome || "Turma")}</div>
+            <div style="font-size:12.5px;color:var(--slate);">${escapeHtml([t?.disciplina, r.professorNome ? "Prof. " + r.professorNome : ""].filter(Boolean).join(" · "))}</div>
+          </div>
+          ${pillStatusChamada("feita", r)}
+        </div>
+        <div style="margin-top:10px;font-size:13.5px;">
+          <div><strong>Conteúdo:</strong> ${r.conteudoTexto ? escapeHtml(r.conteudoTexto) : "não informado"}</div>
+          <div><strong>Presença:</strong> ${r.presentes}/${r.total} presentes</div>
+        </div>
+      </div>`;
+  }).join("");
+
+  const cancel = naoPrevistas.map(o => {
+    const rotulo = o.status === "cancelada" ? "Cancelada" : o.status === "saiu" ? "Remarcada" : "Sem aula";
+    return `<div class="row"><span style="font-size:14px;color:var(--ink);">${escapeHtml(o.inicio)} · ${escapeHtml(o.turma.nome)}</span><span class="pill" style="background:rgba(18,32,50,.06);color:var(--slate);">${rotulo}</span></div>`;
+  }).join("");
+
+  const h3 = (t) => `<h3 style="font-family:var(--font-display);font-size:17px;color:var(--ink);font-weight:500;margin:20px 0 10px;">${t}</h3>`;
+  return `
+    ${cab}
+    ${resumo}
+    ${h3("Aulas do dia")}
+    ${itens}
+    ${extras ? h3("Chamadas fora do horário") + extras : ""}
+    ${cancel ? h3("Canceladas, remarcadas ou sem aula") + `<div class="card flush">${cancel}</div>` : ""}`;
 }
 
 /* Data de hoje no formato "AAAA-MM-DD", usada como parte do id do
@@ -10989,6 +11247,10 @@ function bindEvents(){
         render();
         if(state.instTab === "aval") avalAbrirNaInstituicao();
         if(state.instTab === "horarios") horarios.aoAbrir();
+        if(state.instTab === "relatorio"){
+          horarios.aoAbrir();   // turmas, professores, remarcações e dias sem aula
+          carregarRelatorioDoDia(state.escolaSelecionadaId, state.relDia.data || dataDeHojeISO());
+        }
         if(state.instTab === "dev") dev.aoAbrir();
         if(state.instTab === "turmas" && state.escolaSelecionadaId
           && (state.instTurmas === null || state.instTurmasEscolaId !== state.escolaSelecionadaId)
@@ -11701,6 +11963,7 @@ function bindEvents(){
       case "set-professor-tab":
         state.professorTab = el.dataset.key;
         state.cal.diaAberto = null;
+        if(state.professorTab === "aulas") state.professorTurmaId = null;   // sempre abre na lista de hoje
         if(state.professorTab === "perfil"){
           state.perfilSubTab = "dados";
           state.fichaForm = null; state.fichaErro = ""; state.fichaMensagem = "";
@@ -11709,8 +11972,21 @@ function bindEvents(){
         render();
         if(state.professorTab === "calendario") carregarEventosDoProfessor();
         else if(state.professorTab === "horarios") horarios.aoAbrir();
+        else if(state.professorTab === "aulas"){ horarios.preparar(); carregarChamadasDeHojeProfessor(); }
         else if(state.professorTab === "aval") avalAbrirNoProfessor();
         break;
+      case "professor-voltar-aulas":
+        state.professorTurmaId = null;
+        render();
+        window.scrollTo({ top: 0, behavior: "smooth" });
+        carregarChamadasDeHojeProfessor();
+        break;
+      case "rel-dia-mover": {
+        const d = Number(el.dataset.d);
+        const base = state.relDia.data || dataDeHojeISO();
+        await carregarRelatorioDoDia(state.escolaSelecionadaId, d === 0 ? dataDeHojeISO() : relSomarDias(base, d));
+        break;
+      }
       case "set-professor-class": {
         state.professorTurmaId = el.dataset.id;
         state.professorNotasSalvas = false;
@@ -11766,8 +12042,16 @@ function bindEvents(){
             observacao: state.professorConteudoObservacao || "",
             presencas,
             observacoesAlunos,
+            turmaNome: turma.nome || "",
+            professorNome: state.data.professorNome || "",
+            registradoEm: new Date().toISOString(),
           });
           state.professorRegistroSalvo = true;
+          state.professorChamadasHoje[turma.id] = resumoDeRegistro({
+            turmaId: turma.id, professorId: state.authUser.uid, professorNome: state.data.professorNome || "",
+            conteudoTexto, observacao: state.professorConteudoObservacao || "", presencas,
+            registradoEm: new Date().toISOString(),
+          });
           // Cópia por aluno, que alimenta o calendário do aluno e do responsável.
           // Se falhar, a chamada em si já está salva — só avisa o professor.
           try {
