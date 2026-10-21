@@ -1642,6 +1642,11 @@ const state = {
   senhasLoginEsqueci: "",         // texto digitado em "Esqueci a senha"
   senhasLoginConsulta: "",        // consulta aplicada (depois de tocar em Localizar)
   senhasLoginVisiveis: {},        // uid -> true quando a senha está à mostra
+  buscaModulo: "",                // texto da busca de módulos/funcionalidades (professor e secretaria)
+  senhasLoginLiberadaAte: 0,      // timestamp (ms) até quando a lista completa está liberada (0 = bloqueada)
+  senhasLoginPedindoSenha: false, // mostrando o campo "digite sua senha" para liberar a lista completa
+  senhasLoginSenhaErro: "",
+  senhasLoginVerificando: false,
   senhasLoginPreparando: null,    // uid que está tendo a senha gerada
   senhasLoginMsg: null,           // { tipo: "ok" | "erro", texto }
   senhasLoteConfirmando: false,
@@ -3266,6 +3271,100 @@ function renderEscolaPicker(){
 }
 
 /* ---------------- SHELL (sidebar + main) ---------------- */
+/* ---------------- BUSCA DE MÓDULOS E FUNCIONALIDADES ----------------
+   Caixa de busca no topo das telas do professor e da secretaria. Procura
+   num catálogo (título, descrição e palavras-chave) e leva direto à aba.
+   Só aparecem módulos que existem no menu da pessoa (respeita os módulos
+   bloqueados pelo Painel Dev). */
+const BUSCA_MODULOS = {
+  instituicao: [
+    { tab:"turmas", titulo:"Turmas", desc:"Ver turmas e alunos, criar ou editar turma, ver chamadas.", kw:"classe sala presenca chamada criar turma lista alunos professor" },
+    { tab:"cursos", titulo:"Cursos e turmas", desc:"Cursos, combos, modalidades, salas e dados de cada turma.", kw:"curso combo modalidade sala cadastrar curso personalizar" },
+    { tab:"calendario", titulo:"Calendário", desc:"Eventos, feriados, trimestres e dias sem aula para toda a escola.", kw:"evento feriado recesso data trimestre aviso importar feriados agenda" },
+    { tab:"horarios", titulo:"Horários", desc:"Grade de aulas da unidade, remarcações, dias sem aula e avisos às turmas.", kw:"grade horario aula remarcar remarcacao reposicao sala professor semana" },
+    { tab:"relatorio", titulo:"Relatório do dia", desc:"Resumo das aulas de hoje: quem deu aula, presença e remarcações.", kw:"hoje diario aulas dadas faltas presenca remarcacao resumo" },
+    { tab:"estatisticas", titulo:"Estatísticas", desc:"Números de alunos, contratos, entradas e saídas, frequência e faltas.", kw:"grafico numeros frequencia faltas alunos ativos contratos indicadores" },
+    { tab:"financeiro", titulo:"Financeiro", desc:"Lançar cobrança, Pix, boleto, carnê e acompanhar pagamentos.", kw:"cobranca mensalidade boleto pix carne pagamento pago atrasado inadimplente dinheiro qr code copia e cola" },
+    { tab:"alunos", titulo:"Alunos", desc:"Alunos matriculados, ficha, turma, responsáveis e acesso de cada um.", kw:"matricula matriculado ficha cadastro aluno editar excluir transferir turma" },
+    { tab:"aniversarios", titulo:"Aniversários", desc:"Aniversariantes e mensagem de parabéns pelo WhatsApp.", kw:"aniversario aniversariante parabens nascimento mensagem" },
+    { tab:"solicitacoes", titulo:"Solicitações", desc:"Avisos gerais para as famílias, que aparecem no app e em Comunicados.", kw:"aviso comunicado recado familia mensagem publicar" },
+    { tab:"professores", titulo:"Professores", desc:"Equipe de professores, turmas de cada um, ficha e importar turmas por PDF.", kw:"professor docente equipe vincular turma importar pdf ficha" },
+    { tab:"responsaveis", titulo:"Responsáveis", desc:"Responsáveis cadastrados e os alunos vinculados a cada um.", kw:"pai mae responsavel familia vincular filho aluno contato telefone" },
+    { tab:"contratos", titulo:"Contratos", desc:"Contratos dos alunos, assinatura pendente e importação de contratos em PDF.", kw:"contrato assinar assinatura pendente importar pdf ocr matricula" },
+    { tab:"aval", titulo:"Avaliações", desc:"Avaliação institucional respondida por alunos e famílias, com comentários.", kw:"avaliacao institucional pesquisa satisfacao comentario nota feedback" },
+    { tab:"certificados", titulo:"Certificados", desc:"Anexar e consultar certificados dos alunos por turma e módulo.", kw:"certificado modulo concluir anexar link aluno" },
+    { tab:"senhas", titulo:"Senhas e login", desc:"Buscar o login e a senha de um aluno ou responsável e reenviar o acesso.", kw:"senha login acesso esqueci whatsapp reenviar recriar usuario e-mail" },
+    { tab:"gestao", titulo:"Gestão > Criar cadastro", desc:"Criar cadastro de aluno, professor, responsável ou equipe com login.", kw:"criar cadastro novo aluno professor responsavel usuario equipe", sub:"cadastro" },
+    { tab:"gestao", titulo:"Gestão > Senhas & acessos", desc:"Trocar senha, criar login, excluir acesso e ver quem ainda não entrou.", kw:"trocar senha criar login excluir acesso primeiro acesso aguardando sem login redefinir", sub:"acessos" },
+    { tab:"perfil", titulo:"Meu perfil", desc:"Seus dados, foto, ficha pessoal e troca da sua senha.", kw:"perfil foto nome minha senha trocar senha ficha dados pessoais" },
+  ],
+  professor: [
+    { tab:"calendario", titulo:"Calendário", desc:"Eventos, feriados e dias sem aula; crie lembretes para suas turmas.", kw:"evento feriado data aviso lembrete agenda prova" },
+    { tab:"horarios", titulo:"Horários", desc:"Suas aulas do dia, da semana e do mês, e o que fazer com cada uma.", kw:"grade horario aula semana mes remarcar reposicao sala" },
+    { tab:"turmas", titulo:"Turmas", desc:"Suas turmas e os alunos de cada uma; atalho para chamada e notas.", kw:"turma alunos lista classe sala" },
+    { tab:"aulas", titulo:"Aulas & Chamadas", desc:"Aulas de hoje e chamada de presença dos alunos.", kw:"chamada presenca falta frequencia hoje registrar aula" },
+    { tab:"conteudos", titulo:"Conteúdos", desc:"Conteúdos do semestre de cada turma.", kw:"conteudo planejamento semestre materia plano de aula" },
+    { tab:"avaliacoes", titulo:"Notas & atividades", desc:"Lançar notas e atividades dos alunos.", kw:"nota atividade boletim lancar trabalho prova media" },
+    { tab:"aval", titulo:"Avaliações", desc:"Avaliação institucional e comentários.", kw:"avaliacao institucional pesquisa feedback comentario" },
+    { tab:"certificados", titulo:"Certificados", desc:"Anexar e consultar certificados dos alunos das suas turmas.", kw:"certificado modulo concluir anexar link aluno" },
+    { tab:"suporte", titulo:"Suporte", desc:"Manuais de uso e contato direto com a secretaria pelo WhatsApp.", kw:"ajuda manual duvida problema tutorial secretaria whatsapp como fazer" },
+    { tab:"perfil", titulo:"Meu perfil", desc:"Seus dados, foto, ficha pessoal e troca da sua senha.", kw:"perfil foto nome minha senha trocar senha ficha dados pessoais" },
+  ],
+};
+
+function normalizarBusca(t){
+  return String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+}
+
+function buscarModulos(consulta, navItems){
+  const tokens = normalizarBusca(consulta).split(/\s+/).filter(Boolean);
+  if(!tokens.length) return [];
+  const disponiveis = new Map(navItems.map(i => [i.key, i]));
+  const catalogo = BUSCA_MODULOS[state.screen === "professor" ? "professor" : "instituicao"];
+  return catalogo
+    .filter(m => disponiveis.has(m.tab))
+    .map(m => {
+      const titulo = normalizarBusca(m.titulo);
+      const resto = normalizarBusca(`${m.desc} ${m.kw}`);
+      let pontos = 0;
+      for(const tk of tokens){
+        if(titulo.includes(tk)) pontos += 3;
+        else if(resto.includes(tk)) pontos += 1;
+        else return null;   // todas as palavras precisam aparecer
+      }
+      return { m, pontos };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.pontos - a.pontos)
+    .slice(0, 8)
+    .map(x => ({ ...x.m, icon: disponiveis.get(x.m.tab).icon }));
+}
+
+function buscaModulosHtml(navItems){
+  if(state.screen !== "instituicao" && state.screen !== "professor") return "";
+  const q = state.buscaModulo || "";
+  let resultado = "";
+  if(normalizarBusca(q).length >= 2){
+    const achados = buscarModulos(q, navItems);
+    resultado = `<div class="busca-mod-lista">${achados.length
+      ? achados.map(m => `
+        <button type="button" class="busca-mod-item" data-action="busca-ir" data-tab="${escapeHtml(m.tab)}" data-sub="${escapeHtml(m.sub || "")}">
+          <span class="busca-mod-icon">${ICONS[m.icon] || ""}</span>
+          <span class="busca-mod-texto"><strong>${escapeHtml(m.titulo)}</strong><span>${escapeHtml(m.desc)}</span></span>
+        </button>`).join("")
+      : `<div class="busca-mod-vazio">Não encontrei nada com “${escapeHtml(q.trim())}”. Tente outra palavra (por exemplo: chamada, senha, boleto, calendário)${state.screen === "professor" ? " ou abra o Suporte" : ""}.</div>`}</div>`;
+  }
+  return `
+    <div class="busca-mod">
+      <div class="search-wrap busca-mod-campo">
+        ${ICONS.search}
+        <input class="search-input" id="busca-modulo-input" placeholder="Buscar módulo ou funcionalidade (ex.: chamada, senha, boleto)" value="${escapeHtml(q)}" autocomplete="off" />
+        ${q ? `<button type="button" class="busca-mod-limpar" data-action="busca-limpar" aria-label="Limpar busca">${ICONS.close}</button>` : ""}
+      </div>
+      ${resultado}
+    </div>`;
+}
+
 function shell({ navItems, active, headerSub, headerTitle, headerFoto, bodyHtml, navAction, schoolBadge, schoolBadgeClickable }){
   // Bloqueio de módulos pelo painel dev (config/app > modulos)
   const rotuloAtivo = navItems.find(i => i.key === active)?.label;
@@ -3303,6 +3402,7 @@ function shell({ navItems, active, headerSub, headerTitle, headerFoto, bodyHtml,
           <h1 class="main-head-title">${headerTitle}</h1>
         </div>
       </div>
+      ${buscaModulosHtml(navItems)}
       ${bodyHtml}
     </main>
     <button class="mobile-menu-toggle" data-action="toggle-mobile-menu" aria-label="Abrir menu" aria-expanded="${state.mobileMenuOpen}">
@@ -5527,6 +5627,20 @@ function loginForaDoPadrao(tipo, nome, email){
   return !variantesDeEmail(nome, dominio).map(v => v.split("@")[0]).includes(local);
 }
 
+/* A lista completa (todos os alunos e responsáveis com login/senha) fica
+   escondida. Só abre depois que quem está logado digita a PRÓPRIA senha de
+   entrada (reautenticação do Firebase) e fecha sozinha após 10 minutos. */
+const SENHAS_LISTA_MINUTOS = 10;
+function senhasListaLiberada(){
+  return Date.now() < (state.senhasLoginLiberadaAte || 0);
+}
+function bloquearListaDeSenhas(){
+  state.senhasLoginLiberadaAte = 0;
+  state.senhasLoginPedindoSenha = false;
+  state.senhasLoginSenhaErro = "";
+  state.senhasLoginVisiveis = {};
+}
+
 function credenciaisCarregadas(){
   return !!state.senhasLoginCreds && state.senhasLoginEscolaId === state.escolaSelecionadaId;
 }
@@ -5646,6 +5760,36 @@ function senhasEsqueciHtml(){
     </div>`;
 }
 
+function painelLiberarLista(liberada, pronto){
+  if(liberada){
+    return `
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin:0 0 10px;align-items:center;">
+        <span class="status-pill" style="color:var(--green,#2E9E6B);background:rgba(46,158,107,.14);">Lista completa liberada</span>
+        <button type="button" class="btn-secondary" data-action="senhas-baixar-csv" ${pronto ? "" : "disabled"}>Baixar lista (planilha)</button>
+        <button type="button" class="btn-secondary" data-action="senhas-copiar-lista" ${pronto ? "" : "disabled"}>Copiar lista</button>
+        <button type="button" class="btn-secondary" data-action="senhas-ocultar-lista">Ocultar lista</button>
+      </div>`;
+  }
+  if(state.senhasLoginPedindoSenha){
+    const ocupado = state.senhasLoginVerificando;
+    return `
+      <div class="card" style="padding:14px 16px;margin:0 0 10px;">
+        <p style="margin:0 0 4px;font-weight:600;color:var(--ink);">${ICONS.shield} Confirme sua senha</p>
+        <p class="section-eyebrow" style="margin:0 0 10px;">Digite a senha que você usa para entrar no Educa+ para liberar a lista completa por ${SENHAS_LISTA_MINUTOS} minutos.</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <input id="senhas-liberar-input" type="password" class="teacher-text-input" style="flex:1;min-width:220px;margin:0;" placeholder="Sua senha de login" autocomplete="current-password" />
+          <button type="button" class="teacher-primary-btn" style="margin:0;" data-action="senhas-liberar-confirmar" ${ocupado ? "disabled" : ""}>${ocupado ? "Conferindo…" : "Liberar lista"}</button>
+          <button type="button" class="btn-secondary" data-action="senhas-liberar-cancelar" ${ocupado ? "disabled" : ""}>Cancelar</button>
+        </div>
+        ${state.senhasLoginSenhaErro ? `<p class="teacher-error" style="color:var(--red,#C4544A);font-size:12.5px;margin:8px 0 0;">${escapeHtml(state.senhasLoginSenhaErro)}</p>` : ""}
+      </div>`;
+  }
+  return `
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin:0 0 10px;">
+      <button type="button" class="btn-secondary" data-action="senhas-liberar-lista" ${pronto ? "" : "disabled"}>${ICONS.key} Mostrar lista completa</button>
+    </div>`;
+}
+
 function senhasLoginView(school){
   const carregando = state.instAlunosCarregando || state.gestaoEquipeCarregando || state.senhasLoginCarregando;
   const pronto = credenciaisCarregadas();
@@ -5673,7 +5817,9 @@ function senhasLoginView(school){
   const filtroHtml = `<div class="acesso-filtros">${filtros.map(f => `
     <button type="button" class="acesso-filtro ${grupo === f.key ? "active" : ""}" data-action="senhas-set-grupo" data-key="${f.key}">${f.label}${contagem[f.key] ? ` <span class="acesso-filtro-count">${contagem[f.key]}</span>` : ""}</button>`).join("")}</div>`;
 
-  const lista = todas
+  const liberada = senhasListaLiberada();
+  const mostrarLista = liberada || busca.length >= 2;
+  const lista = (!mostrarLista ? [] : todas)
     .filter(p => grupo === "todos" || (grupo === "alunos" && p.tipo === "aluno") || (grupo === "responsaveis" && p.tipo === "responsavel")
       || (grupo === "semlogin" && !p.uid) || (grupo === "semsenha" && p.uid && !p.senha) || (grupo === "foradopadrao" && p.foraPadrao))
     .filter(p => !busca || (p.ref.nome || "").toLowerCase().includes(busca) || (p.email || "").toLowerCase().includes(busca))
@@ -5682,6 +5828,7 @@ function senhasLoginView(school){
   let linhas;
   if(carregando && !pronto) linhas = `<div style="padding:20px;font-size:14px;color:var(--slate);">Carregando pessoas e senhas da unidade…</div>`;
   else if(!pronto) linhas = `<div style="padding:20px;font-size:14px;color:var(--slate);">As senhas ainda não foram carregadas. <button type="button" class="btn-secondary" data-action="senhas-recarregar">Tentar de novo</button></div>`;
+  else if(!mostrarLista) linhas = `<div style="padding:20px;font-size:14px;color:var(--slate);">${ICONS.shield} A lista está oculta por segurança. Digite pelo menos 2 letras do nome (ou e-mail) acima para localizar uma pessoa, ou toque em “Mostrar lista completa” e confirme sua senha.</div>`;
   else if(lista.length === 0) linhas = `<div style="padding:20px;font-size:14px;color:var(--slate);">Ninguém encontrado nesta lista.</div>`;
   else linhas = lista.map(p => `
     <div class="row aluno-row pessoa-row" style="cursor:default;flex-wrap:wrap;">
@@ -5737,7 +5884,7 @@ function senhasLoginView(school){
 
   return `
     <h2 class="section-title">Senhas e login</h2>
-    <p class="section-eyebrow">${escapeHtml(school.nome)} · login e senha de todos os alunos e responsáveis. A senha é gerada uma vez, fica guardada aqui e a família não precisa trocá-la.</p>
+    <p class="section-eyebrow">${escapeHtml(school.nome)} · busque pelo nome para ver o login e a senha de um aluno ou responsável. A senha é gerada uma vez, fica guardada aqui e a família não precisa trocá-la.</p>
     <div class="management-card management-card-wide">
       ${senhasEsqueciHtml()}
       ${aviso}
@@ -5750,10 +5897,7 @@ function senhasLoginView(school){
         ${ICONS.search}
         <input class="search-input" id="senhas-busca" placeholder="Buscar por nome ou e-mail" value="${escapeHtml(state.senhasLoginBusca || "")}" />
       </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin:0 0 10px;">
-        <button type="button" class="btn-secondary" data-action="senhas-baixar-csv" ${pronto ? "" : "disabled"}>Baixar lista (planilha)</button>
-        <button type="button" class="btn-secondary" data-action="senhas-copiar-lista" ${pronto ? "" : "disabled"}>Copiar lista</button>
-      </div>
+      ${painelLiberarLista(liberada, pronto)}
       <div class="card flush">${linhas}</div>
       <p class="section-eyebrow" style="margin-top:10px;">Visível só para a equipe administrativa. Professores e equipe continuam em Gestão &gt; Senhas &amp; acessos.</p>
     </div>`;
@@ -10610,8 +10754,27 @@ function bindEvents(){
     }
   });
 
+  app.addEventListener("keydown", (e) => {
+    if(!e.target || e.target.id !== "busca-modulo-input") return;
+    if(e.key === "Enter"){
+      e.preventDefault();
+      document.querySelector(".busca-mod-item")?.click();
+    } else if(e.key === "Escape"){
+      state.buscaModulo = "";
+      render();
+    }
+  });
+
   app.addEventListener("input", (e) => {
     const t = e.target;
+    if(t.id === "busca-modulo-input"){
+      const cursor = t.selectionStart;
+      state.buscaModulo = t.value;
+      render();
+      const novo = document.getElementById("busca-modulo-input");
+      if(novo){ novo.focus(); novo.setSelectionRange(cursor, cursor); }
+      return;
+    }
     // Aba Horários: guarda o valor sem re-renderizar, pro cursor não pular.
     if(t.dataset && t.dataset.hor){ horarios.input(t); return; }
     // Aba Suporte: guarda o texto e filtra os manuais sem re-renderizar.
@@ -10686,6 +10849,7 @@ function bindEvents(){
       return;
     }
     if(t.id === "senhas-esqueci-input"){ state.senhasLoginEsqueci = t.value; return; }
+    if(t.id === "senhas-liberar-input"){ return; }
     if(t.id === "acesso-email"){ state.acessoEmail = t.value; return; }
     if(t.dataset && t.dataset.anivMsg){
       if(state.aniversarioMsgRascunho) state.aniversarioMsgRascunho[t.dataset.anivMsg] = t.value;
@@ -11293,6 +11457,31 @@ function bindEvents(){
         else if(state.familiaTab === "aval"){ state.aval.instOk = false; state.aval.instErro = ""; carregarAvaliacoesDoAluno(calAlunoAtual()); }
         else if(state.familiaTab === "contratos") carregarContratosDoAluno(state.familiaStudentId);
         break;
+      case "busca-limpar":
+        state.buscaModulo = "";
+        render();
+        break;
+
+      case "busca-ir": {
+        const abaDestino = el.dataset.tab;
+        const subDestino = el.dataset.sub || "";
+        const acaoAba = state.screen === "professor" ? "set-professor-tab" : "set-inst-tab";
+        state.buscaModulo = "";
+        const botaoNav = document.querySelector(`.sidebar-nav [data-action="${acaoAba}"][data-key="${abaDestino}"]`);
+        if(botaoNav) botaoNav.click();   // reaproveita a troca de aba normal (carrega os dados da aba)
+        else {
+          if(state.screen === "professor") state.professorTab = abaDestino; else state.instTab = abaDestino;
+          render();
+        }
+        if(subDestino && abaDestino === "gestao"){
+          state.gestaoSubTab = subDestino;
+          render();
+          if(subDestino === "acessos") garantirPessoasDaUnidade();
+        }
+        window.scrollTo({ top: 0, behavior: "smooth" });
+        break;
+      }
+
       case "set-inst-tab":
         state.instTab = el.dataset.key;
         state.cal.diaAberto = null;
@@ -11604,6 +11793,56 @@ function bindEvents(){
         render();
         break;
 
+      case "senhas-liberar-lista":
+        state.senhasLoginPedindoSenha = true;
+        state.senhasLoginSenhaErro = "";
+        render();
+        document.getElementById("senhas-liberar-input")?.focus();
+        break;
+
+      case "senhas-liberar-cancelar":
+        state.senhasLoginPedindoSenha = false;
+        state.senhasLoginSenhaErro = "";
+        render();
+        break;
+
+      case "senhas-ocultar-lista":
+        bloquearListaDeSenhas();
+        render();
+        break;
+
+      case "senhas-liberar-confirmar": {
+        const digitada = document.getElementById("senhas-liberar-input")?.value || "";
+        const usuarioAtual = auth.currentUser;
+        if(!digitada){
+          state.senhasLoginSenhaErro = "Digite sua senha.";
+          render();
+          break;
+        }
+        if(!usuarioAtual?.email){
+          state.senhasLoginSenhaErro = "Sua sessão expirou. Saia e entre de novo.";
+          render();
+          break;
+        }
+        state.senhasLoginVerificando = true;
+        state.senhasLoginSenhaErro = "";
+        render();
+        try {
+          await reauthenticateWithCredential(usuarioAtual, EmailAuthProvider.credential(usuarioAtual.email, digitada));
+          state.senhasLoginLiberadaAte = Date.now() + SENHAS_LISTA_MINUTOS * 60 * 1000;
+          state.senhasLoginPedindoSenha = false;
+          setTimeout(() => { if(!senhasListaLiberada() && state.senhasLoginLiberadaAte){ bloquearListaDeSenhas(); render(); } }, SENHAS_LISTA_MINUTOS * 60 * 1000 + 500);
+        } catch(err){
+          state.senhasLoginSenhaErro = err?.code === "auth/wrong-password" || err?.code === "auth/invalid-credential"
+            ? "Senha incorreta."
+            : mensagemErroFirebase(err?.code);
+        } finally {
+          state.senhasLoginVerificando = false;
+          render();
+        }
+        break;
+      }
+
       case "senhas-recarregar":
         carregarCredenciais(state.escolaSelecionadaId);
         break;
@@ -11730,6 +11969,7 @@ function bindEvents(){
       }
 
       case "senhas-copiar-lista": {
+        if(!senhasListaLiberada()) break;
         const texto = pessoasDaAbaSenhas().filter(p => p.uid && p.senha)
           .sort((a, b) => (a.ref.nome || "").localeCompare(b.ref.nome || "", "pt-BR"))
           .map(p => `${p.ref.nome} (${p.tipo === "aluno" ? "aluno" : "responsável"})\nLogin: ${p.email}\nSenha: ${p.senha}`).join("\n\n");
@@ -11744,6 +11984,7 @@ function bindEvents(){
       }
 
       case "senhas-baixar-csv": {
+        if(!senhasListaLiberada()) break;
         const protege = (v) => { const s = String(v ?? ""); return /^[=+\-@\t\r]/.test(s) ? `'${s}` : s; };
         const cab = ["Tipo", "Nome", "Curso / vínculo", "Login", "Senha", "Contato"];
         const linhasCsv = pessoasDaAbaSenhas().filter(p => p.uid)

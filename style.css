@@ -3028,3 +3028,23 @@ img, svg, video { max-width: 100%; }
   .aula-hoje-card { grid-template-columns: 1fr; gap: 8px; }
   .aula-hoje-status { flex-direction: row; justify-content: space-between; align-items: center; }
 }
+
+
+/* ---------------- Busca de módulos (professor e secretaria) ---------------- */
+.busca-mod { position: relative; margin: 0 0 18px; max-width: 640px; }
+.busca-mod-campo { margin-bottom: 0; max-width: none; }
+.busca-mod-campo .search-input { padding-right: 38px; background: #fff; transition: border-color .15s ease, box-shadow .15s ease; }
+.busca-mod-campo .search-input:focus { outline: none; border-color: var(--gold); box-shadow: 0 0 0 3px rgba(201, 162, 74, .18); }
+.busca-mod-limpar { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); width: 26px; height: 26px; display: grid; place-items: center; border: 0; background: transparent; color: var(--slate); cursor: pointer; border-radius: 50%; }
+.busca-mod-limpar:hover { background: rgba(0, 0, 0, .06); }
+.busca-mod-limpar svg { width: 14px; height: 14px; position: static; }
+.busca-mod-lista { margin-top: 8px; background: #fff; border: 1px solid var(--line, rgba(0, 0, 0, .1)); border-radius: 12px; box-shadow: 0 8px 24px rgba(0, 0, 0, .08); overflow: hidden; }
+.busca-mod-item { display: flex; gap: 12px; align-items: flex-start; width: 100%; padding: 12px 14px; border: 0; border-bottom: 1px solid rgba(0, 0, 0, .06); background: transparent; text-align: left; cursor: pointer; font: inherit; }
+.busca-mod-item:last-child { border-bottom: 0; }
+.busca-mod-item:hover, .busca-mod-item:focus-visible { background: rgba(201, 162, 74, .1); outline: none; }
+.busca-mod-icon { flex: 0 0 auto; width: 20px; color: var(--gold); display: grid; place-items: center; margin-top: 2px; }
+.busca-mod-icon svg { width: 18px; height: 18px; }
+.busca-mod-texto { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.busca-mod-texto strong { color: var(--ink); font-size: 14.5px; }
+.busca-mod-texto span { color: var(--slate); font-size: 12.5px; line-height: 1.35; }
+.busca-mod-vazio { padding: 14px 16px; font-size: 13.5px; color: var(--slate); }
