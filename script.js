@@ -8458,6 +8458,29 @@ async function excluirAlunoDaInstituicao(aluno, escolaId){
     }
 
     await deleteDoc(doc(db, "alunos", aluno.id));
+
+    // A turma guarda só o NOME do aluno (turmas/{id}.alunos), então apagar
+    // alunos/{id} não tira ele da lista de chamada. Aqui removemos o nome de
+    // todas as turmas da unidade — lendo direto do Firestore, sem depender de
+    // state.instTurmas já estar carregado. Se ainda existir outro aluno com o
+    // mesmo nome na unidade (homônimo), não mexemos, pra não tirar o errado.
+    try {
+      const alvoNome = normalizarNome(aluno.nome);
+      const homonimo = (state.instAlunos || []).some(a => a.id !== aluno.id && normalizarNome(a.nome) === alvoNome);
+      if(!homonimo){
+        const turmasSnap = await getDocs(query(collection(db, "turmas"), where("escolaId", "==", escolaId)));
+        await Promise.all(turmasSnap.docs.map(async d => {
+          const gravados = (d.data().alunos || []).filter(n => normalizarNome(n) === alvoNome);
+          if(!gravados.length) return;
+          await updateDoc(d.ref, { alunos: arrayRemove(...gravados) });
+          const local = (state.instTurmas || []).find(t => t.id === d.id);
+          if(local) local.alunos = (local.alunos || []).filter(n => normalizarNome(n) !== alvoNome);
+        }));
+      }
+    } catch(e){
+      console.warn("Não consegui tirar o aluno das turmas:", e?.code || e);
+    }
+
     try { await apagarContratosDoAluno(aluno.id, escolaId); }
     catch(e){ console.warn("Não consegui apagar os contratos salvos do aluno:", e?.code || e); }
     try { await apagarBoletosDoAluno(aluno.id, escolaId); }
