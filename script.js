@@ -79,6 +79,9 @@
    conteudos/{conteudoId}   (banco de conteúdos do semestre, por disciplina)
      professorId, disciplina, texto
      — compartilhado entre todas as turmas do professor na mesma disciplina.
+     atualizadoEm?, atualizadoPorId?, criadoPorId?   // quando professor ou secretaria edita/cria
+     Editável pelo professor (aba Conteúdos) e pela secretaria (aba Conteúdos da Gestão);
+     a edição também corrige registrosAula.conteudoTexto das chamadas que usaram o conteúdo.
 
    registrosAula/{turmaId_data}   (chamada + conteúdo de uma turma num dia,
                                     um documento por turma por dia — data no
@@ -227,6 +230,7 @@ import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/
 import { firebaseConfig } from "./firebase-config.js";
 import { criarHorarios } from "./horarios.js";
 import { criarSuporte } from "./suporte.js";
+import { criarInicio } from "./inicio.js";
 import { criarSolicitacoes } from "./solicitacoes.js";
 import { criarCursos, normalizarCatalogo, cursosAtivosDoCatalogo, modalidadesAtivasDoCatalogo, tituloDoCurso } from "./cursos.js";
 import { criarDev } from "./dev.js";
@@ -410,6 +414,7 @@ async function excluirLoginDeOutroUsuario(uid){
 /* ================================================================== */
 const ICONS = {
   cap: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10 12 5 2 10l10 5 10-5Z"/><path d="M6 12v5c0 1.5 2.7 3 6 3s6-1.5 6-3v-5"/></svg>`,
+  home: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11.5 12 4l9 7.5"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/></svg>`,
   clipboard: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="18" rx="2"/><path d="M9 4V2h6v2"/><path d="m9 13 2 2 4-4"/></svg>`,
   wallet: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h3v-4Z"/></svg>`,
   megaphone: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 11 18-5v12L3 13v-2Z"/><path d="M11.6 16.8 13 22h-3l-1.6-5.4"/></svg>`,
@@ -1460,6 +1465,8 @@ const state = {
   professorConteudoSelecionadoId: "",   // id do conteúdo escolhido no select da aula de hoje
   professorConteudoCadastrando: false,  // mostra o campo p/ cadastrar um conteúdo novo direto na chamada
   professorConteudoNovoTexto: "",       // texto do novo conteúdo, digitado na chamada
+  professorConteudoBusca: "",           // pesquisa dentro da lista de conteúdos, na chamada
+  professorConteudoTrocando: false,     // true = mostrando a pesquisa mesmo com um conteúdo já escolhido
   professorConteudoSalvando: false,       // cadastrando um novo conteúdo direto na chamada
   professorConteudoObservacao: "",      // observação geral da aula de hoje (opcional, separada da observação por aluno)
   professorRegistroErro: "",
@@ -1471,6 +1478,10 @@ const state = {
   professorChamadasHoje: {},              // { [turmaId]: resumo da chamada de hoje } — alimenta "Aulas de hoje"
   professorChamadasHojeCarregando: false,
   relDia: { data: "", escolaId: "", registros: {}, carregando: false, erro: "" },   // Relatório do dia (secretaria)
+  contSubTab: "lista",   // aba Conteúdos (professor e secretaria): "lista" (banco do semestre) | "turma" (o que cada turma já viu)
+  contEdit: { escopo: "", id: null, texto: "", salvando: false },   // edição de um conteúdo do banco (aba Conteúdos — professor "prof" ou secretaria "inst")
+  instConteudos: { profId: "", disciplina: "", banco: {}, carregando: false, erro: "", novoTexto: "", salvando: false, excluindoId: null },   // aba Conteúdos da secretaria
+  relCont: { turmaId: "", registros: [], carregando: false, erro: "", busca: "", trocando: false, diaAberto: null, edit: null },   // aba "Conteúdos por turma" (professor e secretaria)
 
   // --- Notas & atividades (boletim) ---
   professorAvaliacaoBimestre: 1,        // 1 ou 2 — etapa escolhida na aba "Notas & atividades"
@@ -1922,6 +1933,40 @@ const horarios = criarHorarios({
   },
 });
 
+/* Aba "Início" (secretaria e professor): chamadas de hoje, próxima aula e atalhos
+   para o que a pessoa mais usa. Tela e histórico de uso ficam em inicio.js. */
+const inicio = criarInicio({
+  state, ICONS, escapeHtml, horarios, render,
+  hojeISO: dataDeHojeISO,
+  dataExtenso: dataDeHojeExtenso,
+  statusChamada: statusChamadaDaAula,
+  pill: pillStatusChamada,
+  hhmmParaMin,
+  moduloBloqueado: (key) => dev.moduloBloqueado(state.screen, key),
+  carregarChamadasProf: () => carregarChamadasDeHojeProfessor(),
+  carregarRelatorioDia: (escolaId, data) => carregarRelatorioDoDia(escolaId, data),
+  abrirChamada: (turmaId) => professorAbrirChamada(turmaId),
+});
+
+/* "Fazer chamada" a partir da aba Início (mesmo caminho do atalho da agenda). */
+async function professorAbrirChamada(turmaId){
+  state.professorTurmaId = turmaId;
+  state.professorTab = "aulas";
+  state.professorNotasSalvas = false;
+  state.professorNotasErro = "";
+  state.professorAtividadeEditandoId = null;
+  state.professorAtividadeNome = "";
+  state.professorAtividadeExcluirConfirmId = null;
+  state.cal.diaAberto = null;
+  const turma = professorTurmaAtual();
+  render();
+  if(turma) await Promise.all([carregarRegistroDoDia(turma), carregarAtividadesDaTurma(turma)]);
+}
+
+/* Relógio da aba Início: anda as contagens a cada 30 s e relê as chamadas de tempos em tempos. */
+setInterval(() => { if(document.visibilityState === "visible") inicio.tique(); }, inicio.TIQUE_MS);
+document.addEventListener("visibilitychange", () => { if(document.visibilityState === "visible") inicio.aoVoltarParaAba(); });
+
 /* Aba "Cursos e turmas" (secretaria): personaliza cursos, modalidades, salas
    e turmas da unidade. Tela e gravação ficam em cursos.js. */
 const cursosCfg = criarCursos({
@@ -1973,11 +2018,12 @@ async function carregarDadosDoPerfil(){
     const q = query(collection(db, "turmas"), where("professorId", "==", state.authUser.uid));
     const snaps = await getDocs(q);
     state.data.professorTurmas = snaps.docs.map(d => ({ id: d.id, ...d.data(), alunos: d.data().alunos || [] }));
-    state.professorTab = "calendario";
+    state.professorTab = "inicio";   // a primeira tela é o Início (chamadas de hoje, próxima aula, atalhos)
     state.professorTurmaId = null;
     state.screen = "professor";
     carregarConteudosDoProfessor(state.authUser.uid);
     carregarEventosDoProfessor();
+    inicio.aoAbrir();
     return;
   }
 
@@ -1993,9 +2039,10 @@ async function carregarDadosDoPerfil(){
     state.data.escolas = escolas;
     if(Object.keys(escolas).length === 1){
       state.escolaSelecionadaId = Object.keys(escolas)[0];
-      state.instTab = "turmas";
+      state.instTab = "inicio";   // a primeira tela é o Início (chamadas de hoje, próxima aula, atalhos)
       state.screen = "instituicao";
       carregarTurmasDaInstituicao(state.escolaSelecionadaId);
+      inicio.aoAbrir();
     } else {
       state.screen = "escola-picker";
     }
@@ -3282,6 +3329,8 @@ const BUSCA_MODULOS = {
     { tab:"cursos", titulo:"Cursos e turmas", desc:"Cursos, combos, modalidades, salas e dados de cada turma.", kw:"curso combo modalidade sala cadastrar curso personalizar" },
     { tab:"calendario", titulo:"Calendário", desc:"Eventos, feriados, trimestres e dias sem aula para toda a escola.", kw:"evento feriado recesso data trimestre aviso importar feriados agenda" },
     { tab:"horarios", titulo:"Horários", desc:"Grade de aulas da unidade, remarcações, dias sem aula e avisos às turmas.", kw:"grade horario aula remarcar remarcacao reposicao sala professor semana" },
+    { tab:"conteudos", titulo:"Conteúdos", desc:"Ver, editar, adicionar e excluir os conteúdos de cada professor.", kw:"conteudo planejamento semestre materia plano de aula editar corrigir professor" },
+    { tab:"relconteudos", titulo:"Conteúdos por turma", desc:"Relatório do que já foi trabalhado em cada turma.", kw:"relatorio conteudo visto trabalhado turma aula materia progresso cobertura" },
     { tab:"relatorio", titulo:"Relatório do dia", desc:"Resumo das aulas de hoje: quem deu aula, presença e remarcações.", kw:"hoje diario aulas dadas faltas presenca remarcacao resumo" },
     { tab:"estatisticas", titulo:"Estatísticas", desc:"Números de alunos, contratos, entradas e saídas, frequência e faltas.", kw:"grafico numeros frequencia faltas alunos ativos contratos indicadores" },
     { tab:"financeiro", titulo:"Financeiro", desc:"Lançar cobrança, Pix, boleto, carnê e acompanhar pagamentos.", kw:"cobranca mensalidade boleto pix carne pagamento pago atrasado inadimplente dinheiro qr code copia e cola" },
@@ -3303,7 +3352,8 @@ const BUSCA_MODULOS = {
     { tab:"horarios", titulo:"Horários", desc:"Suas aulas do dia, da semana e do mês, e o que fazer com cada uma.", kw:"grade horario aula semana mes remarcar reposicao sala" },
     { tab:"turmas", titulo:"Turmas", desc:"Suas turmas e os alunos de cada uma; atalho para chamada e notas.", kw:"turma alunos lista classe sala" },
     { tab:"aulas", titulo:"Aulas & Chamadas", desc:"Aulas de hoje e chamada de presença dos alunos.", kw:"chamada presenca falta frequencia hoje registrar aula" },
-    { tab:"conteudos", titulo:"Conteúdos", desc:"Conteúdos do semestre de cada turma.", kw:"conteudo planejamento semestre materia plano de aula" },
+    { tab:"conteudos", titulo:"Conteúdos", desc:"Conteúdos do semestre de cada turma; adicione, edite e exclua.", kw:"conteudo planejamento semestre materia plano de aula editar corrigir" },
+    { tab:"relconteudos", titulo:"Conteúdos por turma", desc:"Relatório do que já foi trabalhado em cada turma.", kw:"relatorio conteudo visto trabalhado turma aula materia progresso cobertura" },
     { tab:"avaliacoes", titulo:"Notas & atividades", desc:"Lançar notas e atividades dos alunos.", kw:"nota atividade boletim lancar trabalho prova media" },
     { tab:"aval", titulo:"Avaliações", desc:"Avaliação institucional e comentários.", kw:"avaliacao institucional pesquisa feedback comentario" },
     { tab:"certificados", titulo:"Certificados", desc:"Anexar e consultar certificados dos alunos das suas turmas.", kw:"certificado modulo concluir anexar link aluno" },
@@ -4206,9 +4256,9 @@ function calendarioInstituicaoView(school){
    "registrosAula" tem TODOS os alunos da turma juntos, não dá pra abrir
    pra eles). O id é fixo (turma + dia + aluno), então salvar de novo a
    chamada do mesmo dia só sobrescreve. */
-async function sincronizarCalendarioDaChamada(turma, presencas, observacoesAlunos, disciplina){
-  const data = dataDeHojeISO();
-  const nomes = turma.alunos || [];
+async function sincronizarCalendarioDaChamada(turma, presencas, observacoesAlunos, disciplina, extra = {}){
+  const data = extra.data || dataDeHojeISO();
+  const nomes = extra.nomes || turma.alunos || [];
   const agora = new Date().toISOString();
   for(let i = 0; i < nomes.length; i += 400){   // um lote do Firestore aceita até 500 gravações
     const lote = writeBatch(db);
@@ -4223,8 +4273,8 @@ async function sincronizarCalendarioDaChamada(turma, presencas, observacoesAluno
         data,
         status: presencas[nome] || "presente",
         observacao: String(observacoesAlunos[nome] || "").trim(),
-        professorId: state.authUser.uid,
-        professorNome: state.data.professorNome || "",
+        professorId: extra.professorId || state.authUser.uid,
+        professorNome: extra.professorNome !== undefined ? extra.professorNome : (state.data.professorNome || ""),
         atualizadoEm: agora,
       });
     });
@@ -4248,24 +4298,30 @@ function professorTurmaSelect(){
 
 function renderProfessor(){
   const navItems = [
+    { key:"inicio", label:"Início", icon:"home" },
     { key:"calendario", label:"Calendário", icon:"calendar" },
     { key:"horarios", label:"Horários", icon:"horarios" },
     { key:"turmas", label:"Turmas", icon:"users" },
     { key:"aulas", label:"Aulas & Chamadas", icon:"clipboard" },
     { key:"conteudos", label:"Conteúdos", icon:"book" },
+    { key:"relconteudos", label:"Conteúdos por turma", icon:"chart" },
     { key:"avaliacoes", label:"Notas & atividades", icon:"cap" },
     { key:"aval", label:"Avaliações", icon:"star" },
     { key:"certificados", label:"Certificados", icon:"award" },
     { key:"suporte", label:"Suporte", icon:"lifebuoy" },
     { key:"perfil", label:"Meu perfil", icon:"user" },
   ];
-  const body = state.professorTab === "calendario" ? calendarioProfessorView()
+  inicio.definirNav(navItems);
+  inicio.registrarVisita(state.professorTab);
+  const body = state.professorTab === "inicio" ? inicio.view()
+    : state.professorTab === "calendario" ? calendarioProfessorView()
     : state.professorTab === "horarios" ? horarios.view()
     : state.professorTab === "turmas" ? professorTurmasView()
     : state.professorTab === "perfil" ? professorPerfilView()
     : state.professorTab === "suporte" ? suporte.view()
     : state.professorTab === "aulas" ? professorAulasView()
     : state.professorTab === "conteudos" ? professorConteudosView()
+    : state.professorTab === "relconteudos" ? relatorioConteudosView()
     : state.professorTab === "aval" ? avaliacoesProfessorView()
     : state.professorTab === "certificados" ? certificadosGestaoView(state.data.professorTurmas)
     : professorAvaliacoesView();
@@ -4900,6 +4956,7 @@ async function carregarChamadasDeHojeProfessor(){
     const out = {};
     snaps.forEach((snap, i) => { if(snap && snap.exists()) out[turmas[i].id] = resumoDeRegistro(snap.data()); });
     state.professorChamadasHoje = out;
+    state.professorChamadasHojeData = data;   // a aba Início só confia nas chamadas quando são do dia de hoje
   } finally {
     state.professorChamadasHojeCarregando = false;
     render();
@@ -4966,19 +5023,30 @@ function professorAulasView(){
 
   const disciplina = turma.disciplina;
   const conteudosDaDisciplina = state.professorConteudosBanco[disciplina] || [];
-  const opcoesConteudo = conteudosDaDisciplina.map(c => `<option value="${escapeHtml(c.id)}" ${state.professorConteudoSelecionadoId === c.id ? "selected" : ""}>${escapeHtml(c.texto)}</option>`).join("");
-  const conteudoSelectHtml = `
-        <select id="lesson-content-select" class="teacher-text-input" ${state.professorRegistroCarregando ? "disabled" : ""}>
-          <option value="" ${!state.professorConteudoSelecionadoId && !state.professorConteudoCadastrando ? "selected" : ""} disabled>Selecione o conteúdo trabalhado</option>
-          ${opcoesConteudo}
-          <option value="__novo__" ${state.professorConteudoCadastrando ? "selected" : ""}>+ Cadastrar novo conteúdo</option>
-        </select>`;
-  const cadastroInlineHtml = state.professorConteudoCadastrando ? `
-        <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
+  const bloqueado = state.professorRegistroCarregando ? "disabled" : "";
+  const escolhido = conteudosDaDisciplina.find(c => c.id === state.professorConteudoSelecionadoId);
+  let conteudoSelectHtml;
+  let cadastroInlineHtml = "";
+  if(state.professorConteudoCadastrando){
+    conteudoSelectHtml = "";
+    cadastroInlineHtml = `
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
           <input id="novo-conteudo-chamada" class="teacher-text-input" style="flex:1;min-width:200px;" placeholder="Digite o novo conteúdo" value="${escapeHtml(state.professorConteudoNovoTexto || "")}" ${state.professorConteudoSalvando ? "disabled" : ""} />
           <button type="button" class="teacher-primary-btn" data-action="cadastrar-conteudo-na-chamada" data-disciplina="${escapeHtml(disciplina)}" ${state.professorConteudoSalvando ? "disabled" : ""}>${state.professorConteudoSalvando ? "Adicionando…" : "Adicionar e usar hoje"}</button>
+          <button type="button" class="attendance-btn" data-action="cancelar-novo-conteudo-chamada" ${state.professorConteudoSalvando ? "disabled" : ""}>Cancelar</button>
         </div>
-        <p class="section-eyebrow" style="margin:4px 0 0;">Esse conteúdo também fica salvo no banco de ${escapeHtml(disciplina)}, na aba "Conteúdos".</p>` : "";
+        <p class="section-eyebrow" style="margin:4px 0 0;">Esse conteúdo também fica salvo no banco de ${escapeHtml(disciplina)}, na aba "Conteúdos".</p>`;
+  } else if(state.professorConteudoSelecionadoId && !state.professorConteudoTrocando){
+    conteudoSelectHtml = `
+        <div class="card" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin:0;">
+          <div style="font-size:14.5px;color:var(--ink);">${escolhido ? escapeHtml(escolhido.texto) : "Conteúdo selecionado"}</div>
+          <button type="button" class="attendance-btn" data-action="trocar-conteudo-chamada" ${bloqueado}>Trocar</button>
+        </div>`;
+  } else {
+    conteudoSelectHtml = `
+        <input id="lesson-content-busca" class="teacher-text-input" type="search" autocomplete="off" placeholder="Pesquisar conteúdo de ${escapeHtml(disciplina || "a disciplina")}…" value="${escapeHtml(state.professorConteudoBusca || "")}" ${bloqueado} />
+        <div id="lesson-content-resultados" style="margin-top:8px;">${conteudoChamadaResultadosHtml(conteudosDaDisciplina)}</div>`;
+  }
 
   const rotuloRegistrar = state.professorRegistroSalvando ? "Salvando…" : (state.professorRegistroSalvo ? "Conteúdo registrado" : "Registrar conteúdo");
   const carregandoAviso = state.professorRegistroCarregando ? `<p class="section-eyebrow" style="margin-top:10px;">Carregando a chamada de hoje…</p>` : "";
@@ -4992,7 +5060,7 @@ function professorAulasView(){
       <h3>Chamada</h3>
       <div class="attendance-list">${rows}</div>
       <div class="lesson-content">
-        <label for="lesson-content-select">Conteúdo trabalhado</label>
+        <label>Conteúdo trabalhado</label>
         ${conteudoSelectHtml}
         ${cadastroInlineHtml}
         <label for="lesson-observacao" style="margin-top:14px;">Observação da aula (opcional)</label>
@@ -5004,7 +5072,32 @@ function professorAulasView(){
     </div>`;
 }
 
+/* Lista pesquisável de conteúdos na chamada. Também é chamada direto pelo
+   handler de digitação, pra atualizar só a lista sem tirar o foco do campo. */
+function conteudoChamadaResultadosHtml(lista){
+  const termos = normalizarBusca(state.professorConteudoBusca).split(/\s+/).filter(Boolean);
+  const achados = lista.filter(c => { const alvo = normalizarBusca(c.texto); return termos.every(tk => alvo.includes(tk)); });
+  const LIMITE = 30;
+  const itens = achados.slice(0, LIMITE).map(c => `
+    <button type="button" class="attendance-btn" style="display:block;width:100%;text-align:left;margin-bottom:6px;white-space:normal;${c.id === state.professorConteudoSelecionadoId ? "border-color:var(--gold);" : ""}" data-action="escolher-conteudo-chamada" data-id="${escapeHtml(c.id)}">${escapeHtml(c.texto)}</button>`).join("");
+  const vazio = achados.length === 0
+    ? `<div style="padding:8px 2px;font-size:14px;color:var(--slate);">${lista.length === 0 ? "Nenhum conteúdo cadastrado ainda para esta disciplina." : "Nenhum conteúdo encontrado para essa pesquisa."}</div>` : "";
+  const mais = achados.length > LIMITE ? `<p class="section-eyebrow" style="margin:2px 0 8px;">Mostrando ${LIMITE} de ${achados.length} — digite mais para filtrar.</p>` : "";
+  return `${itens}${vazio}${mais}
+    <button type="button" class="attendance-btn" style="display:block;width:100%;text-align:left;" data-action="abrir-novo-conteudo-chamada">+ Cadastrar novo conteúdo${(state.professorConteudoBusca || "").trim() ? ` “${escapeHtml(state.professorConteudoBusca.trim())}”` : ""}</button>`;
+}
+
 function professorConteudosView(){
+  if((state.data.professorDisciplinas || []).length === 0 && state.contSubTab !== "turma") return professorConteudosListaView();
+  if(state.contSubTab === "turma"){
+    return contSubAbasHtml() + relContCorpoHtml(`
+    <h2 class="section-title">Conteúdos por turma</h2>
+    <p class="section-eyebrow">Pesquise uma turma para ver o que já foi trabalhado nela, aula a aula.</p>`);
+  }
+  return contSubAbasHtml() + professorConteudosListaView();
+}
+
+function professorConteudosListaView(){
   const disciplinas = state.data.professorDisciplinas || [];
   if(disciplinas.length === 0){
     return `
@@ -5021,13 +5114,7 @@ function professorConteudosView(){
     </select>` : `<p class="section-eyebrow" style="margin:2px 0 14px;">Disciplina: <strong style="color:var(--ink);">${escapeHtml(disciplina)}</strong></p>`;
 
   const lista = state.professorConteudosBanco[disciplina] || [];
-  const itens = state.professorConteudosCarregando
-    ? `<div style="padding:20px;font-size:14px;color:var(--slate);">Carregando conteúdos…</div>`
-    : lista.map(c => `
-    <div class="row">
-      <div style="font-size:14.5px;color:var(--ink);">${escapeHtml(c.texto)}</div>
-      <button type="button" class="attendance-btn" data-action="excluir-conteudo-banco" data-disciplina="${escapeHtml(disciplina)}" data-id="${escapeHtml(c.id)}" aria-label="Excluir conteúdo" ${state.professorConteudoExcluindoId === c.id ? "disabled" : ""}>${state.professorConteudoExcluindoId === c.id ? "…" : ICONS.trash}</button>
-    </div>`).join("") || `<div style="padding:20px;font-size:14px;color:var(--slate);">Nenhum conteúdo cadastrado ainda para ${escapeHtml(disciplina)}.</div>`;
+  const itens = conteudosLinhasHtml("prof", disciplina, lista, state.professorConteudosCarregando);
 
   return `
     <h2 class="section-title">Conteúdos do semestre</h2>
@@ -5212,11 +5299,14 @@ function nomeEquipePendenteBanner(){
 function renderInstituicao(){
   const school = state.data.escolas[state.escolaSelecionadaId];
   const navItems = [
+    { key:"inicio", label:"Início", icon:"home" },
     { key:"turmas", label:"Turmas", icon:"clipboard" },
     { key:"cursos", label:"Cursos e turmas", icon:"book" },
     { key:"calendario", label:"Calendário", icon:"calendar" },
     { key:"horarios", label:"Horários", icon:"horarios" },
     { key:"relatorio", label:"Relatório do dia", icon:"clipboard" },
+    { key:"conteudos", label:"Conteúdos", icon:"book" },
+    { key:"relconteudos", label:"Conteúdos por turma", icon:"chart" },
     { key:"estatisticas", label:"Estatísticas", icon:"chart" },
     { key:"financeiro", label:"Financeiro", icon:"wallet" },
     { key:"alunos", label:"Alunos", icon:"users" },
@@ -5234,11 +5324,16 @@ function renderInstituicao(){
   ];
 
   let body = "";
-  if(state.instTab === "turmas") body = turmasView(school);
+  inicio.definirNav(navItems);
+  inicio.registrarVisita(state.instTab);
+  if(state.instTab === "inicio") body = inicio.view();
+  else if(state.instTab === "turmas") body = turmasView(school);
   else if(state.instTab === "cursos") body = cursosCfg.view();
   else if(state.instTab === "calendario") body = calendarioInstituicaoView(school);
   else if(state.instTab === "horarios") body = horarios.view();
   else if(state.instTab === "relatorio") body = relatorioDiaView(school);
+  else if(state.instTab === "conteudos") body = conteudosInstituicaoView(school);
+  else if(state.instTab === "relconteudos") body = relatorioConteudosView();
   else if(state.instTab === "estatisticas") body = estatisticasView(school);
   else if(state.instTab === "financeiro") body = financeiroInstituicaoView(school);
   else if(state.instTab === "alunos") body = alunosView(school);
@@ -7511,6 +7606,447 @@ function dataDeHojeExtenso(){
   return texto.charAt(0).toUpperCase() + texto.slice(1);
 }
 
+
+/* ---------------- CONTEÚDOS: EDIÇÃO (professor e secretaria) ----------------
+   O banco `conteudos` é por professor + disciplina. O professor edita o
+   dele na aba "Conteúdos"; a secretaria escolhe um professor da unidade na
+   aba "Conteúdos" dela. escopo: "prof" | "inst". */
+function contextoConteudos(escopo){
+  if(escopo === "inst"){
+    return {
+      banco: state.instConteudos.banco,
+      professorId: state.instConteudos.profId,
+      escolaId: state.escolaSelecionadaId,
+      setErro: (m) => { state.instConteudos.erro = m; },
+    };
+  }
+  return {
+    banco: state.professorConteudosBanco,
+    professorId: state.authUser?.uid || "",
+    escolaId: null,
+    setErro: (m) => { state.professorConteudosErro = m; },
+  };
+}
+
+function conteudosLinhasHtml(escopo, disciplina, lista, carregando){
+  const msg = (t) => `<div style="padding:20px;font-size:14px;color:var(--slate);">${t}</div>`;
+  if(carregando) return msg("Carregando conteúdos…");
+  if(!lista.length) return msg(`Nenhum conteúdo cadastrado ainda para ${escapeHtml(disciplina)}.`);
+  const excluindoId = escopo === "inst" ? state.instConteudos.excluindoId : state.professorConteudoExcluindoId;
+  const ed = state.contEdit;
+  return lista.map(c => {
+    if(ed.id === c.id && ed.escopo === escopo){
+      return `
+    <div class="row" style="gap:8px;flex-wrap:wrap;">
+      <input id="cont-edit-texto" class="teacher-text-input" style="flex:1;min-width:200px;" maxlength="200" value="${escapeHtml(ed.texto)}" ${ed.salvando ? "disabled" : ""} />
+      <button type="button" class="teacher-primary-btn" data-action="salvar-edicao-conteudo" ${ed.salvando ? "disabled" : ""}>${ed.salvando ? "Salvando…" : "Salvar"}</button>
+      <button type="button" class="attendance-btn" data-action="cancelar-edicao-conteudo" ${ed.salvando ? "disabled" : ""}>Cancelar</button>
+    </div>`;
+    }
+    return `
+    <div class="row">
+      <div style="font-size:14.5px;color:var(--ink);">${escapeHtml(c.texto)}</div>
+      <div style="display:flex;gap:6px;flex-shrink:0;">
+        <button type="button" class="icon-acao" data-action="editar-conteudo-banco" data-escopo="${escopo}" data-id="${escapeHtml(c.id)}" aria-label="Editar conteúdo" title="Editar">${ICONS.pencil}</button>
+        <button type="button" class="icon-acao icon-acao-perigo" data-action="excluir-conteudo-banco" data-escopo="${escopo}" data-disciplina="${escapeHtml(disciplina)}" data-id="${escapeHtml(c.id)}" aria-label="Excluir conteúdo" title="Excluir" ${excluindoId === c.id ? "disabled" : ""}>${excluindoId === c.id ? "…" : ICONS.trash}</button>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+/* Troca o texto de um conteúdo do banco. As chamadas já registradas guardam
+   uma cópia do texto (registrosAula.conteudoTexto), então a correção também
+   é aplicada nelas — assim o relatório e o relatório do dia ficam iguais.
+   A propagação é "melhor esforço": se as regras do Firestore não permitirem,
+   o conteúdo do banco já foi corrigido e só o histórico antigo fica como estava. */
+async function editarConteudoNoBanco(ctx, id, texto){
+  await updateDoc(doc(db, "conteudos", id), {
+    texto,
+    atualizadoEm: new Date().toISOString(),
+    atualizadoPorId: state.authUser?.uid || "",
+  });
+  Object.values(ctx.banco).forEach(lista => lista.forEach(c => { if(c.id === id) c.texto = texto; }));
+  let historico = true;
+  try {
+    const cond = [where("professorId", "==", ctx.professorId), where("conteudoId", "==", id)];
+    if(ctx.escolaId) cond.push(where("escolaId", "==", ctx.escolaId));
+    const snaps = await getDocs(query(collection(db, "registrosAula"), ...cond));
+    for(let i = 0; i < snaps.docs.length; i += 400){
+      const lote = writeBatch(db);
+      snaps.docs.slice(i, i + 400).forEach(d => lote.update(d.ref, { conteudoTexto: texto }));
+      await lote.commit();
+    }
+  } catch(err){
+    historico = false;
+    console.warn("Conteúdo corrigido, mas não foi possível atualizar as chamadas antigas:", err?.code, err);
+  }
+  return historico;
+}
+
+/* ---------------- SECRETARIA > CONTEÚDOS ---------------- */
+async function carregarConteudosInst(profId){
+  const ci = state.instConteudos;
+  ci.profId = profId;
+  ci.carregando = true;
+  ci.erro = "";
+  ci.banco = {};
+  render();
+  try {
+    const snaps = await getDocs(query(collection(db, "conteudos"), where("professorId", "==", profId)));
+    if(ci.profId !== profId) return;
+    const banco = {};
+    snaps.docs.forEach(d => {
+      const x = d.data();
+      const disc = x.disciplina || "";
+      (banco[disc] = banco[disc] || []).push({ id: d.id, texto: x.texto || "" });
+    });
+    Object.values(banco).forEach(l => l.sort((a, b) => a.texto.localeCompare(b.texto, "pt-BR")));
+    ci.banco = banco;
+  } catch(err){
+    console.error("Erro ao carregar conteúdos do professor:", err?.code, err);
+    if(ci.profId === profId) ci.erro = `Não foi possível carregar os conteúdos deste professor${err?.code ? ` (${err.code})` : ""}.`;
+  } finally {
+    if(ci.profId === profId) ci.carregando = false;
+    render();
+  }
+}
+
+async function abrirConteudosInst(){
+  const escolaId = state.escolaSelecionadaId;
+  if(!escolaId) return;
+  state.contEdit = { escopo: "", id: null, texto: "", salvando: false };
+  if((state.gestaoProfessores === null || state.gestaoEquipeEscolaId !== escolaId) && !state.gestaoEquipeCarregando){
+    await carregarEquipeDaEscola(escolaId);
+  }
+  const profs = state.gestaoProfessores || [];
+  const ci = state.instConteudos;
+  if(!profs.some(p => p.id === ci.profId)) ci.profId = profs.length === 1 ? profs[0].id : "";
+  if(ci.profId) await carregarConteudosInst(ci.profId);
+  else render();
+}
+
+function conteudosInstituicaoView(school){
+  if(state.contSubTab === "turma"){
+    return contSubAbasHtml() + relContCorpoHtml(`
+    <h2 class="section-title">Conteúdos por turma</h2>
+    <p class="section-eyebrow">${escapeHtml(school.nome)} · Pesquise uma turma para ver o que já foi trabalhado nela, aula a aula.</p>`);
+  }
+  return contSubAbasHtml() + conteudosInstListaView(school);
+}
+
+function conteudosInstListaView(school){
+  const ci = state.instConteudos;
+  const profs = [...(state.gestaoProfessores || [])].sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+  const cab = `
+    <h2 class="section-title">Conteúdos do semestre</h2>
+    <p class="section-eyebrow">${escapeHtml(school.nome)} · Escolha um professor para ver, corrigir, adicionar ou excluir os conteúdos que ele usa na chamada.</p>`;
+
+  if(state.gestaoProfessores === null || state.gestaoEquipeCarregando){
+    return `${cab}<div style="padding:20px;font-size:14px;color:var(--slate);">Carregando professores…</div>`;
+  }
+  if(profs.length === 0){
+    return `${cab}<div class="turmas-empty-state"><strong>Nenhum professor cadastrado nesta unidade.</strong><span>Cadastre em Gestão &gt; Criar cadastro.</span></div>`;
+  }
+
+  const selProf = `
+    <select id="inst-cont-prof-select" class="teacher-text-input" style="margin-bottom:12px;">
+      <option value="" ${ci.profId ? "" : "selected"} disabled>Selecione o professor</option>
+      ${profs.map(p => `<option value="${escapeHtml(p.id)}" ${p.id === ci.profId ? "selected" : ""}>${escapeHtml(p.nome)}</option>`).join("")}
+    </select>`;
+
+  const prof = profs.find(p => p.id === ci.profId);
+  if(!prof) return `${cab}${selProf}`;
+
+  // disciplinas do cadastro do professor + as que já têm conteúdo
+  const disciplinas = [...new Set([...(prof.disciplinas || []), ...Object.keys(ci.banco).filter(Boolean)])];
+  if(disciplinas.length === 0){
+    return `${cab}${selProf}<p class="section-eyebrow">Este professor ainda não tem disciplina no cadastro. Vincule uma em Professores &gt; Editar para cadastrar conteúdos.</p>`;
+  }
+  const disciplina = disciplinas.includes(ci.disciplina) ? ci.disciplina : disciplinas[0];
+  const selDisc = disciplinas.length > 1 ? `
+    <select id="inst-cont-disc-select" class="teacher-text-input" style="margin-bottom:16px;">
+      ${disciplinas.map(d => `<option value="${escapeHtml(d)}" ${d === disciplina ? "selected" : ""}>${escapeHtml(d)}</option>`).join("")}
+    </select>` : `<p class="section-eyebrow" style="margin:2px 0 14px;">Disciplina: <strong style="color:var(--ink);">${escapeHtml(disciplina)}</strong></p>`;
+
+  const lista = ci.banco[disciplina] || [];
+  return `
+    ${cab}
+    ${selProf}
+    ${selDisc}
+    <div class="teacher-panel">
+      <h3>Adicionar conteúdo</h3>
+      <input id="inst-cont-novo" class="teacher-text-input" maxlength="200" placeholder="Ex.: Frações equivalentes" value="${escapeHtml(ci.novoTexto || "")}" ${ci.salvando ? "disabled" : ""} />
+      <button class="teacher-primary-btn" style="margin-top:8px;" data-action="adicionar-conteudo-inst" data-disciplina="${escapeHtml(disciplina)}" ${ci.salvando ? "disabled" : ""}>${ci.salvando ? "Adicionando…" : "Adicionar à lista"}</button>
+      ${ci.erro ? `<p class="teacher-error" style="color:var(--red,#C4544A);font-size:12.5px;margin-top:8px;">${escapeHtml(ci.erro)}</p>` : ""}
+      <h3 style="margin-top:22px;">Conteúdos cadastrados (${lista.length})</h3>
+      <div class="card flush">${conteudosLinhasHtml("inst", disciplina, lista, ci.carregando)}</div>
+    </div>`;
+}
+
+/* ---------------- RELATÓRIO: CONTEÚDOS POR TURMA ----------------
+   Professor e secretaria. Lê as chamadas já registradas da turma
+   (`registrosAula` por turmaId) e agrupa pelo conteúdo trabalhado; se o
+   professor tem o banco da disciplina, mostra também o que ainda não foi
+   visto. Só igualdades na consulta — não precisa de índice composto. */
+function relFmtData(iso){
+  const [a, m, d] = String(iso || "").split("-");
+  return (a && m && d) ? `${d}/${m}/${a.slice(2)}` : (iso || "");
+}
+
+function abrirRelatorioConteudos(){
+  state.relCont = { turmaId: "", registros: [], carregando: false, erro: "", busca: "", trocando: false, diaAberto: null, edit: null };
+  const souProf = state.screen === "professor";
+  if(souProf){
+    const turmas = state.data.professorTurmas || [];
+    if(turmas.length === 1) carregarRelatorioConteudos(turmas[0]);
+  } else {
+    garantirTurmasDaUnidade();
+  }
+}
+
+async function carregarRelatorioConteudos(turma){
+  const rc = state.relCont;
+  const souProf = state.screen === "professor";
+  rc.turmaId = turma.id;
+  rc.registros = [];
+  rc.diaAberto = null;
+  rc.edit = null;
+  rc.erro = "";
+  rc.carregando = true;
+  render();
+  try {
+    const cond = [where("turmaId", "==", turma.id)];
+    cond.push(souProf ? where("professorId", "==", state.authUser.uid) : where("escolaId", "==", state.escolaSelecionadaId));
+    const snaps = await getDocs(query(collection(db, "registrosAula"), ...cond));
+    if(rc.turmaId !== turma.id) return;
+    rc.registros = snaps.docs.map(d => {
+      const x = d.data();
+      return { data: x.data || "", conteudoId: x.conteudoId || "", conteudoTexto: x.conteudoTexto || "", professorNome: x.professorNome || "", professorId: x.professorId || "", observacao: x.observacao || "", presencas: x.presencas || {}, observacoesAlunos: x.observacoesAlunos || {} };
+    }).sort((a, b) => a.data.localeCompare(b.data));
+  } catch(err){
+    console.error("Erro ao carregar o relatório de conteúdos:", err?.code, err);
+    if(rc.turmaId === turma.id) rc.erro = `Não foi possível carregar as aulas desta turma${err?.code ? ` (${err.code})` : ""}. Tente de novo.`;
+  } finally {
+    if(rc.turmaId === turma.id) rc.carregando = false;
+    render();
+  }
+}
+
+/* Turmas disponíveis pro relatório (professor: as dele; secretaria: as da unidade). */
+function relContTurmas(){
+  const souProf = state.screen === "professor";
+  return [...(souProf ? (state.data.professorTurmas || []) : (state.instTurmas || []))]
+    .sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR"));
+}
+
+/* Lista de turmas que casam com a pesquisa (nome, disciplina, professor, sala).
+   Também é chamada direto pelo handler de digitação, pra não perder o foco do campo. */
+function relContResultadosHtml(){
+  const souProf = state.screen === "professor";
+  const nomeProf = (id) => (state.gestaoProfessores || []).find(p => p.id === id)?.nome || "";
+  const termos = normalizarBusca(state.relCont.busca).split(/\s+/).filter(Boolean);
+  const todas = relContTurmas();
+  const achadas = todas.filter(t => {
+    const alvo = normalizarBusca([t.nome, t.disciplina, t.sala, t.horario, souProf ? "" : nomeProf(t.professorId)].join(" "));
+    return termos.every(tk => alvo.includes(tk));
+  });
+  if(achadas.length === 0) return `<div style="padding:14px 4px;font-size:14px;color:var(--slate);">Nenhuma turma encontrada para essa pesquisa.</div>`;
+  const LIMITE = 30;
+  const cards = achadas.slice(0, LIMITE).map(t => `
+    <button type="button" class="teacher-class-card ${t.id === state.relCont.turmaId ? "active" : ""}" data-action="rel-cont-escolher-turma" data-id="${escapeHtml(t.id)}">
+      <strong>${escapeHtml(t.nome || "Turma")}</strong>
+      <small>${escapeHtml([t.disciplina, !souProf ? nomeProf(t.professorId) : "", t.horario].filter(Boolean).join(" · "))}</small>
+    </button>`).join("");
+  const mais = achadas.length > LIMITE ? `<p class="section-eyebrow" style="margin:8px 0 0;">Mostrando ${LIMITE} de ${achadas.length} turmas — digite mais para filtrar.</p>` : "";
+  return `<div class="teacher-class-list">${cards}</div>${mais}`;
+}
+
+function relatorioConteudosView(){
+  return relContCorpoHtml(`
+    <h2 class="section-title">Conteúdos por turma</h2>
+    <p class="section-eyebrow">O que já foi trabalhado em cada turma, aula a aula, com base nas chamadas registradas.</p>`);
+}
+
+/* Barra de sub-abas da aba "Conteúdos" (professor e secretaria). */
+function contSubAbasHtml(){
+  const b = (k, t) => `<button type="button" class="attendance-btn ${state.contSubTab === k ? "active present" : ""}" data-action="set-cont-subtab" data-key="${k}">${t}</button>`;
+  return `<div style="display:flex;gap:8px;flex-wrap:wrap;margin:0 0 16px;">${b("lista", "Lista do semestre")}${b("turma", "Ver por turma")}</div>`;
+}
+
+/* Edição de uma aula de um dia que já passou — SÓ secretaria. */
+function relContEdicaoHtml(turma, r){
+  const ed = state.relCont.edit;
+  const nomes = Object.keys(ed.presencas).sort((a, b) => a.localeCompare(b, "pt-BR"));
+  const btn = (nome, st, rot, cls) => `<button type="button" class="attendance-btn ${ed.presencas[nome] === st ? "active " + cls : ""}" data-action="rel-edit-status" data-nome="${escapeHtml(nome)}" data-st="${st}" ${ed.salvando ? "disabled" : ""}>${rot}</button>`;
+  const linhas = nomes.map(n => `
+      <div style="padding:8px 0;border-top:1px solid rgba(18,32,50,.08);">
+        <div style="font-size:14px;font-weight:600;color:var(--ink);">${escapeHtml(n)}</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin:6px 0;">${btn(n, "presente", "Presente", "present")}${btn(n, "falta", "Falta", "absent")}${btn(n, "justificada", "Justificada", "justified")}</div>
+        <input class="teacher-text-input" data-rel-edit-obsaluno="${escapeHtml(n)}" maxlength="300" placeholder="Observação sobre o aluno (opcional)" value="${escapeHtml(ed.obsAlunos[n] || "")}" ${ed.salvando ? "disabled" : ""} />
+      </div>`).join("");
+  return `
+  <div class="aluno-modal-backdrop" data-action="noop">
+    <div class="aluno-modal" role="dialog" aria-modal="true" aria-label="Editar aula" data-action="noop">
+      <div class="aluno-modal-head">
+        <div>
+          <h2>Editar aula</h2>
+          <p class="section-eyebrow" style="margin:2px 0 0;">${escapeHtml(turma.nome || "Turma")} · ${escapeHtml(relDataExtenso(ed.data))}${r.professorNome ? " · Prof. " + escapeHtml(r.professorNome) : ""}</p>
+        </div>
+        <button type="button" class="secretaria-modal-close" style="color:var(--slate);" data-action="rel-edit-cancelar" aria-label="Cancelar edição" ${ed.salvando ? "disabled" : ""}>${ICONS.close}</button>
+      </div>
+      <div class="aluno-modal-section">
+        <h3 class="teacher-label">Conteúdo</h3>
+        <input id="rel-edit-conteudo" class="teacher-text-input" list="rel-edit-conteudo-lista" maxlength="200" placeholder="Digite ou escolha da lista do professor" value="${escapeHtml(ed.conteudoTexto)}" ${ed.salvando ? "disabled" : ""} />
+        <datalist id="rel-edit-conteudo-lista">${(ed.banco || []).map(c => `<option value="${escapeHtml(c.texto)}"></option>`).join("")}</datalist>
+      </div>
+      <div class="aluno-modal-section">
+        <h3 class="teacher-label">Observação da aula</h3>
+        <textarea id="rel-edit-obs" class="teacher-text-input" rows="2" maxlength="600" ${ed.salvando ? "disabled" : ""}>${escapeHtml(ed.observacao)}</textarea>
+      </div>
+      <div class="aluno-modal-section">
+        <h3 class="teacher-label">Chamada</h3>
+        ${linhas || `<p class="section-eyebrow">Esta aula não tem alunos na chamada.</p>`}
+      </div>
+      <div class="aluno-modal-section">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button type="button" class="teacher-primary-btn" style="margin-top:0;" data-action="rel-edit-salvar" ${ed.salvando ? "disabled" : ""}>${ed.salvando ? "Salvando…" : "Salvar correção"}</button>
+          <button type="button" class="attendance-btn" data-action="rel-edit-cancelar" ${ed.salvando ? "disabled" : ""}>Cancelar</button>
+        </div>
+        ${ed.erro ? `<p class="teacher-error" style="color:var(--red,#C4544A);font-size:12.5px;margin-top:8px;">${escapeHtml(ed.erro)}</p>` : ""}
+      </div>
+    </div>
+  </div>`;
+}
+
+/* Detalhe de uma aula (turma + dia) aberto a partir do relatório de conteúdos. Só leitura (a secretaria tem o botão de editar). */
+function relContDiaModalHtml(turma){
+  const iso = state.relCont.diaAberto;
+  if(!iso) return "";
+  const r = state.relCont.registros.find(x => x.data === iso);
+  if(!r) return "";
+  if(state.relCont.edit && state.relCont.edit.data === iso) return relContEdicaoHtml(turma, r);
+  const souInst = state.screen === "instituicao";
+  const nomes = (st) => Object.keys(r.presencas).filter(n => r.presencas[n] === st).sort((a, b) => a.localeCompare(b, "pt-BR"));
+  const presentes = nomes("presente"), faltas = nomes("falta"), justificadas = nomes("justificada");
+  const bloco = (titulo, lista, cor) => lista.length ? `
+      <div class="aluno-modal-section">
+        <h3 class="teacher-label" style="color:${cor || "var(--ink)"};">${titulo} (${lista.length})</h3>
+        <div style="font-size:14px;color:var(--ink);line-height:1.5;">${escapeHtml(lista.join(", "))}</div>
+      </div>` : "";
+  const obsAlunos = Object.keys(r.observacoesAlunos).filter(n => (r.observacoesAlunos[n] || "").trim())
+    .sort((a, b) => a.localeCompare(b, "pt-BR"));
+  return `
+  <div class="aluno-modal-backdrop" data-action="rel-cont-fechar-dia">
+    <div class="aluno-modal" role="dialog" aria-modal="true" aria-label="Aula de ${escapeHtml(relFmtData(iso))}" data-action="noop">
+      <div class="aluno-modal-head">
+        <div>
+          <h2>${escapeHtml(turma.nome || "Turma")}</h2>
+          <p class="section-eyebrow" style="margin:2px 0 0;">${escapeHtml(relDataExtenso(iso))}${turma.disciplina ? " · " + escapeHtml(turma.disciplina) : ""}${r.professorNome ? " · Prof. " + escapeHtml(r.professorNome) : ""}</p>
+        </div>
+        <button type="button" class="secretaria-modal-close" style="color:var(--slate);" data-action="rel-cont-fechar-dia" aria-label="Fechar">${ICONS.close}</button>
+      </div>
+      <div class="aluno-modal-section">
+        <h3 class="teacher-label">Conteúdo</h3>
+        <div style="font-size:14.5px;color:var(--ink);">${r.conteudoTexto ? escapeHtml(r.conteudoTexto) : `<span style="color:var(--slate);">não informado</span>`}</div>
+      </div>
+      ${r.observacao ? `<div class="aluno-modal-section"><h3 class="teacher-label">Observação da aula</h3><div style="font-size:14px;color:var(--ink);">${escapeHtml(r.observacao)}</div></div>` : ""}
+      <div class="aluno-modal-section">
+        <h3 class="teacher-label">Presença</h3>
+        <div style="font-size:14px;color:var(--ink);">${presentes.length}/${Object.keys(r.presencas).length} presentes${faltas.length ? ` · ${faltas.length} falta${faltas.length === 1 ? "" : "s"}` : ""}${justificadas.length ? ` · ${justificadas.length} justificada${justificadas.length === 1 ? "" : "s"}` : ""}</div>
+      </div>
+      ${bloco("Faltaram", faltas, "var(--red)")}
+      ${bloco("Falta justificada", justificadas)}
+      ${bloco("Presentes", presentes)}
+      ${obsAlunos.length ? `<div class="aluno-modal-section"><h3 class="teacher-label">Observações sobre alunos</h3>${obsAlunos.map(n => `<div style="font-size:13.5px;color:var(--ink);margin-bottom:4px;"><strong>${escapeHtml(n)}:</strong> ${escapeHtml(r.observacoesAlunos[n])}</div>`).join("")}</div>` : ""}
+      <div class="aluno-modal-section">
+        ${souInst
+          ? `<button type="button" class="teacher-primary-btn" style="margin-top:0;" data-action="rel-cont-editar-dia" data-data="${escapeHtml(iso)}">${ICONS.pencil} Editar esta aula</button>`
+          : `<p class="section-eyebrow" style="margin:0;">Para corrigir a chamada ou o conteúdo de um dia que já passou, peça à secretaria em <strong>Suporte &gt; Ajuste de aula</strong>.</p>`}
+      </div>
+    </div>
+  </div>`;
+}
+
+function relContCorpoHtml(cab){
+  const souProf = state.screen === "professor";
+  const rc = state.relCont;
+
+  if(!souProf && (state.instTurmas === null || state.instTurmasCarregando)){
+    return `${cab}<div style="padding:20px;font-size:14px;color:var(--slate);">Carregando turmas…</div>`;
+  }
+  const turmas = relContTurmas();
+  if(turmas.length === 0){
+    return `${cab}<div class="teacher-empty-state"><strong>Nenhuma turma encontrada.</strong><span>${souProf ? "Fale com a secretaria para vincular suas turmas." : "Cadastre turmas na aba Turmas."}</span></div>`;
+  }
+
+  const turma = turmas.find(t => t.id === rc.turmaId);
+  const nomeProf = (id) => (state.gestaoProfessores || []).find(p => p.id === id)?.nome || "";
+
+  // turma escolhida: mostra só uma faixa com "Trocar turma"; senão, o campo de pesquisa
+  let seletor;
+  if(turma && !rc.trocando){
+    seletor = `
+    <div class="card" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin:6px 0 16px;">
+      <div>
+        <div style="font-size:15.5px;font-weight:600;color:var(--ink);">${escapeHtml(turma.nome || "Turma")}</div>
+        <div style="font-size:12.5px;color:var(--slate);margin-top:2px;">${escapeHtml([turma.disciplina, !souProf ? nomeProf(turma.professorId) : "", turma.horario].filter(Boolean).join(" · "))}</div>
+      </div>
+      ${turmas.length > 1 ? `<button type="button" class="attendance-btn" data-action="rel-cont-trocar">Trocar turma</button>` : ""}
+    </div>`;
+  } else {
+    seletor = `
+    <input id="rel-cont-busca" class="teacher-text-input" type="search" autocomplete="off" placeholder="Pesquisar turma, disciplina${souProf ? "" : " ou professor"}…" value="${escapeHtml(rc.busca || "")}" style="margin:6px 0 12px;" />
+    <div id="rel-cont-resultados" style="margin-bottom:16px;">${relContResultadosHtml()}</div>`;
+  }
+
+  if(!turma) return `${cab}${seletor}`;
+  if(rc.trocando) return `${cab}${seletor}`;
+  if(rc.carregando) return `${cab}${seletor}<div style="padding:20px;font-size:14px;color:var(--slate);">Carregando aulas…</div>`;
+  if(rc.erro) return `${cab}${seletor}<div style="padding:20px;font-size:14px;color:var(--red);">${escapeHtml(rc.erro)}</div>`;
+
+  const regs = rc.registros;
+  const comConteudo = regs.filter(r => r.conteudoTexto);
+  const semConteudo = regs.filter(r => !r.conteudoTexto);
+
+  // agrupa por conteúdo, na ordem em que apareceu pela primeira vez
+  const grupos = new Map();
+  comConteudo.forEach(r => {
+    const chave = r.conteudoId || `t:${r.conteudoTexto}`;
+    if(!grupos.has(chave)) grupos.set(chave, { texto: r.conteudoTexto, datas: [] });
+    grupos.get(chave).datas.push(r.data);
+  });
+  const vistos = [...grupos.values()];
+
+  const resumo = `
+    <div class="grid-cards">
+      ${estCard("Aulas registradas", regs.length, regs.length ? `${relFmtData(regs[0].data)} a ${relFmtData(regs[regs.length - 1].data)}` : "Nenhuma chamada ainda")}
+      ${estCard("Conteúdos trabalhados", vistos.length, semConteudo.length ? `${semConteudo.length} aula${semConteudo.length === 1 ? "" : "s"} sem conteúdo informado` : "Todas as aulas com conteúdo")}
+    </div>`;
+
+  const h3 = (t) => `<h3 style="font-family:var(--font-display);font-size:17px;color:var(--ink);font-weight:500;margin:20px 0 10px;">${t}</h3>`;
+  const chipData = (iso) => `<button type="button" class="attendance-btn" style="padding:3px 10px;font-size:12.5px;" data-action="rel-cont-abrir-dia" data-data="${escapeHtml(iso)}" title="Abrir a aula deste dia">${escapeHtml(relFmtData(iso))}</button>`;
+  const linhasVistos = vistos.map(g => `
+    <div class="row" style="align-items:flex-start;">
+      <div>
+        ${g.datas.length === 1
+          ? `<button type="button" data-action="rel-cont-abrir-dia" data-data="${escapeHtml(g.datas[0])}" style="all:unset;cursor:pointer;font-size:14.5px;color:var(--ink);text-decoration:underline dotted;text-underline-offset:3px;">${escapeHtml(g.texto)}</button>`
+          : `<div style="font-size:14.5px;color:var(--ink);">${escapeHtml(g.texto)}</div>`}
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">${g.datas.map(chipData).join("")}</div>
+      </div>
+      <span class="pill pill-green" style="flex-shrink:0;">${g.datas.length} aula${g.datas.length === 1 ? "" : "s"}</span>
+    </div>`).join("");
+
+  return `
+    ${cab}
+    ${seletor}
+    ${resumo}
+    ${h3("Conteúdos já trabalhados")}
+    <div class="card flush">${linhasVistos || `<div style="padding:20px;font-size:14px;color:var(--slate);">Nenhum conteúdo registrado nesta turma ainda.</div>`}</div>
+    ${semConteudo.length ? `${h3("Aulas sem conteúdo informado")}
+    <div class="card"><div style="display:flex;gap:6px;flex-wrap:wrap;">${semConteudo.map(r => chipData(r.data)).join("")}</div></div>` : ""}
+    ${relContDiaModalHtml(turma)}`;
+}
+
 /* Carrega, na coleção `conteudos`, todos os conteúdos já cadastrados pelo
    professor logado, agrupados por disciplina — usado no select da chamada
    e na aba "Conteúdos". */
@@ -7570,6 +8106,8 @@ async function carregarRegistroDoDia(turma){
     state.professorConteudoObservacao = "";
     state.professorConteudoCadastrando = false;
     state.professorConteudoNovoTexto = "";
+    state.professorConteudoBusca = "";
+    state.professorConteudoTrocando = false;
     state.professorRegistroSalvo = false;
 
     if(snap.exists()){
@@ -10911,6 +11449,26 @@ function bindEvents(){
       state.professorConteudosNovoTextoGerenciar = t.value;
       return;
     }
+    if(t.id === "rel-cont-busca"){
+      state.relCont.busca = t.value;
+      const caixa = document.getElementById("rel-cont-resultados");
+      if(caixa) caixa.innerHTML = relContResultadosHtml();
+      return;
+    }
+    if(t.id === "lesson-content-busca"){
+      state.professorConteudoBusca = t.value;
+      const turma = professorTurmaAtual();
+      const caixa = document.getElementById("lesson-content-resultados");
+      if(turma && caixa) caixa.innerHTML = conteudoChamadaResultadosHtml(state.professorConteudosBanco[turma.disciplina] || []);
+      return;
+    }
+    if(state.relCont.edit){
+      if(t.id === "rel-edit-conteudo"){ state.relCont.edit.conteudoTexto = t.value; return; }
+      if(t.id === "rel-edit-obs"){ state.relCont.edit.observacao = t.value; return; }
+      if(t.dataset && t.dataset.relEditObsaluno !== undefined){ state.relCont.edit.obsAlunos[t.dataset.relEditObsaluno] = t.value; return; }
+    }
+    if(t.id === "inst-cont-novo"){ state.instConteudos.novoTexto = t.value; return; }
+    if(t.id === "cont-edit-texto"){ state.contEdit.texto = t.value; return; }
     if(t.id === "new-user-name"){ state.novoUsuarioNome = t.value; return; }
     if(t.id === "new-user-email"){ state.novoUsuarioEmail = t.value; state.novoUsuarioEmailManual = true; return; }
     if(t.id === "new-user-senha"){ state.novoUsuarioSenha = t.value; return; }
@@ -11054,22 +11612,20 @@ function bindEvents(){
       render();
       return;
     }
-    if(t.id === "conteudo-disciplina-select"){
-      state.professorConteudosDisciplinaSelecionada = t.value;
+    if(t.id === "inst-cont-prof-select"){
+      state.instConteudos.disciplina = "";
+      state.contEdit = { escopo: "", id: null, texto: "", salvando: false };
+      carregarConteudosInst(t.value);
+      return;
+    }
+    if(t.id === "inst-cont-disc-select"){
+      state.instConteudos.disciplina = t.value;
+      state.contEdit = { escopo: "", id: null, texto: "", salvando: false };
       render();
       return;
     }
-    if(t.id === "lesson-content-select"){
-      if(t.value === "__novo__"){
-        state.professorConteudoCadastrando = true;
-        state.professorConteudoSelecionadoId = "";
-      } else {
-        state.professorConteudoCadastrando = false;
-        state.professorConteudoNovoTexto = "";
-        state.professorConteudoSelecionadoId = t.value;
-      }
-      state.professorRegistroSalvo = false;
-      state.professorRegistroErro = "";
+    if(t.id === "conteudo-disciplina-select"){
+      state.professorConteudosDisciplinaSelecionada = t.value;
       render();
       return;
     }
@@ -11387,6 +11943,11 @@ function bindEvents(){
       cursosCfg.click(el);
       return;
     }
+    // Aba Início: ações começam com "ini-" (ver inicio.js)
+    if(action.startsWith("ini-")){
+      inicio.click(el);
+      return;
+    }
     // Aba Suporte: ações começam com "sup-" (ver suporte.js)
     if(action.startsWith("sup-")){
       suporte.click(el);
@@ -11418,7 +11979,7 @@ function bindEvents(){
           importContratosResetar();  // a lista de contratos lidos é desta unidade
         }
         state.escolaSelecionadaId = el.dataset.escola;
-        state.instTab = "turmas";
+        state.instTab = "inicio";
         state.instAlunos = null;
         state.instAlunosEscolaId = null;
         state.instTurmas = null;
@@ -11429,6 +11990,7 @@ function bindEvents(){
         state.screen = "instituicao";
         render();
         carregarTurmasDaInstituicao(state.escolaSelecionadaId);
+        inicio.aoAbrir();
         break;
 
       case "avisos-popup-fechar":
@@ -11513,6 +12075,7 @@ function bindEvents(){
           state.fichaForm = null; state.fichaErro = ""; state.fichaMensagem = "";
         }
         render();
+        if(state.instTab === "inicio") inicio.aoAbrir();
         if(state.instTab === "aval") avalAbrirNaInstituicao();
         if(state.instTab === "horarios") horarios.aoAbrir();
         if(state.instTab === "relatorio"){
@@ -11520,6 +12083,8 @@ function bindEvents(){
           carregarRelatorioDoDia(state.escolaSelecionadaId, state.relDia.data || dataDeHojeISO());
         }
         if(state.instTab === "dev") dev.aoAbrir();
+        if(state.instTab === "conteudos"){ state.contSubTab = "lista"; abrirRelatorioConteudos(); abrirConteudosInst(); }
+        if(state.instTab === "relconteudos"){ abrirRelatorioConteudos(); if(state.gestaoProfessores === null && !state.gestaoEquipeCarregando) carregarEquipeDaEscola(state.escolaSelecionadaId); }
         if(state.instTab === "turmas" && state.escolaSelecionadaId
           && (state.instTurmas === null || state.instTurmasEscolaId !== state.escolaSelecionadaId)
           && !state.instTurmasCarregando){
@@ -12291,10 +12856,13 @@ function bindEvents(){
           state.perfilSenhaErro = ""; state.perfilSenhaMensagem = "";
         }
         render();
-        if(state.professorTab === "calendario") carregarEventosDoProfessor();
+        if(state.professorTab === "inicio") inicio.aoAbrir();
+        else if(state.professorTab === "calendario") carregarEventosDoProfessor();
         else if(state.professorTab === "horarios") horarios.aoAbrir();
         else if(state.professorTab === "aulas"){ horarios.preparar(); carregarChamadasDeHojeProfessor(); }
         else if(state.professorTab === "aval") avalAbrirNoProfessor();
+        else if(state.professorTab === "relconteudos") abrirRelatorioConteudos();
+        else if(state.professorTab === "conteudos"){ state.contEdit = { escopo: "", id: null, texto: "", salvando: false }; state.contSubTab = "lista"; abrirRelatorioConteudos(); }
         break;
       case "professor-voltar-aulas":
         state.professorTurmaId = null;
@@ -12436,19 +13004,221 @@ function bindEvents(){
       }
 
       case "excluir-conteudo-banco": {
+        const escopo = el.dataset.escopo === "inst" ? "inst" : "prof";
+        const ctx = contextoConteudos(escopo);
         const disciplina = el.dataset.disciplina;
         const id = el.dataset.id;
-        state.professorConteudoExcluindoId = id;
-        state.professorConteudosErro = "";
+        if(!confirm("Excluir este conteúdo da lista? As aulas já registradas com ele continuam mostrando o texto.")) break;
+        if(escopo === "inst") state.instConteudos.excluindoId = id; else state.professorConteudoExcluindoId = id;
+        ctx.setErro("");
         render();
         try {
           await deleteDoc(doc(db, "conteudos", id));
-          state.professorConteudosBanco[disciplina] = (state.professorConteudosBanco[disciplina] || []).filter(c => c.id !== id);
-          if(state.professorConteudoSelecionadoId === id) state.professorConteudoSelecionadoId = "";
+          ctx.banco[disciplina] = (ctx.banco[disciplina] || []).filter(c => c.id !== id);
+          if(escopo === "prof" && state.professorConteudoSelecionadoId === id) state.professorConteudoSelecionadoId = "";
         } catch(err){
-          state.professorConteudosErro = `Não foi possível excluir o conteúdo agora${err.code ? ` (${err.code})` : ""}.`;
+          ctx.setErro(`Não foi possível excluir o conteúdo agora${err.code ? ` (${err.code})` : ""}.`);
         } finally {
-          state.professorConteudoExcluindoId = null;
+          if(escopo === "inst") state.instConteudos.excluindoId = null; else state.professorConteudoExcluindoId = null;
+          render();
+        }
+        break;
+      }
+      case "editar-conteudo-banco": {
+        const escopo = el.dataset.escopo === "inst" ? "inst" : "prof";
+        const ctx = contextoConteudos(escopo);
+        const atual = Object.values(ctx.banco).flat().find(c => c.id === el.dataset.id);
+        if(!atual) break;
+        ctx.setErro("");
+        state.contEdit = { escopo, id: atual.id, texto: atual.texto, salvando: false };
+        render();
+        const campo = document.getElementById("cont-edit-texto");
+        if(campo){ campo.focus(); campo.setSelectionRange(campo.value.length, campo.value.length); }
+        break;
+      }
+      case "rel-cont-escolher-turma": {
+        const turma = relContTurmas().find(x => x.id === el.dataset.id);
+        if(!turma) break;
+        state.relCont.trocando = false;
+        state.relCont.busca = "";
+        await carregarRelatorioConteudos(turma);
+        window.scrollTo({ top: 0, behavior: "smooth" });
+        break;
+      }
+      case "rel-cont-abrir-dia":
+        state.relCont.diaAberto = el.dataset.data;
+        render();
+        break;
+      case "rel-cont-editar-dia": {
+        if(state.screen !== "instituicao") break;
+        const rc = state.relCont;
+        const r = rc.registros.find(x => x.data === el.dataset.data);
+        const turma = (state.instTurmas || []).find(x => x.id === rc.turmaId);
+        if(!r || !turma) break;
+        rc.edit = {
+          data: r.data, conteudoTexto: r.conteudoTexto, observacao: r.observacao,
+          presencas: { ...r.presencas }, obsAlunos: { ...r.observacoesAlunos },
+          salvando: false, erro: "", banco: [],
+        };
+        render();
+        // conteúdos do professor da turma, só pra sugerir no campo (falha não atrapalha)
+        if(turma.professorId){
+          try {
+            const bs = await getDocs(query(collection(db, "conteudos"), where("professorId", "==", turma.professorId)));
+            if(rc.edit && rc.edit.data === r.data){
+              rc.edit.banco = bs.docs.filter(d => (d.data().disciplina || "") === (turma.disciplina || ""))
+                .map(d => ({ id: d.id, texto: d.data().texto || "" }));
+              render();
+            }
+          } catch(e){ console.warn("Conteúdos do professor indisponíveis na edição:", e?.code); }
+        }
+        break;
+      }
+      case "rel-edit-status": {
+        const ed = state.relCont.edit;
+        if(!ed || ed.salvando) break;
+        ed.presencas[el.dataset.nome] = el.dataset.st;
+        render();
+        break;
+      }
+      case "rel-edit-cancelar":
+        if(state.relCont.edit && !state.relCont.edit.salvando){ state.relCont.edit = null; render(); }
+        break;
+      case "rel-edit-salvar": {
+        const rc = state.relCont, ed = rc.edit;
+        if(!ed || ed.salvando || state.screen !== "instituicao") break;
+        const turma = (state.instTurmas || []).find(x => x.id === rc.turmaId);
+        const reg = rc.registros.find(x => x.data === ed.data);
+        if(!turma || !reg) break;
+        const texto = (ed.conteudoTexto || "").trim();
+        if(!texto){ ed.erro = "Informe o conteúdo da aula."; render(); break; }
+        const achado = (ed.banco || []).find(c => c.texto === texto);
+        const conteudoId = achado ? achado.id : (reg.conteudoTexto === texto ? reg.conteudoId : "");
+        const obsAlunos = {};
+        Object.keys(ed.presencas).forEach(n => { obsAlunos[n] = (ed.obsAlunos[n] || "").trim(); });
+        ed.salvando = true; ed.erro = "";
+        render();
+        try {
+          await updateDoc(doc(db, "registrosAula", `${turma.id}_${ed.data}`), {
+            conteudoId, conteudoTexto: texto,
+            observacao: (ed.observacao || "").trim(),
+            presencas: ed.presencas,
+            observacoesAlunos: obsAlunos,
+            ajustadoPorId: state.authUser.uid,
+            ajustadoPorNome: state.perfil?.nome || "",
+            ajustadoEm: new Date().toISOString(),
+          });
+          Object.assign(reg, { conteudoId, conteudoTexto: texto, observacao: (ed.observacao || "").trim(), presencas: { ...ed.presencas }, observacoesAlunos: obsAlunos });
+          // cópia por aluno (calendário do aluno/responsável) — falha aqui não desfaz a correção
+          try {
+            await sincronizarCalendarioDaChamada(turma, ed.presencas, obsAlunos, turma.disciplina, {
+              data: ed.data, nomes: Object.keys(ed.presencas), professorId: reg.professorId, professorNome: reg.professorNome,
+            });
+            rc.edit = null;
+          } catch(errCal){
+            console.error("Erro ao atualizar o calendário dos alunos:", errCal?.code, errCal);
+            ed.salvando = false;
+            ed.erro = `A aula foi corrigida, mas não foi possível atualizar o calendário dos alunos${errCal?.code ? ` (${errCal.code})` : ""}. Salve de novo para tentar outra vez.`;
+          }
+        } catch(err){
+          ed.salvando = false;
+          ed.erro = `Não foi possível salvar a correção agora${err.code ? ` (${err.code})` : ""}.`;
+        }
+        render();
+        break;
+      }
+      case "rel-cont-fechar-dia":
+        state.relCont.diaAberto = null;
+        render();
+        break;
+      case "rel-cont-trocar": {
+        state.relCont.trocando = true;
+        render();
+        const campo = document.getElementById("rel-cont-busca");
+        if(campo) campo.focus();
+        break;
+      }
+      case "escolher-conteudo-chamada":
+        state.professorConteudoSelecionadoId = el.dataset.id;
+        state.professorConteudoCadastrando = false;
+        state.professorConteudoNovoTexto = "";
+        state.professorConteudoBusca = "";
+        state.professorConteudoTrocando = false;
+        state.professorRegistroSalvo = false;
+        state.professorRegistroErro = "";
+        render();
+        break;
+      case "trocar-conteudo-chamada": {
+        state.professorConteudoTrocando = true;
+        state.professorConteudoBusca = "";
+        render();
+        const campo = document.getElementById("lesson-content-busca");
+        if(campo) campo.focus();
+        break;
+      }
+      case "abrir-novo-conteudo-chamada": {
+        state.professorConteudoCadastrando = true;
+        state.professorConteudoSelecionadoId = "";
+        state.professorConteudoNovoTexto = (state.professorConteudoBusca || "").trim();
+        state.professorConteudoTrocando = false;
+        state.professorRegistroSalvo = false;
+        state.professorRegistroErro = "";
+        render();
+        const campo = document.getElementById("novo-conteudo-chamada");
+        if(campo){ campo.focus(); campo.setSelectionRange(campo.value.length, campo.value.length); }
+        break;
+      }
+      case "cancelar-novo-conteudo-chamada":
+        state.professorConteudoCadastrando = false;
+        state.professorConteudoNovoTexto = "";
+        render();
+        break;
+      case "set-cont-subtab":
+        state.contSubTab = el.dataset.key === "turma" ? "turma" : "lista";
+        state.contEdit = { escopo: "", id: null, texto: "", salvando: false };
+        render();
+        break;
+      case "cancelar-edicao-conteudo":
+        state.contEdit = { escopo: "", id: null, texto: "", salvando: false };
+        render();
+        break;
+      case "salvar-edicao-conteudo": {
+        const ed = state.contEdit;
+        if(!ed.id || ed.salvando) break;
+        const ctx = contextoConteudos(ed.escopo);
+        const texto = (ed.texto || "").trim();
+        if(!texto){ ctx.setErro("O conteúdo não pode ficar em branco."); render(); break; }
+        ctx.setErro("");
+        ed.salvando = true;
+        render();
+        try {
+          const historicoOk = await editarConteudoNoBanco(ctx, ed.id, texto);
+          state.contEdit = { escopo: "", id: null, texto: "", salvando: false };
+          if(!historicoOk) ctx.setErro("Conteúdo corrigido na lista. As chamadas antigas continuam com o texto anterior (sem permissão para atualizá-las).");
+        } catch(err){
+          ed.salvando = false;
+          ctx.setErro(`Não foi possível salvar a alteração agora${err.code ? ` (${err.code})` : ""}.`);
+        }
+        render();
+        break;
+      }
+      case "adicionar-conteudo-inst": {
+        const ci = state.instConteudos;
+        const disciplina = el.dataset.disciplina;
+        const texto = (ci.novoTexto || "").trim();
+        if(!texto || !ci.profId) break;
+        ci.erro = "";
+        ci.salvando = true;
+        render();
+        try {
+          const ref = doc(collection(db, "conteudos"));
+          await setDoc(ref, { professorId: ci.profId, disciplina, texto, criadoPorId: state.authUser.uid });
+          (ci.banco[disciplina] = ci.banco[disciplina] || []).push({ id: ref.id, texto });
+          ci.novoTexto = "";
+        } catch(err){
+          ci.erro = `Não foi possível cadastrar o conteúdo agora${err.code ? ` (${err.code})` : ""}.`;
+        } finally {
+          ci.salvando = false;
           render();
         }
         break;

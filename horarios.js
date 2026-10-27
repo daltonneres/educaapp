@@ -1352,5 +1352,10 @@ export function criarHorarios(ctx){
     return carregar(forcar);
   }
 
-  return { view, modais, aoAbrir, click, input, change, aulasDoDia, preparar };
+  /* Usados pela aba Início: as aulas só são confiáveis depois que as remarcações carregaram. */
+  const pronto = () => H.carregado;
+  const carregando = () => H.carregando;
+  const erro = () => H.erro;
+
+  return { view, modais, aoAbrir, click, input, change, aulasDoDia, preparar, pronto, carregando, erro };
 }

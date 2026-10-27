@@ -96,6 +96,7 @@ const MANUAIS_SUPORTE = [
 
 /* ---- Assuntos do formulário ---- */
 const ASSUNTOS = [
+  { key: "ajuste",     titulo: "Ajuste de aula",  desc: "Corrigir chamada ou conteúdo de um dia", so: ["professor"] },
   { key: "acesso",     titulo: "Acesso / senha",  desc: "Não consigo entrar" },
   { key: "erro",       titulo: "Erro no app",     desc: "Algo não funciona" },
   { key: "financeiro", titulo: "Financeiro",      desc: "Boleto, Pix, cobrança", so: ["responsavel"] },
@@ -110,7 +111,7 @@ export function criarSuporte(ctx){
   const { state, render, ICONS, SECRETARIA_WHATSAPP, whatsappLinkComTexto } = ctx;
   const esc = ctx.escapeHtml;
 
-  const S = { assunto: "", unidade: "", mensagem: "", erro: "", enviado: false };
+  const S = { assunto: "", unidade: "", mensagem: "", erro: "", enviado: false, turmaId: "", dataAula: "" };
 
   /* ---------------- quem está usando ---------------- */
   function eu(){
@@ -197,6 +198,29 @@ export function criarSuporte(ctx){
       <p id="sup-busca-vazio" class="section-eyebrow" style="display:none;margin-top:10px;">Nenhum manual encontrado. Tente outra palavra ou fale com a escola logo abaixo.</p>`;
   }
 
+  /* ---------------- ajuste de aula (só professor) ----------------
+     A chamada de um dia que já passou só a secretaria consegue corrigir.
+     O professor descreve o ajuste aqui e o pedido vai pro WhatsApp dela. */
+  function hojeISO(){
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  }
+
+  function ajusteCamposHtml(){
+    const turmas = state.data.professorTurmas || [];
+    const opcoes = turmas.map(t => `<option value="${esc(t.id)}" ${t.id === S.turmaId ? "selected" : ""}>${esc([t.nome, t.disciplina].filter(Boolean).join(" — "))}</option>`).join("");
+    return `
+        <label class="teacher-label" for="sup-turma-ajuste">Qual turma?</label>
+        <select id="sup-turma-ajuste" class="teacher-text-input" data-sup="turmaAjuste">
+          <option value="" ${S.turmaId ? "" : "selected"} disabled>Selecione a turma</option>
+          ${opcoes}
+        </select>
+
+        <label class="teacher-label" for="sup-data-ajuste" style="margin-top:12px;">Qual dia da aula?</label>
+        <input id="sup-data-ajuste" class="teacher-text-input" type="date" data-sup="dataAjuste" max="${hojeISO()}" value="${esc(S.dataAula)}" />
+        <p class="section-eyebrow" style="margin:4px 0 12px;">A secretaria corrige a chamada ou o conteúdo desse dia a partir do seu pedido.</p>`;
+  }
+
   /* ---------------- formulário ---------------- */
   function formularioHtml(pessoa){
     if(!S.unidade) S.unidade = unidadePadrao(pessoa);
@@ -229,9 +253,11 @@ export function criarSuporte(ctx){
         <label class="teacher-label">Para qual unidade?</label>
         <div class="suporte-unidades">${chipsUnidade}</div>
 
-        <label class="teacher-label" for="sup-mensagem">O que está acontecendo?</label>
+        ${S.assunto === "ajuste" ? ajusteCamposHtml() : ""}
+
+        <label class="teacher-label" for="sup-mensagem">${S.assunto === "ajuste" ? "O que precisa ser ajustado?" : "O que está acontecendo?"}</label>
         <textarea id="sup-mensagem" class="teacher-text-input suporte-textarea" data-sup="mensagem" maxlength="800"
-          placeholder="Explique com suas palavras. Se for um erro, diga em qual aba aconteceu e o que a tela mostrou.">${esc(S.mensagem)}</textarea>
+          placeholder="${S.assunto === "ajuste" ? "Ex.: A aluna Maria faltou, mas está como presente. / O conteúdo da aula foi Frações, e não Decimais." : "Explique com suas palavras. Se for um erro, diga em qual aba aconteceu e o que a tela mostrou."}">${esc(S.mensagem)}</textarea>
 
         <p class="suporte-destino">${resumo}<br>Será enviado para: <strong>${esc(un ? un.nome : "escolha a unidade acima")}</strong></p>
 
@@ -256,6 +282,20 @@ export function criarSuporte(ctx){
   /* ---------------- mensagem do WhatsApp ---------------- */
   function montarTexto(pessoa){
     const assunto = ASSUNTOS.find(a => a.key === S.assunto);
+    if(S.assunto === "ajuste"){
+      const turma = (state.data.professorTurmas || []).find(t => t.id === S.turmaId);
+      const [a, m, d] = S.dataAula.split("-");
+      return [
+        "Olá! Preciso de um *ajuste de aula* no app Educa+.",
+        "",
+        `*Professor(a):* ${pessoa.nome || "—"}`,
+        `*Turma:* ${turma ? [turma.nome, turma.disciplina].filter(Boolean).join(" — ") : "—"}`,
+        `*Dia da aula:* ${d}/${m}/${a}`,
+        "",
+        "*Ajuste solicitado:*",
+        S.mensagem.trim(),
+      ].join("\n");
+    }
     const linhas = [
       "Olá! Preciso de ajuda no app Educa+.",
       "",
@@ -272,6 +312,17 @@ export function criarSuporte(ctx){
   function input(t){
     const campo = t.dataset.sup;
     if(campo === "mensagem"){ S.mensagem = t.value; S.erro = ""; return; }
+    if(campo === "dataAjuste"){ S.dataAula = t.value; S.erro = ""; return; }
+    if(campo === "turmaAjuste"){
+      S.turmaId = t.value; S.erro = "";
+      // a unidade do pedido acompanha a turma escolhida
+      const turma = (state.data.professorTurmas || []).find(x => x.id === t.value);
+      const dica = String(turma?.escolaId || "").toLowerCase();
+      const un = SECRETARIA_WHATSAPP.find(e => dica && (dica === e.id || dica.includes(e.id)));
+      if(un) S.unidade = un.id;
+      render();
+      return;
+    }
     if(campo === "busca") filtrar(t.value);
   }
 
@@ -307,17 +358,21 @@ export function criarSuporte(ctx){
       const pessoa = eu();
       if(!S.assunto){ S.erro = "Escolha o assunto."; render(); return; }
       if(!S.unidade){ S.erro = "Escolha para qual unidade enviar."; render(); return; }
+      if(S.assunto === "ajuste"){
+        if(!S.turmaId){ S.erro = "Escolha a turma da aula."; render(); return; }
+        if(!S.dataAula){ S.erro = "Informe o dia da aula."; render(); return; }
+      }
       if(S.mensagem.trim().length < 5){ S.erro = "Conte um pouco do que está acontecendo."; render(); return; }
       const un = SECRETARIA_WHATSAPP.find(e => e.id === S.unidade);
       if(!un) return;
       window.open(whatsappLinkComTexto(un.numero, montarTexto(pessoa)), "_blank", "noopener");
-      S.erro = ""; S.enviado = true; S.mensagem = "";
+      S.erro = ""; S.enviado = true; S.mensagem = ""; S.turmaId = ""; S.dataAula = "";
       render();
     }
   }
 
   /* Chamado ao sair da aba / trocar de conta. */
-  function resetar(){ S.assunto = ""; S.unidade = ""; S.mensagem = ""; S.erro = ""; S.enviado = false; }
+  function resetar(){ S.assunto = ""; S.unidade = ""; S.mensagem = ""; S.erro = ""; S.enviado = false; S.turmaId = ""; S.dataAula = ""; }
 
   return { view, click, input, resetar };
 }
