@@ -3048,3 +3048,67 @@ img, svg, video { max-width: 100%; }
 .busca-mod-texto strong { color: var(--ink); font-size: 14.5px; }
 .busca-mod-texto span { color: var(--slate); font-size: 12.5px; line-height: 1.35; }
 .busca-mod-vazio { padding: 14px 16px; font-size: 13.5px; color: var(--slate); }
+
+
+/* ==================================================================
+   Aba "Início" (secretaria e professor) — ver inicio.js
+   ================================================================== */
+.ini-wrap { display: block; }
+.ini-topo { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+.ini-topo-dir { display: flex; align-items: center; gap: 12px; }
+.ini-relogio { font-family: var(--font-display); font-size: 30px; line-height: 1; color: var(--ink); font-variant-numeric: tabular-nums; }
+
+.ini-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 14px; margin-bottom: 8px; }
+.ini-card { background: #fff; border: 1px solid rgba(18, 32, 50, 0.1); border-left: 5px solid var(--navy); border-radius: 14px; padding: 16px 18px; display: flex; flex-direction: column; gap: 6px; }
+.ini-card-rot { display: flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--slate); }
+.ini-card-big { font-family: var(--font-display); font-size: 26px; line-height: 1.15; color: var(--ink); }
+.ini-card-sub { font-size: 14px; color: var(--slate); }
+.ini-card-foot { font-size: 12.5px; color: var(--slate); }
+.ini-tone-red { border-left-color: var(--red); background: rgba(177, 74, 61, 0.06); }
+.ini-tone-red .ini-card-big { color: var(--red); }
+.ini-tone-gold { border-left-color: var(--gold); background: rgba(201, 162, 74, 0.10); }
+.ini-tone-green { border-left-color: var(--green); background: rgba(62, 122, 87, 0.07); }
+.ini-tone-green .ini-card-big { color: var(--green); }
+.ini-barra { height: 7px; border-radius: 999px; background: rgba(18, 32, 50, 0.1); overflow: hidden; margin-top: 4px; }
+.ini-barra > span { display: block; height: 100%; background: var(--green); border-radius: 999px; transition: width .3s; }
+.ini-tone-red .ini-barra > span { background: var(--red); }
+
+.ini-h3 { font-family: var(--font-display); font-size: 17px; color: var(--ink); font-weight: 500; margin: 24px 0 10px; }
+.ini-lista { display: grid; gap: 10px; }
+.ini-linha { display: grid; grid-template-columns: 64px 1fr auto; align-items: center; gap: 14px; padding: 13px 16px; text-align: left; width: 100%; border: 1px solid rgba(18, 32, 50, 0.12); border-radius: 12px; background: #fff; color: var(--ink); font: inherit; }
+button.ini-linha { cursor: pointer; }
+button.ini-linha:hover { border-color: var(--gold); background: rgba(201, 162, 74, 0.08); }
+.ini-linha-feita { border-left: 4px solid var(--green); }
+.ini-linha-atrasada { border-left: 4px solid var(--red); }
+.ini-linha-andamento { border-left: 4px solid var(--gold); }
+.ini-linha.destaque { background: rgba(177, 74, 61, 0.04); }
+.ini-linha-hora { font-family: var(--font-display); font-size: 20px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.ini-linha-hora small { display: block; font-family: var(--font-body); font-size: 12px; color: var(--slate); }
+.ini-linha-info { display: grid; gap: 2px; min-width: 0; }
+.ini-linha-info strong { font-size: 15px; font-weight: 600; }
+.ini-linha-info span { font-size: 12.5px; color: var(--slate); }
+.ini-linha-info .ini-linha-tempo { color: var(--ink); font-weight: 500; }
+.ini-linha-status { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.ini-linha-ir { display: inline-flex; align-items: center; gap: 2px; font-size: 12.5px; color: var(--gold-deep); font-weight: 600; }
+.ini-linha-ir svg { width: 14px; height: 14px; }
+.ini-rodape-lista { margin-top: 12px; }
+
+.ini-atalhos { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; }
+.ini-atalho { display: flex; align-items: center; gap: 11px; padding: 11px 14px; text-align: left; border: 1px solid rgba(18, 32, 50, 0.12); border-radius: 12px; background: #fff; color: var(--ink); cursor: pointer; font: inherit; }
+.ini-atalho:hover { border-color: var(--gold); background: rgba(201, 162, 74, 0.08); }
+.ini-atalho-ico { display: grid; place-items: center; width: 34px; height: 34px; flex: none; border-radius: 10px; background: rgba(14, 32, 56, 0.07); color: var(--navy); }
+.ini-atalho-txt { display: grid; min-width: 0; }
+.ini-atalho-txt strong { font-size: 14px; font-weight: 600; }
+.ini-atalho-txt small { font-size: 12px; color: var(--slate); }
+.ini-dica { font-size: 13.5px; color: var(--slate); margin: -4px 0 10px; }
+.ini-link { background: none; border: 0; padding: 0; font: inherit; font-size: 12.5px; color: var(--slate); text-decoration: underline; cursor: pointer; }
+
+.ini-aviso { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 16px 18px; border-radius: 12px; background: rgba(18, 32, 50, 0.04); font-size: 14px; color: var(--slate); margin-bottom: 8px; }
+.ini-aviso-erro { background: rgba(177, 74, 61, 0.08); color: var(--red); }
+
+@media (max-width: 560px) {
+    .ini-linha { grid-template-columns: 56px 1fr; }
+    .ini-linha-status { grid-column: 1 / -1; flex-direction: row; justify-content: space-between; align-items: center; }
+    .ini-card-big { font-size: 22px; }
+    .ini-relogio { font-size: 24px; }
+}

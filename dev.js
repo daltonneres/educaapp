@@ -35,13 +35,14 @@ export const PERFIS_DEV = [
 export const CATALOGO_MODULOS = {
   instituicao: [
     ["turmas", "Turmas"], ["calendario", "Calendário"], ["horarios", "Horários"],
+    ["conteudos", "Conteúdos"], ["relconteudos", "Conteúdos por turma"],
     ["estatisticas", "Estatísticas"], ["financeiro", "Financeiro"], ["alunos", "Alunos"],
     ["aniversarios", "Aniversários"], ["solicitacoes", "Solicitações"], ["professores", "Professores"], ["responsaveis", "Responsáveis"],
     ["contratos", "Contratos"], ["aval", "Avaliações"], ["certificados", "Certificados"], ["senhas", "Senhas e login"], ["gestao", "Gestão"],
   ],
   professor: [
     ["calendario", "Calendário"], ["horarios", "Horários"], ["turmas", "Turmas"],
-    ["aulas", "Aulas & Chamadas"], ["conteudos", "Conteúdos"], ["avaliacoes", "Notas & atividades"],
+    ["aulas", "Aulas & Chamadas"], ["conteudos", "Conteúdos"], ["relconteudos", "Conteúdos por turma"], ["avaliacoes", "Notas & atividades"],
     ["aval", "Avaliações"], ["certificados", "Certificados"], ["suporte", "Suporte"],
   ],
   familia: [
