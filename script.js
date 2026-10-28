@@ -230,6 +230,7 @@ import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/
 import { firebaseConfig } from "./firebase-config.js";
 import { criarHorarios } from "./horarios.js";
 import { criarSuporte } from "./suporte.js";
+import { criarEdubug } from "./edubug.js";   // Edubug: assistente virtual (pop-up)
 import { criarInicio } from "./inicio.js";
 import { criarSolicitacoes } from "./solicitacoes.js";
 import { criarCursos, normalizarCatalogo, cursosAtivosDoCatalogo, modalidadesAtivasDoCatalogo, tituloDoCurso } from "./cursos.js";
@@ -1850,6 +1851,290 @@ const app = document.getElementById("app");
 /* Aba "Suporte" (aluno, responsável e professor): manuais + formulário que abre o WhatsApp da secretaria. */
 const suporte = criarSuporte({ state, render, ICONS, escapeHtml, SECRETARIA_WHATSAPP, whatsappLinkComTexto });
 
+/* ------------------------------------------------------------------
+   Edubug — assistente virtual do Educa+ (ver edubug.js). Roda inteiro
+   no navegador: sem IA externa, sem servidor, sem custo.
+   ------------------------------------------------------------------ */
+const edubug = criarEdubug({
+  state, escapeHtml, SECRETARIA_WHATSAPP, whatsappLinkComTexto,
+  contexto: () => edubugContexto(),
+  manuais: () => edubugManuais(),
+  executar: (acao) => edubugExecutar(acao),
+});
+
+/* O que o Edubug precisa saber de quem está logado (nada sensível). */
+function edubugContexto(){
+  const tela = state.screen;
+  const papel = tela === "familia" ? "responsavel" : tela;
+  const aba = tela === "aluno" ? state.alunoTab
+    : tela === "familia" ? state.familiaTab
+    : tela === "professor" ? state.professorTab
+    : tela === "instituicao" ? state.instTab : "";
+  let aluno = null;
+  if(tela === "aluno") aluno = state.data.aluno;
+  else if(tela === "familia") aluno = (state.data.familiaAlunos || []).find(a => a.id === state.familiaStudentId) || (state.data.familiaAlunos || [])[0] || null;
+  const escolaId = aluno?.escolaId
+    || (tela === "professor" ? (state.data.professorTurmas || [])[0]?.escolaId : state.escolaSelecionadaId)
+    || "";
+  return {
+    papel, aba,
+    nome: state.perfil?.nome || state.data.professorNome || "",
+    aluno: aluno?.nome || "", turma: aluno?.turma || "", escolaId,
+  };
+}
+
+/* Os manuais que o Edubug consulta: os MESMOS que a pessoa já vê no app
+   (aba Suporte e "Meu perfil"). Manual novo nesses catálogos = Edubug já sabe. */
+function edubugManuais(){
+  const papel = state.screen === "familia" ? "responsavel" : state.screen;
+  const doSuporte = papel === "instituicao" ? [] : suporte.manuais(papel);
+  const daEquipe = papel === "instituicao" ? MANUAIS_INSTITUICAO
+    : papel === "professor" ? MANUAIS_INSTITUICAO.filter(m => m.professor) : [];
+  return [...doSuporte, ...daEquipe];
+}
+
+/* Ações do Edubug que mexem no banco. Só rodam depois do "Confirmar" do cartão
+   (registrar_chamada e anexar_observacao) ou são só leitura (ultima_chamada).
+   Executa a chamada que o professor CONFIRMOU no cartão do Edubug.
+   Faz exatamente o que o botão "Registrar chamada" da aba Aulas faz
+   (registrosAula + cópia por aluno em presencasAluno), então o
+   calendário e o boletim das famílias continuam certos. */
+async function edubugExecutar(acao){
+  if(acao.tipo === "consultar_chamadas") return edubugConsultarChamadas(acao);
+  if(acao.tipo === "ultima_chamada") return edubugUltimaChamada(acao);
+  if(acao.tipo === "anexar_observacao") return edubugAnexarObservacao(acao);
+  if(acao.tipo === "registrar_lacuna") return edubugRegistrarLacuna(acao);
+  if(acao.tipo === "listar_lacunas") return edubugListarLacunas();
+  if(acao.tipo === "resumo_pendencias") return edubugResumoPendencias();
+  if(acao.tipo !== "registrar_chamada") return { ok: false, mensagem: "Não sei executar essa ação." };
+  const d = acao.dados || {};
+  const turma = (state.data.professorTurmas || []).find(t => t.id === d.turmaId);
+  if(!turma) return { ok: false, mensagem: "Não achei essa turma na sua lista. Recarregue a página e tente de novo." };
+
+  const nomes = turma.alunos || [];
+  const citados = [...(d.faltas || []), ...(d.justificadas || [])];
+  if(citados.some(n => !nomes.includes(n))) return { ok: false, mensagem: "A lista de alunos da turma mudou. Refaça a chamada." };
+  const conteudoTexto = String(d.conteudo || "").trim();
+  if(!conteudoTexto) return { ok: false, mensagem: "Faltou o conteúdo da aula." };
+
+  const data = dataDeHojeISO();
+  const disciplina = turma.disciplina;
+  const uid = state.authUser.uid;
+
+  // Conteúdo: reaproveita o do banco do semestre se for igual; senão cadastra.
+  const norm = (t) => String(t || "").trim().toLowerCase();
+  const conteudos = await getDocs(query(collection(db, "conteudos"), where("professorId", "==", uid)));
+  let conteudoId = "";
+  conteudos.docs.forEach(c => {
+    const v = c.data();
+    if(!conteudoId && v.disciplina === disciplina && norm(v.texto) === norm(conteudoTexto)) conteudoId = c.id;
+  });
+  if(!conteudoId) conteudoId = await criarConteudoNoBanco(disciplina, conteudoTexto);
+
+  // Se já havia chamada hoje, mantém as observações por aluno que o professor tinha escrito.
+  const antes = await getDoc(doc(db, "registrosAula", `${turma.id}_${data}`));
+  const antigo = antes.exists() ? antes.data() : {};
+  // Observações por aluno: mantém as que já existiam e soma as que o professor anexou no Edubug.
+  const observacoesAlunos = { ...(antigo.observacoesAlunos || {}) };
+  Object.keys(d.observacoesAlunos || {}).forEach(n => {
+    const v = String(d.observacoesAlunos[n] || "").trim().slice(0, 600);
+    if(nomes.includes(n) && v) observacoesAlunos[n] = v;
+  });
+  const observacao = String(d.observacao || antigo.observacao || "").trim().slice(0, 1200);
+
+  const presencas = {};
+  nomes.forEach(n => {
+    presencas[n] = (d.faltas || []).includes(n) ? "falta" : (d.justificadas || []).includes(n) ? "justificada" : "presente";
+  });
+
+  await setDoc(doc(db, "registrosAula", `${turma.id}_${data}`), {
+    turmaId: turma.id, professorId: uid, escolaId: turma.escolaId, disciplina, data,
+    conteudoId, conteudoTexto, observacao, presencas, observacoesAlunos,
+    turmaNome: turma.nome || "", professorNome: state.data.professorNome || "",
+    registradoEm: new Date().toISOString(),
+  });
+
+  state.professorChamadasHoje[turma.id] = resumoDeRegistro({
+    turmaId: turma.id, professorId: uid, professorNome: state.data.professorNome || "",
+    conteudoTexto, observacao, presencas, registradoEm: new Date().toISOString(),
+  });
+
+  let aviso = "";
+  try {
+    await sincronizarCalendarioDaChamada(turma, presencas, observacoesAlunos, disciplina);
+  } catch(err){
+    console.error("Edubug: erro ao atualizar o calendário dos alunos:", err?.code, err);
+    aviso = " Atenção: o calendário dos alunos não atualizou agora; avise o suporte técnico.";
+  }
+
+  // Se a turma estiver aberta na aba Aulas, recarrega pra tela refletir a chamada.
+  if(state.professorTurmaId === turma.id) carregarRegistroDoDia(turma); else render();
+  return { ok: true, mensagem: `Chamada de ${turma.nome} salva!${aviso}` };
+}
+
+/* Edubug — o que as pessoas perguntaram e ele não soube responder (ajuda a decidir o que ensinar).
+   Grava só: tipo, a frase digitada (até 200 letras), perfil, unidade e data — sem nome nem e-mail.
+   Precisa da regra "edubugLacunas" no firestore.rules (ver firestore-edubug.rules.txt). Se a regra
+   ainda não existir, o Edubug segue funcionando e guarda só no navegador. */
+async function edubugRegistrarLacuna(acao){
+  const d = acao.dados || {};
+  if(!["nao-achou", "sem-guia", "detalhes", "resolveu"].includes(d.tipo)) return { ok: false };
+  await addDoc(collection(db, "edubugLacunas"), {
+    tipo: d.tipo,
+    texto: String(d.texto || "").slice(0, 200),
+    papel: String(d.papel || "").slice(0, 20),
+    escolaId: String(d.escolaId || "").slice(0, 60),
+    em: new Date().toISOString(),
+  });
+  return { ok: true };
+}
+
+/* Só a equipe consegue ler (a regra do Firestore também confere). */
+async function edubugListarLacunas(){
+  if(state.screen !== "instituicao") return { ok: false };
+  const snap = await getDocs(query(collection(db, "edubugLacunas"), orderBy("em", "desc"), limit(400)));
+  return { ok: true, itens: snap.docs.map(d => d.data()) };
+}
+
+/* Edubug — números que já estão na tela (não vai ao banco): contratos aguardando assinatura.
+   Mesma conta do card "Aguardando assinatura" da aba Contratos. Devolve null se a lista ainda
+   não foi carregada, pra o Edubug não inventar número. */
+function edubugResumoPendencias(){
+  const c = state.contratosInst;
+  const alunos = state.instAlunos || [];
+  if(state.screen !== "instituicao" || !c || !c.carregado || !alunos.length) return { ok: true, contratosPendentes: null };
+  const salvos = c.itens || [];
+  let n = 0;
+  alunos.forEach(a => {
+    const pend = salvos.filter(m => m.alunoId === a.id && m.status === "pendente");
+    if(pend.length) n += pend.length;
+    else if(a.contratoStatus === "pendente") n += 1;
+  });
+  return { ok: true, contratosPendentes: n };
+}
+
+/* Edubug — CONSULTA (só leitura): como estão as chamadas de um dia.
+   Professor: as turmas dele. Equipe: as turmas da unidade selecionada.
+   Mesma fonte do "Relatório do dia" (registrosAula + horários do dia), então
+   o Edubug responde direto o que a pessoa teria que ir procurar na aba. */
+async function edubugConsultarChamadas(acao){
+  const tela = state.screen;
+  if(tela !== "professor" && tela !== "instituicao") return { ok: false, mensagem: "Essa consulta é só para professores e equipe." };
+  const hoje = dataDeHojeISO();
+  const data = /^\d{4}-\d{2}-\d{2}$/.test(String(acao.data || "")) ? acao.data : hoje;
+
+  let turmas = [];
+  const docs = {};
+  if(tela === "professor"){
+    turmas = state.data.professorTurmas || [];
+    const snaps = await Promise.all(turmas.map(t => getDoc(doc(db, "registrosAula", `${t.id}_${data}`)).catch(() => null)));
+    snaps.forEach((snap, i) => { if(snap && snap.exists()) docs[turmas[i].id] = snap.data(); });
+  } else {
+    const escolaId = state.escolaSelecionadaId;
+    if(!escolaId) return { ok: false, mensagem: "Escolha a unidade primeiro." };
+    if(state.instTurmas === null || state.instTurmasEscolaId !== escolaId) await carregarTurmasDaInstituicao(escolaId);
+    turmas = state.instTurmas || [];
+    const snaps = await getDocs(query(collection(db, "registrosAula"), where("escolaId", "==", escolaId), where("data", "==", data)));
+    snaps.forEach(d => { const x = d.data(); if(x.turmaId) docs[x.turmaId] = x; });
+  }
+
+  // Aulas previstas no dia (horário fixo + remarcações). Se os horários não carregarem, segue sem eles.
+  let previstas = null;
+  try {
+    await horarios.preparar();
+    if(horarios.pronto()){
+      previstas = new Map();
+      horarios.aulasDoDia(data).filter(o => AULA_OK.includes(o.status)).forEach(o => {
+        if(!previstas.has(o.turma.id)) previstas.set(o.turma.id, { ...o, faixas: [] });
+        previstas.get(o.turma.id).faixas.push(`${o.inicio}${o.fim ? "–" + o.fim : ""}`);
+      });
+    }
+  } catch(err){
+    console.warn("Edubug: horários indisponíveis na consulta:", err?.code || err);
+    previstas = null;
+  }
+
+  const nomeProf = (t) => tela === "professor"
+    ? (state.data.professorNome || "")
+    : ((state.gestaoProfessores || []).find(p => p.id === t.professorId)?.nome || t.professorNome || "");
+
+  const lista = turmas.map(t => {
+    const x = docs[t.id] || null;
+    const presencas = x?.presencas || {};
+    const reg = x ? {
+      ...resumoDeRegistro(x),
+      justificadasNomes: Object.keys(presencas).filter(n => presencas[n] === "justificada").sort((a, b) => a.localeCompare(b, "pt-BR")),
+      presencas, observacoesAlunos: x.observacoesAlunos || {},
+    } : null;
+    const aula = previstas ? previstas.get(t.id) : null;
+    let st;
+    if(reg) st = "feita";
+    else if(previstas) st = aula ? statusChamadaDaAula(aula, null, data) : "sem-aula";
+    else st = data < hoje ? "atrasada" : "sem-registro";
+    return {
+      id: t.id, nome: t.nome || "Turma", disciplina: t.disciplina || "",
+      professor: x?.professorNome || nomeProf(t), horario: aula ? aula.faixas.join(" · ") : "",
+      alunos: t.alunos || [], st, reg,
+    };
+  });
+  return { ok: true, data, hoje, horariosOk: !!previstas, turmas: lista };
+}
+
+/* Edubug — "repetir a última aula": só LEITURA. Devolve a aula anterior mais recente
+   desta turma (presenças + conteúdo) pro Edubug usar de base na chamada de hoje. */
+async function edubugUltimaChamada(acao){
+  const turma = (state.data.professorTurmas || []).find(t => t.id === acao.turmaId);
+  if(!turma) return { ok: false, mensagem: "Não achei essa turma na sua lista. Recarregue a página e tente de novo." };
+  const snaps = await getDocs(query(collection(db, "registrosAula"),
+    where("turmaId", "==", turma.id), where("professorId", "==", state.authUser.uid)));
+  const hoje = dataDeHojeISO();
+  const anteriores = snaps.docs.map(d => d.data()).filter(x => x.data && x.data < hoje)
+    .sort((a, b) => b.data.localeCompare(a.data));
+  if(!anteriores.length) return { ok: false, mensagem: "Ainda não achei uma aula anterior dessa turma. Vamos marcar do zero:" };
+  const r = anteriores[0];
+  return { ok: true, registro: { data: r.data, conteudoTexto: r.conteudoTexto || "", presencas: r.presencas || {} } };
+}
+
+/* Edubug — anexa uma observação (da aula ou de um aluno) à chamada de HOJE que já foi salva.
+   Soma ao que já estava escrito, nunca apaga. Reflete no calendário do aluno/responsável. */
+async function edubugAnexarObservacao(acao){
+  const d = acao.dados || {};
+  const turma = (state.data.professorTurmas || []).find(t => t.id === d.turmaId);
+  if(!turma) return { ok: false, mensagem: "Não achei essa turma na sua lista. Recarregue a página e tente de novo." };
+  const texto = String(d.texto || "").trim().slice(0, 600);
+  if(!texto) return { ok: false, mensagem: "Faltou o texto da observação." };
+
+  const data = dataDeHojeISO();
+  const ref = doc(db, "registrosAula", `${turma.id}_${data}`);
+  const snap = await getDoc(ref);
+  if(!snap.exists()) return { ok: false, mensagem: "Essa turma ainda não tem chamada hoje. Faça a chamada primeiro." };
+  const reg = snap.data();
+  const soma = (antes) => { const a = String(antes || "").trim(); return (a ? `${a}\n${texto}` : texto).slice(0, 1200); };
+
+  let aviso = "", mensagem;
+  if(d.alvo){
+    if(!(turma.alunos || []).includes(d.alvo)) return { ok: false, mensagem: "Esse aluno não está mais na turma. Recarregue a página e tente de novo." };
+    const observacoesAlunos = { ...(reg.observacoesAlunos || {}) };
+    observacoesAlunos[d.alvo] = soma(observacoesAlunos[d.alvo]);
+    await updateDoc(ref, { observacoesAlunos });
+    try {
+      await sincronizarCalendarioDaChamada(turma, reg.presencas || {}, observacoesAlunos, reg.disciplina || turma.disciplina);
+    } catch(err){
+      console.error("Edubug: erro ao atualizar o calendário dos alunos:", err?.code, err);
+      aviso = " Atenção: o calendário do aluno não atualizou agora; avise o suporte técnico.";
+    }
+    mensagem = `Observação sobre ${d.alvo} anexada à chamada de ${turma.nome}.${aviso}`;
+  } else {
+    const observacao = soma(reg.observacao);
+    await updateDoc(ref, { observacao });
+    if(state.professorChamadasHoje[turma.id]) state.professorChamadasHoje[turma.id].observacao = observacao;
+    mensagem = `Observação da aula anexada à chamada de ${turma.nome}.`;
+  }
+
+  if(state.professorTurmaId === turma.id) carregarRegistroDoDia(turma); else render();
+  return { ok: true, mensagem };
+}
+
 /* Solicitações: avisos gerais da equipe para as famílias (ver solicitacoes.js) */
 const solicitacoes = criarSolicitacoes({
   state, render, ICONS, escapeHtml, formatarDataBr, dataDeHojeISO,
@@ -3166,6 +3451,7 @@ function render(){
   const telasComLogin = ["aluno", "familia", "professor", "instituicao", "escola-picker"];
   if(telasComLogin.includes(state.screen) && dev.emManutencao()){
     app.innerHTML = dev.telaManutencao();
+    edubug.sincronizar();
     return;
   }
   renderBase();
@@ -3173,6 +3459,7 @@ function render(){
   if(faixa) app.insertAdjacentHTML("afterbegin", faixa);
   const popup = dev.popupHtml();
   if(popup) app.insertAdjacentHTML("beforeend", popup);
+  edubug.sincronizar();   // botão flutuante do Edubug (fica fora do #app)
 }
 
 function renderBase(){
@@ -11964,6 +12251,7 @@ function bindEvents(){
         if(importContratosOcupado() && !confirm("Ainda há contratos sendo lidos ou importados. Se sair agora, isso será interrompido. Sair mesmo assim?")) break;
         importContratosResetar();
         suporte.resetar();
+        edubug.resetar();
         solicitacoes.resetar();
         cursosCfg.resetar();
         state.mobileMenuOpen = false;

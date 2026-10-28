@@ -374,5 +374,5 @@ export function criarSuporte(ctx){
   /* Chamado ao sair da aba / trocar de conta. */
   function resetar(){ S.assunto = ""; S.unidade = ""; S.mensagem = ""; S.erro = ""; S.enviado = false; S.turmaId = ""; S.dataAula = ""; }
 
-  return { view, click, input, resetar };
+  return { view, click, input, resetar, manuais: manuaisDoPapel };   // manuais: o Edubug lê esta lista
 }
