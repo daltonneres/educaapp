@@ -4,8 +4,18 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Educa+ Centro Educacional</title>
-<link rel="stylesheet" href="style.css" />
-<link rel="stylesheet" href="edubug.css" />
+<link rel="stylesheet" href="app/style.css" />
+<link rel="stylesheet" href="features/gestao/contratos/contratos.css" />
+<link rel="stylesheet" href="features/comunicacao/edubug/edubug.css" />
+<link rel="stylesheet" href="features/ensino/calendario/calendario.css" />
+<link rel="stylesheet" href="features/ensino/avaliacoes/avaliacoes.css" />
+<link rel="stylesheet" href="features/ensino/horarios/horarios.css" />
+<link rel="stylesheet" href="features/comunicacao/inicio/inicio.css" />
+<link rel="stylesheet" href="features/comunicacao/solicitacoes/solicitacoes.css" />
+<link rel="stylesheet" href="features/comunicacao/suporte/suporte.css" />
+<link rel="stylesheet" href="features/gestao/admin/admin.css" />
+<link rel="stylesheet" href="features/gestao/cursos/cursos.css" />
+<link rel="stylesheet" href="features/gestao/dev/dev.css" />
 <link rel="icon" href="imgs/logoeduca.jpeg" type="image/jpeg" />
 <link rel="shortcut icon" href="imgs/logoeduca.jpeg" />
 </head>
@@ -19,12 +29,12 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.1.1/tesseract.min.js"></script>
 <!-- jsQR: decodifica o QR Code do Pix quando o PDF do boleto só traz a imagem (sem o texto copia e cola).
      Usado na Financeiro > Lançar cobrança. Também roda só no navegador. -->
-<script src="jsQR.min.js"></script>
+<script src="libs/jsQR.min.js"></script>
 <script>if(typeof jsQR === "undefined") document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js"><\/script>');</script>
 <!-- qrcode-generator: desenha o QR Code do Pix a partir do código copia e cola (aba Financeiro da família).
      Roda só no navegador. Se não carregar, a família ainda vê o botão "Copiar Pix". -->
-<script src="qrcode.min.js"></script>
+<script src="libs/qrcode.min.js"></script>
 <script>if(typeof qrcode === "undefined") document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"><\/script>');</script>
-<script type="module" src="script.js"></script>
+<script type="module" src="app/script.js"></script>
 </body>
 </html>

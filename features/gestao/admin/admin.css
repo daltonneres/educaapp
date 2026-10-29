@@ -1,0 +1,13 @@
+/*
+  Estilos específicos do módulo administrativo.
+  O CSS global continua sendo o fallback até esse módulo ser migrado por completo.
+*/
+
+/* Exemplo de classes do módulo de admin */
+.admin-wrap,
+.admin-card,
+.admin-usuario,
+.admin-form,
+.admin-lista {
+  /* manter aqui os estilos específicos em seguida */
+}

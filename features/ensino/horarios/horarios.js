@@ -45,7 +45,7 @@
    turma; secretaria: item com escopo "escola" só pros alunos da turma).
    ================================================================== */
 
-import { chaveAluno, hojeISO, dataValida, isoDe, gradeDoMes, MESES, normalizarTexto } from "./calendario.js";
+import { chaveAluno, hojeISO, dataValida, isoDe, gradeDoMes, MESES, normalizarTexto } from "../calendario/calendario.js";
 
 const DIAS_LONGOS = ["Domingo", "Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado"];
 const DIAS_CURTOS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];

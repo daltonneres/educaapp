@@ -227,14 +227,14 @@ import {
   limit,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
-import { firebaseConfig } from "./firebase-config.js";
-import { criarHorarios } from "./horarios.js";
-import { criarSuporte } from "./suporte.js";
-import { criarEdubug } from "./edubug.js";   // Edubug: assistente virtual (pop-up)
-import { criarInicio } from "./inicio.js";
-import { criarSolicitacoes } from "./solicitacoes.js";
-import { criarCursos, normalizarCatalogo, cursosAtivosDoCatalogo, modalidadesAtivasDoCatalogo, tituloDoCurso } from "./cursos.js";
-import { criarDev } from "./dev.js";
+import { firebaseConfig } from "../infra/firebase-config.js";
+import { criarHorarios } from "../features/ensino/horarios/horarios.js";
+import { criarSuporte } from "../features/comunicacao/suporte/suporte.js";
+import { criarEdubug } from "../features/comunicacao/edubug/edubug.js";   // Edubug: assistente virtual (pop-up)
+import { criarInicio } from "../features/comunicacao/inicio/inicio.js";
+import { criarSolicitacoes } from "../features/comunicacao/solicitacoes/solicitacoes.js";
+import { criarCursos, normalizarCatalogo, cursosAtivosDoCatalogo, modalidadesAtivasDoCatalogo, tituloDoCurso } from "../features/gestao/cursos/cursos.js";
+import { criarDev } from "../features/gestao/dev/dev.js";
 import {
   contratoEstadoInicial,
   contratoModal,
@@ -258,7 +258,7 @@ import {
   importarContratosModal,
   importContratosChipHtml,
   importContratosChipInfo,
-} from "./contratos.js";
+} from "../features/gestao/contratos/contratos.js";
 import {
   calendarioHtml,
   eventoFormModalHtml,
@@ -271,7 +271,7 @@ import {
   hojeISO,
   dataValida,
   dataExtenso,
-} from "./calendario.js";
+} from "../features/ensino/calendario/calendario.js";
 import {
   avalNovoEstado,
   ehAlunoDeIngles,
@@ -295,7 +295,7 @@ import {
   novoIdPergunta,
   validarConfigPerguntas,
   avalConfigInstitucionalHtml,
-} from "./avaliacoes.js";
+} from "../features/ensino/avaliacoes/avaliacoes.js";
 
 /* Datas do calendário oficial da SEED-PR pra 2026 (Anexo da Resolução
    6.494/2025 - GS/SEED), usadas no botão "Importar calendário da SEED" da
