@@ -889,6 +889,35 @@ export function abrirContratoParaImpressao(c){
   return true;
 }
 
+/* ------------------------------------------------------------------
+   Backup do contrato gerado.
+   Devolve { html, dados }: o documento final, exatamente como saiu na
+   impressão (cópia fiel, mesmo que o modelo mude depois), e os dados
+   digitados no formulário — SEM senhas e sem o resultado dos acessos.
+   ------------------------------------------------------------------ */
+export function contratoBackupPacote(c, logoUrl){
+  const html = contratoHtml(c, logoUrl);
+  if(!html) return null;
+  const dados = JSON.parse(JSON.stringify(c));
+  ["aberto", "erro", "salvandoAcessos", "resultadoAcessos",
+   "senhaAluno", "senhaAluno2", "senhaResp"].forEach(k => delete dados[k]);
+  if(Array.isArray(dados.respsExtras)){
+    dados.respsExtras = dados.respsExtras.map(r => { const { senha, ...resto } = r || {}; return resto; });
+  }
+  return { html, dados };
+}
+
+/* Abre um contrato já pronto (HTML guardado) numa aba nova, pra imprimir. */
+export function abrirHtmlParaImpressao(html){
+  if(!html) return false;
+  const janela = window.open("", "_blank");
+  if(!janela) return false;
+  janela.document.open();
+  janela.document.write(html);
+  janela.document.close();
+  return true;
+}
+
 /* ================================================================== */
 /* Leitura de contratos já assinados (importação em lote)              */
 /* ------------------------------------------------------------------

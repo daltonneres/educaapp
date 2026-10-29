@@ -248,6 +248,7 @@ import {
   contratoTemSegundoAluno,
   contratoPrimeiraParcelaPaga,
   abrirContratoParaImpressao,
+  contratoBackupPacote,
   variantesDeEmail,
   escolherEmailLivre,
   senhaProvisoria,
@@ -1694,6 +1695,7 @@ const state = {
   // Contratos salvos no sistema (PDF guardado) — ver "Contratos guardados no sistema"
   contratosInst: { escolaId: null, itens: [], carregando: false, carregado: false, erro: "" },  // equipe: todos da unidade
   contratosFam: {},                     // responsável: { [alunoId]: { itens, carregando, carregado, erro } }
+  contratosGerados: { escolaId: null, itens: [], carregando: false, carregado: false, erro: "" },  // backup dos contratos gerados pelo sistema
   contratoUpStatus: "pendente",         // situação dos PDFs que a secretaria vai anexar na ficha
   contratoUpEnviando: false,
   contratoUpMsg: "",
@@ -6749,6 +6751,7 @@ function contratosView(school){
         <p class="section-eyebrow" style="margin-top:8px;">Funciona melhor com os PDFs do próprio modelo da escola — outros formatos podem vir com campos em branco pra preencher na mão.</p>
       </div>
     </div>
+    ${backupContratosCard()}
     ${state.instituicaoMensagem ? `<p class="teacher-success institution-success">${escapeHtml(state.instituicaoMensagem)}</p>` : ""}`;
 }
 
@@ -8608,6 +8611,7 @@ function contratosResetar(){
   state.contratoGuia = null;
   state.contratosInst = { escolaId: null, itens: [], carregando: false, carregado: false, erro: "" };
   state.contratosFam = {};
+  state.contratosGerados = { escolaId: null, itens: [], carregando: false, carregado: false, erro: "" };
   state.contratoUpStatus = "pendente";
   state.contratoUpEnviando = false;
   state.contratoUpMsg = "";
@@ -8936,6 +8940,127 @@ async function excluirContratoSalvo(meta){
   batch.delete(doc(db, "contratos", meta.id));
   await batch.commit();
   await sincronizarResumoContratos(meta.alunoId, meta.escolaId);
+}
+
+/* ==================================================================
+   Backup dos contratos GERADOS pelo sistema
+   ------------------------------------------------------------------
+   Toda vez que a secretaria clica em "Gerar contrato", uma cópia fica
+   guardada no Firestore, sem depender de a pessoa salvar o PDF:
+     contratosGerados/{id}      -> resumo + dados do formulário (sem senhas)
+     contratosGeradosHtml/{id}  -> o contrato pronto (HTML, ~20 KB)
+   O HTML fica em documento separado pra a lista carregar leve; ele só é
+   lido quando alguém clica em "Abrir" ou "Baixar".
+   ================================================================== */
+function normalizeContratoGerado(id, d){
+  return {
+    id,
+    escolaId: d.escolaId || "",
+    alunos: d.alunos || "",
+    responsavel: d.responsavel || "",
+    curso: d.curso || "",
+    cnpj: d.cnpj || "",
+    geradoEm: d.geradoEm || "",
+    geradoPor: d.geradoPor || "",
+  };
+}
+
+async function salvarBackupContratoGerado(c){
+  const escolaId = state.escolaSelecionadaId;
+  if(!escolaId) throw new Error("sem-escola");
+  const logoUrl = new URL("imgs/logoeduca.jpeg", window.location.href).href;
+  const pacote = contratoBackupPacote(c, logoUrl);
+  if(!pacote) throw new Error("contrato-vazio");
+  const ref = doc(collection(db, "contratosGerados"));
+  const meta = {
+    escolaId,
+    alunos: contratoNomesAlunos(c),
+    responsavel: c.semResponsavel ? "" : (c.respNome || ""),
+    curso: c.curso || "",
+    cnpj: c.cnpj || "",
+    geradoEm: new Date().toISOString(),
+    geradoPor: state.authUser?.uid || "",
+    dados: pacote.dados,
+  };
+  // tudo ou nada: o resumo só existe se o HTML também foi guardado
+  const batch = writeBatch(db);
+  batch.set(doc(db, "contratosGeradosHtml", ref.id), { escolaId, html: pacote.html });
+  batch.set(ref, meta);
+  await batch.commit();
+  if(state.contratosGerados.carregado && state.contratosGerados.escolaId === escolaId){
+    state.contratosGerados.itens = [normalizeContratoGerado(ref.id, meta), ...state.contratosGerados.itens];
+  }
+}
+
+async function carregarContratosGerados(escolaId, forcar = false){
+  const g = state.contratosGerados;
+  if(!escolaId || g.carregando) return;
+  if(!forcar && g.carregado && g.escolaId === escolaId) return;
+  g.carregando = true; g.erro = "";
+  render();
+  try {
+    const snaps = await getDocs(query(collection(db, "contratosGerados"), where("escolaId", "==", escolaId)));
+    g.itens = snaps.docs.map(d => normalizeContratoGerado(d.id, d.data()))
+      .sort((a, b) => String(b.geradoEm).localeCompare(String(a.geradoEm)));
+    g.escolaId = escolaId;
+    g.carregado = true;
+  } catch(err){
+    console.error("Erro ao carregar backup de contratos:", err);
+    g.itens = []; g.carregado = false;
+    g.erro = err?.code === "permission-denied"
+      ? "O Firestore recusou a leitura do backup (permission-denied). Publique as regras de `contratosGerados` e `contratosGeradosHtml`."
+      : `Não consegui carregar o backup${err?.code ? ` (${err.code})` : ""}. Tente de novo.`;
+  } finally {
+    g.carregando = false;
+    render();
+  }
+}
+
+async function lerHtmlDoBackup(id){
+  const snap = await getDoc(doc(db, "contratosGeradosHtml", id));
+  if(!snap.exists()) throw new Error("backup-incompleto");
+  return snap.data().html || "";
+}
+
+function nomeArquivoBackup(item){
+  const base = String(item.alunos || "contrato").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 60) || "contrato";
+  return `contrato_${base}_${String(item.geradoEm).slice(0, 10)}.html`;
+}
+
+function backupContratosCard(){
+  const g = state.contratosGerados;
+  let corpo;
+  if(g.carregando && !g.carregado){
+    corpo = `<p class="section-eyebrow">Carregando backup…</p>`;
+  } else if(g.erro){
+    corpo = `<p class="teacher-error" style="color:var(--red);font-size:12.5px;">${escapeHtml(g.erro)}</p>`;
+  } else if(!g.itens.length){
+    corpo = `<p class="section-eyebrow">Nenhum contrato gerado ainda. A partir de agora, cada contrato gerado fica guardado aqui automaticamente.</p>`;
+  } else {
+    corpo = `<div class="pendente-contrato-lista">${g.itens.slice(0, 50).map(i => {
+      const quando = i.geradoEm ? new Date(i.geradoEm).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }) : "";
+      const ocupado = !!state.contratoOcupado["bk_" + i.id];
+      return `
+        <div class="pendente-contrato-item">
+          <div class="pendente-contrato-info">
+            <strong>${escapeHtml(i.alunos || "Sem nome")}</strong>
+            <span>${escapeHtml([i.curso, quando && `gerado em ${quando}`].filter(Boolean).join(" · "))}</span>
+          </div>
+          <div class="pendente-contrato-acoes">
+            <button type="button" class="aniversario-btn" data-action="contrato-backup-abrir" data-id="${escapeHtml(i.id)}" ${ocupado ? "disabled" : ""}>${ocupado ? "Abrindo…" : "Abrir / imprimir"}</button>
+            <button type="button" class="aniversario-btn" data-action="contrato-backup-baixar" data-id="${escapeHtml(i.id)}" ${ocupado ? "disabled" : ""}>Baixar</button>
+          </div>
+        </div>`;
+    }).join("")}</div>
+    ${g.itens.length > 50 ? `<p class="section-eyebrow" style="margin-top:10px;">Mostrando os 50 mais recentes de ${g.itens.length}.</p>` : ""}`;
+  }
+  return `
+    <div class="management-card management-card-wide" style="max-width:none;margin-top:16px;">
+      <h3>Backup dos contratos gerados${g.carregado ? ` (${g.itens.length})` : ""}</h3>
+      <p>Cada contrato gerado pelo sistema é guardado aqui automaticamente, mesmo que você esqueça de salvar o PDF. Abra para imprimir de novo ou baixe uma cópia.</p>
+      ${corpo}
+    </div>`;
 }
 
 /* Usado ao excluir o aluno: leva junto todos os contratos dele. */
@@ -12414,6 +12539,7 @@ function bindEvents(){
         if(state.instTab === "contratos"){
           garantirPessoasDaUnidade();
           carregarContratosDaEscola(state.escolaSelecionadaId);
+          carregarContratosGerados(state.escolaSelecionadaId);
         }
         // aniversários precisa dos alunos (data de nascimento) e dos
         // responsáveis (pra quem tem WhatsApp quando o aluno não tem)
@@ -13977,6 +14103,39 @@ function bindEvents(){
         render();
         break;
 
+      case "contrato-backup-abrir":
+      case "contrato-backup-baixar": {
+        const id = el.dataset.id;
+        const item = state.contratosGerados.itens.find(i => i.id === id);
+        if(!item) break;
+        const baixar = action === "contrato-backup-baixar";
+        // a janela precisa abrir no clique, antes do await, senão o navegador bloqueia
+        const janela = baixar ? null : window.open("", "_blank");
+        if(!baixar && !janela){ alert("O navegador bloqueou a janela. Libere os pop-ups deste site e tente de novo."); break; }
+        state.contratoOcupado["bk_" + id] = true;
+        render();
+        try {
+          const html = await lerHtmlDoBackup(id);
+          if(baixar){
+            const url = URL.createObjectURL(new Blob([html], { type: "text/html;charset=utf-8" }));
+            const a = document.createElement("a");
+            a.href = url; a.download = nomeArquivoBackup(item);
+            document.body.appendChild(a); a.click(); a.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 10000);
+          } else {
+            janela.document.open(); janela.document.write(html); janela.document.close();
+          }
+        } catch(err){
+          console.error("Erro ao abrir backup do contrato:", err);
+          if(janela) janela.close();
+          alert("Não consegui abrir esta cópia agora. Tente de novo.");
+        } finally {
+          delete state.contratoOcupado["bk_" + id];
+          render();
+        }
+        break;
+      }
+
       case "baixar-contrato": {
         const meta = acharContratoSalvo(el.dataset.id);
         if(!meta) break;
@@ -14285,6 +14444,16 @@ function bindEvents(){
         }
         c.erro = "";
         state.instituicaoMensagem = `Contrato de ${contratoNomesAlunos(c)} gerado. Confira na aba que abriu e mande imprimir.`;
+
+        // Backup automático: guarda uma cópia do contrato no sistema. Se falhar,
+        // o contrato aberto continua valendo — só avisa que a cópia não ficou.
+        try {
+          await salvarBackupContratoGerado(c);
+          state.instituicaoMensagem += " Uma cópia ficou guardada no backup.";
+        } catch(err){
+          console.error("Erro ao guardar o backup do contrato:", err);
+          state.instituicaoMensagem += " ATENÇÃO: não consegui guardar a cópia de backup — salve o PDF na aba que abriu.";
+        }
 
         if(!c.criarAcessos){
           c.aberto = false;
