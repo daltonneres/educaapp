@@ -25,6 +25,12 @@
          – PROFESSOR: pedido de ajuste de aula (vai pro WhatsApp);
          – ALUNO / RESPONSÁVEL / PROFESSOR: mensagem pronta pro
            WhatsApp da secretaria;
+     • CALCULADORA (todos os perfis): faz a conta escrita no chat
+       (“15% de 480”, “12x7+3”, “média de 7, 8,5 e 6”) ou abre um teclado
+       dentro da conversa (“calculadora”);
+     • ANIVERSÁRIOS (equipe): sinalzinho 🎂 no botão quando tem aniversário
+       hoje, aviso ao abrir (hoje e amanhã) com botão de parabéns no
+       WhatsApp, e consulta (“quem faz aniversário amanhã?”);
      • quando não entende, diz que não achou e oferece a secretaria.
 
    Como se encaixa no app:
@@ -115,10 +121,10 @@ const ACAO_NAV = {
 };
 
 const SUGESTOES = {
-  professor: ["Fazer a chamada de hoje", "Como estão as chamadas de hoje?", "Repetir a última chamada", "Anexar observação", "Ajuste de aula"],
-  instituicao: ["Chamadas pendentes hoje", "Quem faltou hoje?", "Como lanço uma mensalidade?", "Aluno não consegue entrar", "Importar turmas por PDF"],
-  responsavel: ["Onde vejo o boleto?", "Não consigo entrar no app", "Ver o contrato", "Falar com a secretaria"],
-  aluno: ["Onde vejo minhas notas?", "Não consigo entrar no app", "Ver meus avisos", "Falar com a secretaria"],
+  professor: ["Fazer a chamada de hoje", "Como estão as chamadas de hoje?", "Repetir a última chamada", "Anexar observação", "Ajuste de aula", "🧮 Calculadora"],
+  instituicao: ["Chamadas pendentes hoje", "Quem faltou hoje?", "Quem faz aniversário hoje?", "Como lanço uma mensalidade?", "Aluno não consegue entrar", "Importar turmas por PDF", "🧮 Calculadora"],
+  responsavel: ["Onde vejo o boleto?", "Não consigo entrar no app", "Ver o contrato", "Falar com a secretaria", "🧮 Calculadora"],
+  aluno: ["Onde vejo minhas notas?", "Não consigo entrar no app", "Ver meus avisos", "Falar com a secretaria", "🧮 Calculadora"],
 };
 
 /* ---- Sinônimos: palavras do mesmo assunto se ajudam na busca ---- */
@@ -471,8 +477,8 @@ const GUIAS = [
     ] },
 ];
 
-export function criarEdubug({ state, escapeHtml, contexto, manuais, executar, SECRETARIA_WHATSAPP, whatsappLinkComTexto }){
-  const S = { pos: { r: 18, b: 18 }, arrastou: false, uid: "", aberto: false, msgs: [], digitando: false, fluxo: null, ultima: "", fila: Promise.resolve() };
+export function criarEdubug({ state, escapeHtml, contexto, manuais, executar, SECRETARIA_WHATSAPP, whatsappLinkComTexto, aniversarios = () => [], enviarParabens = null }){
+  const S = { pos: { r: 18, b: 18 }, arrastou: false, uid: "", aberto: false, msgs: [], digitando: false, fluxo: null, ultima: "", fila: Promise.resolve(), avisouAniv: "", parabenizados: new Set() };
   let raizDom = null;
 
   /* ---------------- texto -> HTML seguro ---------------- */
@@ -1157,6 +1163,326 @@ export function criarEdubug({ state, escapeHtml, contexto, manuais, executar, SE
     return true;
   }
 
+  /* ==================================================================
+     CALCULADORA 🧮
+     Duas formas de usar, as duas sem sair da conversa:
+       • escrever a conta:  "15% de 480", "12x7+3", "raiz de 144",
+         "1.500 mais 2.500,50", "100 menos 15%", "média de 7, 8,5 e 6";
+       • abrir o teclado:   "calculadora" (ou o botão 🧮 das sugestões).
+     Não usa eval(): a conta é lida por um analisador próprio, então
+     nada do que a pessoa digita vira código.
+     ================================================================== */
+  const OPS_CALC = { "÷": "/", "×": "*", "−": "-", "+": "+", "^": "^" };
+
+  function avaliar(expr){
+    let e = String(expr).replace(/\s+/g, "").replace(/\.(?!\d)/g, "");
+    const aberto = (e.match(/\(/g) || []).length - (e.match(/\)/g) || []).length;
+    if(aberto > 0) e += ")".repeat(aberto);                    // fecha parênteses que ficaram abertos
+    const tok = e.match(/\d+(?:\.\d+)?|\.\d+|sqrt|[+\-*/^()%]/g) || [];
+    if(!tok.length || tok.join("") !== e) throw new Error("sintaxe");
+    let i = 0;
+    const peek = () => tok[i];
+    const prox = () => tok[i++];
+
+    // soma/subtração: "200 + 10%" vale 220 (o % é sobre o número da esquerda, como no celular)
+    function soma(){
+      let a = produto();
+      while(peek() === "+" || peek() === "-"){
+        const op = prox(), b = produto();
+        const bv = b.pct ? a.v * b.v : b.v;
+        a = { v: op === "+" ? a.v + bv : a.v - bv };
+      }
+      return a;
+    }
+    function produto(){
+      let a = unario();
+      while(peek() === "*" || peek() === "/"){
+        const op = prox(), b = unario();
+        if(op === "/" && b.v === 0) throw new Error("div0");
+        a = { v: op === "*" ? a.v * b.v : a.v / b.v };
+      }
+      return a;
+    }
+    function unario(){
+      if(peek() === "-"){ prox(); const a = unario(); return { v: -a.v, pct: a.pct }; }
+      if(peek() === "+"){ prox(); return unario(); }
+      return potencia();
+    }
+    function potencia(){
+      const a = sufixo();
+      if(peek() === "^"){ prox(); const b = unario(); return { v: Math.pow(a.v, b.v) }; }
+      return a;
+    }
+    function sufixo(){
+      let a = primario();
+      while(peek() === "%"){ prox(); a = { v: a.v / 100, pct: true }; }
+      return a;
+    }
+    function primario(){
+      const t = prox();
+      if(t === undefined) throw new Error("sintaxe");
+      if(t === "("){ const a = soma(); if(prox() !== ")") throw new Error("sintaxe"); return { v: a.v }; }
+      if(t === "sqrt"){ const a = unario(); if(a.v < 0) throw new Error("raizneg"); return { v: Math.sqrt(a.v) }; }
+      if(/^[\d.]/.test(t)) return { v: parseFloat(t) };
+      throw new Error("sintaxe");
+    }
+    const r = soma();
+    if(i !== tok.length) throw new Error("sintaxe");
+    return r.v;
+  }
+
+  /* 0.1+0.2 vira 0,3 (e não 0,30000000000000004); formato brasileiro. */
+  function fmtNum(v, casas = 8){
+    if(!Number.isFinite(v)) throw new Error("inv");
+    return Number(v.toPrecision(12)).toLocaleString("pt-BR", { maximumFractionDigits: casas });
+  }
+
+  /* Transforma o texto da pessoa em uma conta que o avaliar() entende.
+     Devolve { expr, bruto } ou null se NÃO parecer uma conta (qualquer palavra
+     sobrando já derruba: "mais detalhes", "8A faltou Ana"… não viram conta). */
+  function lerConta(texto){
+    let t = norm(texto).trim();
+    t = t.replace(/^(?:(?:me )?(?:ajuda|ajude) a |(?:voce |vc )?(?:pode|poderia) |por favor |pf )*/, "");
+    t = t.replace(/^(?:calcula(?:r|e)?|faca a conta de|faz a conta de|conta de|resultado d[eao]|quanto (?:e|eh|da|dao|fica|vai ficar|sera|seria|vale)|quanto)\s*/, "");
+    t = t.replace(/[?=!\s]+$/, "").trim();
+    if(!t) return null;
+    const dt = t.match(/^(\d{1,2})\/(\d{1,2})(\/\d{2,4})?$/);
+    if(dt && Number(dt[1]) >= 1 && Number(dt[1]) <= 31 && Number(dt[2]) >= 1 && Number(dt[2]) <= 12) return null;   // data (14/10), não conta
+    if(/^\+?\d{2,5}-\d{3,5}(-\d{3,5})?$/.test(t)) return null;         // telefone
+    const bruto = t.replace(/\*/g, "×").replace(/(\d)\s*\/\s*(\d)/g, "$1 ÷ $2");
+
+    t = t.replace(/(^|[^\d.,])([1-9]\d{0,2})((?:\.\d{3})+)(?!\d)/g, (m, a, b, c) => a + b + c.replace(/\./g, ""));   // 1.500 -> 1500
+    t = t.replace(/(\d),(\d)/g, "$1.$2");                                                                          // 2,5 -> 2.5
+    t = t.replace(/[×]/g, "*").replace(/[÷]/g, "/").replace(/[−–—]/g, "-");
+    t = t.replace(/\s*por ?cento\b/g, "%");
+    t = t.replace(/(\d+(?:\.\d+)?)\s*%\s*d[eoa]s?\s+(\d+(?:\.\d+)?)/g, "($1/100)*$2");                              // 15% de 480
+    t = t.replace(/\bdividir\s+(\S+)\s+por\s+(\S+)/g, "($1/$2)")
+         .replace(/\bmultiplicar\s+(\S+)\s+por\s+(\S+)/g, "($1*$2)")
+         .replace(/\bsomar\s+(\S+)\s+(?:com|e|mais)\s+(\S+)/g, "($1+$2)");
+    t = t.replace(/\braiz(?: quadrada)?(?: d[eoa])?\s*/g, "sqrt ");
+    t = t.replace(/\bao quadrado\b/g, "^2").replace(/\bao cubo\b/g, "^3").replace(/\belevado a(?:o)?\b/g, "^");
+    t = t.replace(/\b(?:multiplicado por|multiplicada por|vezes|vez)\b/g, "*")
+         .replace(/\b(?:dividido por|dividida por|dividido|dividida)\b/g, "/")
+         .replace(/\b(?:mais|somado com|somado a)\b/g, "+")
+         .replace(/\b(?:menos)\b/g, "-");
+    t = t.replace(/(\d)\s*x\s*(?=[\d(])/g, "$1*");                                                                  // 12x7
+
+    if(!/^[\d+\-*/^().%\s]+$/.test(t.replace(/sqrt/g, ""))) return null;   // sobrou palavra: não é conta
+    t = t.replace(/\s+/g, "");
+    if(!/[\d)%][+\-*/^]|sqrt|%/.test(t)) return null;                        // número sozinho não é conta
+    return { expr: t, bruto };
+  }
+
+  const PALAVRAS_MEDIA = new Set("media soma somar total mais de do da das dos e notas nota valores numeros numero calcula calcule calcular quanto qual a o os as ponderada aritmetica entre com".split(" "));
+  function tentarMedia(texto){
+    const t = norm(texto).replace(/[?!=]/g, " ");
+    const tipo = /\bmedia\b/.test(t) ? "media" : /\b(soma|somar|total)\b/.test(t) ? "soma" : null;
+    if(!tipo) return null;
+    const nums = (t.match(/\d+(?:[.,]\d+)?/g) || []).map((x) => parseFloat(x.replace(",", ".")));
+    if(nums.length < 2) return null;
+    const resto = t.replace(/\d+(?:[.,]\d+)?/g, " ").split(/[^a-z]+/).filter(Boolean);
+    if(resto.some((p) => !PALAVRAS_MEDIA.has(p))) return null;       // tem outra coisa na frase: não é pra calcular
+    const total = nums.reduce((a, b) => a + b, 0);
+    const lista = juntar(nums.map((n) => fmtNum(n)));
+    return tipo === "media"
+      ? `📊 Média de ${lista}: **${fmtNum(total / nums.length, 2)}**\n(soma ${fmtNum(total, 2)} ÷ ${nums.length})`
+      : `➕ Soma de ${lista}: **${fmtNum(total, 2)}**`;
+  }
+
+  const botaoCalc = () => ({ rotulo: "🧮 Abrir calculadora", eco: false, fn: abrirCalculadora });
+
+  function abrirCalculadora(){
+    falar([bot("Aqui está a calculadora 🧮\nToque nas teclas — ou digite a conta aqui embaixo (ex.: **15% de 480**, **média de 7, 8,5 e 6**).",
+      { tipo: "calc", expr: "", res: "", apos: false, raw: 0 })], { rapido: true });
+  }
+
+  async function tentarCalculo(texto){
+    const media = tentarMedia(texto);
+    if(media){ await falar([bot(media, opcoes([botaoCalc()]))], { rapido: true }); return true; }
+
+    const conta = lerConta(texto);
+    if(conta){
+      let r;
+      try{ r = fmtNum(avaliar(conta.expr)); }
+      catch(e){
+        const msg = { div0: "Não dá pra dividir por zero. 😅", raizneg: "Não existe raiz quadrada de número negativo.", inv: "Esse resultado não dá pra mostrar (número grande demais ou inválido)." }[e && e.message];
+        if(msg){ await falar([bot(msg)], { rapido: true }); return true; }
+        return false;   // conta mal formada: deixa seguir o fluxo normal
+      }
+      await falar([bot(`🧮 ${conta.bruto} = **${r}**`, opcoes([botaoCalc()]))], { rapido: true });
+      return true;
+    }
+    const t = norm(texto).trim();
+    if(/\bcalculadora\b/.test(t) || /^(calcula(r|e)?|fazer (uma )?conta|conta)$/.test(t)){ abrirCalculadora(); return true; }
+    return false;
+  }
+
+  /* Teclado da calculadora (o cartão guarda a conta em comp.expr, em formato "de máquina"). */
+  const TECLAS_CALC = [
+    ["C", "fn"], ["⌫", "fn"], ["%", "fn"], ["÷", "op"],
+    ["7"], ["8"], ["9"], ["×", "op"],
+    ["4"], ["5"], ["6"], ["−", "op"],
+    ["1"], ["2"], ["3"], ["+", "op"],
+    ["(", "fn"], [")", "fn"], ["0"], [",", "fn"],
+    ["√", "fn"], ["^", "fn"], ["=", "ok"],
+  ];
+  const bonitaCalc = (e) => String(e).replace(/\*/g, "×").replace(/\//g, "÷").replace(/-/g, "−").replace(/\./g, ",").replace(/sqrt\(/g, "√(");
+
+  function calcTecla(comp, k){
+    if(k === "C"){ comp.expr = ""; comp.res = ""; comp.apos = false; return; }
+    if(k === "="){
+      if(!comp.expr) return;
+      try{ const v = avaliar(comp.expr); comp.res = fmtNum(v); comp.raw = v; comp.apos = true; }
+      catch(e){ comp.res = e && e.message === "div0" ? "÷ por zero" : "conta incompleta"; }
+      return;
+    }
+    if(comp.apos){            // depois do "=": operador continua do resultado; número começa conta nova
+      comp.apos = false;
+      comp.expr = OPS_CALC[k] || k === "%" ? String(Number(comp.raw.toPrecision(12))) : (k === "⌫" ? String(Number(comp.raw.toPrecision(12))) : "");
+    }
+    const e = comp.expr, ult = e.slice(-1);
+    if(k === "⌫"){ comp.expr = /sqrt\($/.test(e) ? e.slice(0, -5) : e.slice(0, -1); }
+    else if(OPS_CALC[k]){
+      const op = OPS_CALC[k];
+      if(!e){ if(op === "-") comp.expr = "-"; }
+      else if("+-*/^".includes(ult)){ if(e.length > 1 || op === "-") comp.expr = e.slice(0, -1) + op; }   // trocar de operador
+      else if(ult === "("){ if(op === "-") comp.expr += op; }
+      else comp.expr += op;
+    }
+    else if(k === ","){ const seg = e.split(/[^0-9.]/).pop(); if(!seg.includes(".")) comp.expr += seg ? "." : "0."; }
+    else if(k === "%"){ if(/[0-9)%]$/.test(e)) comp.expr += "%"; }
+    else if(k === "√"){ comp.expr += (/[0-9)%.]$/.test(e) ? "*" : "") + "sqrt("; }
+    else if(k === "("){ comp.expr += (/[0-9)%]$/.test(e) ? "*" : "") + "("; }
+    else if(k === ")"){
+      const ab = (e.match(/\(/g) || []).length - (e.match(/\)/g) || []).length;
+      if(ab > 0 && /[0-9)%]$/.test(e)) comp.expr += ")";
+    }
+    else if(/^\d$/.test(k)){ comp.expr += (/[)%]$/.test(e) ? "*" : "") + k; }
+
+    // prévia ao vivo do resultado (só quando já tem operação na conta)
+    comp.res = "";
+    if(/[+\-*/^%]|sqrt/.test(comp.expr.slice(1))){
+      try{ comp.res = fmtNum(avaliar(comp.expr)); }catch(err){ comp.res = ""; }
+    }
+  }
+
+  /* ==================================================================
+     ANIVERSÁRIOS 🎂  (equipe da escola)
+     Os dados vêm do script.js (a mesma lista da aba Aniversários, com a
+     mensagem pronta e o WhatsApp do aluno ou do responsável). O Edubug:
+       • põe um sinalzinho 🎂 no botão flutuante quando tem aniversário hoje;
+       • ao abrir, avisa quem faz anos hoje (e amanhã) com botão de parabéns;
+       • responde "quem faz aniversário hoje / amanhã / essa semana?".
+     ================================================================== */
+  const aniv = () => { try{ const l = aniversarios(); return Array.isArray(l) ? l : []; }catch(e){ return []; } };
+  const VISTO_KEY = "edubug-aniv-visto-v1";
+  const lerVisto = () => { try{ return localStorage.getItem(VISTO_KEY) || ""; }catch(e){ return ""; } };
+  const gravarVisto = (v) => { try{ localStorage.setItem(VISTO_KEY, v); }catch(e){} };
+  const sigHoje = (lista) => ISO(new Date()) + ":" + lista.map((a) => a.id).sort().join(",");
+  const chaveAniv = (a) => ISO(new Date()) + ":" + a.id;
+  const dd = (n) => String(n).padStart(2, "0");
+  const quandoAniv = (a) => a.diasFaltam === 0 ? "hoje" : a.diasFaltam === 1 ? "amanhã" : `${dd(a.dia)}/${dd(a.mes)}`;
+
+  function linhaAniv(a){
+    const quem = `**${a.nome}**${a.detalhe ? " (" + a.detalhe + ")" : ""}`;
+    const papel = a.tipo === "professor" ? " · professor(a)" : "";
+    return `• ${quem} — faz ${a.idade} anos${papel}${a.destino ? "" : " · ⚠️ sem WhatsApp"}`;
+  }
+
+  /* Botões de parabéns (um por aniversariante que tem WhatsApp). */
+  function chipsParabens(lista){
+    return lista.filter((a) => a.destino).slice(0, 6).map((a) => ({
+      rotulo: `🎉 Parabenizar ${a.primeiro}`, estilo: "zap", eco: false, fn: () => parabenizar(a),
+    }));
+  }
+
+  /* Abre o WhatsApp com a mensagem pronta (e o cartão com a logo, igual à aba Aniversários).
+     Roda direto do clique, senão o navegador bloqueia a janela. */
+  function parabenizar(a){
+    const d = a.destino;
+    if(!d) return;
+    S.parabenizados.add(chaveAniv(a));
+    if(enviarParabens) enviarParabens({ numero: d.numero, texto: d.texto, nome: a.primeiro, tipo: a.tipo });
+    else window.open(whatsappLinkComTexto(d.numero, d.texto), "_blank", "noopener");
+    const para = d.quem === "responsavel" ? `o responsável (${d.quemNome})` : d.quem === "professor" ? "o(a) professor(a)" : "o aluno";
+    const restantes = aniv().filter((x) => x.ehHoje && x.destino && !S.parabenizados.has(chaveAniv(x)));
+    falar([
+      bot(`WhatsApp aberto para ${para}! 🎉 É só conferir a mensagem e enviar.`),
+      restantes.length
+        ? bot("Quer parabenizar mais alguém?", opcoes(chipsParabens(restantes)))
+        : bot("Esse era o último aniversariante de hoje com WhatsApp. 🥳"),
+    ], { rapido: true });
+  }
+
+  function montarAviso(hoje, amanha){
+    const partes = [];
+    if(hoje.length){
+      partes.push(`🎂 **${hoje.length === 1 ? "Hoje tem aniversário!" : `Hoje tem ${hoje.length} aniversários!`}**\n` + cortar(hoje.map(linhaAniv), 8).join("\n"));
+    }
+    if(amanha.length){
+      partes.push(`📅 **Amanhã:** ${juntar(amanha.slice(0, 6).map((a) => a.nome))}${amanha.length > 6 ? ` e mais ${amanha.length - 6}` : ""}`);
+    }
+    if(hoje.some((a) => a.destino)) partes.push("Toque num nome pra abrir o WhatsApp com a mensagem já escrita.");
+    const itens = [...chipsParabens(hoje), botaoAba("instituicao", "aniversarios")];
+    return bot(partes.join("\n\n"), opcoes(itens));
+  }
+
+  /* Lembrete dentro da conversa: uma vez por conjunto de aniversariantes (hoje + amanhã). */
+  function lembrarAniversarios(){
+    const lista = aniv();
+    const hoje = lista.filter((a) => a.ehHoje);
+    const amanha = lista.filter((a) => a.diasFaltam === 1);
+    if(!hoje.length && !amanha.length) return;
+    const sig = sigHoje(hoje) + "|" + amanha.map((a) => a.id).sort().join(",");
+    if(S.avisouAniv === sig) return;
+    S.avisouAniv = sig;
+    gravarVisto(sigHoje(hoje));
+    S.msgs.push(montarAviso(hoje, amanha));
+    atualizarBadge();
+  }
+
+  /* Sinalzinho 🎂 no botão flutuante: some depois que a pessoa abre a conversa e vê o aviso. */
+  function atualizarBadge(){
+    if(!raizDom) return;
+    const hoje = aniv().filter((a) => a.ehHoje);
+    const novo = hoje.length > 0 && lerVisto() !== sigHoje(hoje);
+    const b = $(".eb-badge"), fab = $(".eb-fab");
+    if(!b || !fab) return;
+    b.hidden = !novo;
+    if(novo) b.textContent = "🎂" + (hoje.length > 1 ? " " + hoje.length : "");
+    fab.classList.toggle("eb-fab-aviso", novo);
+    fab.title = novo ? `Hoje tem ${hoje.length} aniversariante${hoje.length > 1 ? "s" : ""} · clique para abrir` : "Clique para abrir · arraste para mover";
+  }
+
+  /* "quem faz aniversário hoje?", "aniversariantes da semana", "tem aniversário amanhã?"… */
+  async function tentarAniversarios(texto){
+    if(contexto().papel !== "instituicao") return false;
+    const t = norm(texto);
+    if(!/\b(aniversari\w*|parabens|parabenizar)\b/.test(t)) return false;
+    if(/\b(como|passo|manual|personaliz\w*|editar|texto da mensagem)\b/.test(t)) return false;   // dúvida de uso: segue pros guias/manuais
+
+    const lista = aniv();
+    if(!lista.length){
+      await falar([bot("Não achei aniversariantes por aqui. A lista pode ainda estar carregando, ou falta a **data de nascimento** no cadastro dos alunos.", opcoes([botaoAba("instituicao", "aniversarios")]))], { rapido: true });
+      return true;
+    }
+    let sel, titulo;
+    if(/\bamanha\b/.test(t)){ sel = lista.filter((a) => a.diasFaltam === 1); titulo = "Aniversários de amanhã"; }
+    else if(/\b(semana|proxim\w*)\b/.test(t)){ sel = lista.filter((a) => a.diasFaltam <= 7); titulo = "Aniversários dos próximos 7 dias"; }
+    else if(/\bmes\b/.test(t)){ sel = lista.filter((a) => a.diasFaltam <= 30); titulo = "Aniversários dos próximos 30 dias"; }
+    else { sel = lista.filter((a) => a.ehHoje); titulo = "Aniversariantes de hoje"; }
+
+    if(!sel.length){
+      const prox = lista.filter((a) => a.diasFaltam > 0 && a.diasFaltam <= 30).slice(0, 5);
+      await falar([bot(`🎈 Nenhum aniversário nesse período.${prox.length ? "\n\n**Os próximos:**\n" + prox.map((a) => `• **${a.nome}**${a.detalhe ? " (" + a.detalhe + ")" : ""} — ${quandoAniv(a)}`).join("\n") : ""}`, opcoes([botaoAba("instituicao", "aniversarios")]))], { rapido: true });
+      return true;
+    }
+    const linhas = cortar(sel.map((a) => `${linhaAniv(a)}${a.diasFaltam > 0 ? " · " + quandoAniv(a) : ""}`), 15);
+    const hojeSel = sel.filter((a) => a.ehHoje);
+    await falar([bot(`🎂 **${titulo}** (${sel.length})\n` + linhas.join("\n"), opcoes([...chipsParabens(hojeSel), botaoAba("instituicao", "aniversarios")]))], { rapido: true });
+    return true;
+  }
+
   /* ---------------- entendimento do que a pessoa escreveu ---------------- */
   async function continuarFluxo(texto){
     const f = S.fluxo;
@@ -1370,10 +1696,12 @@ export function criarEdubug({ state, escapeHtml, contexto, manuais, executar, SE
     if(FALA.obrigado.test(t) && stems.length <= 1){ await falar([bot("Por nada! Se precisar, é só chamar. 🐞")]); return; }
     if(FALA.capacidades.test(t)){
       const extras = c.papel === "professor" ? "\n• Lanço a **chamada de hoje** perguntando aluno por aluno (ou ditando: “8A faltou Ana, conteúdo frações”)\n• **Repito a última aula** como base\n• **Anexo observações** da aula ou de um aluno\n• Monto o pedido de **ajuste de aula**" : "";
-      await falar([bot(`Sou o Edubug, o assistente virtual do Educa+. Posso:\n• Achar a resposta nos **manuais** do app\n• Te levar até a **aba** certa${c.papel === "professor" || c.papel === "instituicao" ? "\n• **Consultar o banco**: “a chamada da 8A foi feita?”, “quem faltou hoje?”, “chamadas pendentes”" : ""}${extras}${c.papel !== "instituicao" ? "\n• Deixar a mensagem pronta pra **secretaria** no WhatsApp" : ""}\n\nÉ só escrever o que precisa.`)]);
+      await falar([bot(`Sou o Edubug, o assistente virtual do Educa+. Posso:\n• Achar a resposta nos **manuais** do app\n• Te levar até a **aba** certa${c.papel === "professor" || c.papel === "instituicao" ? "\n• **Consultar o banco**: “a chamada da 8A foi feita?”, “quem faltou hoje?”, “chamadas pendentes”" : ""}${extras}${c.papel === "instituicao" ? "\n• Avisar os **aniversariantes** (hoje e amanhã) e abrir o WhatsApp com os parabéns" : ""}\n• Fazer **contas** (“15% de 480”, “média de 7, 8,5 e 6”) ou abrir a **calculadora** 🧮${c.papel !== "instituicao" ? "\n• Deixar a mensagem pronta pra **secretaria** no WhatsApp" : ""}\n\nÉ só escrever o que precisa.`)]);
       return;
     }
     if(c.papel === "instituicao" && /(lacuna|nao soube|sem resposta|o que ensinar|ensinar.*edubug|edubug.*(nao sabe|aprender))/.test(t)){ await mostrarLacunas(); return; }
+    if(await tentarCalculo(texto)) return;
+    if(await tentarAniversarios(texto)) return;
     if(await tentarConsulta(texto)) return;
     if(c.papel === "professor" && FALA.ajuste.test(t)){ iniciarAjuste(); return; }
     if(c.papel === "professor"){
@@ -1527,7 +1855,7 @@ export function criarEdubug({ state, escapeHtml, contexto, manuais, executar, SE
   };
 
   function novaConversa(){
-    S.msgs = []; S.fluxo = null; S.digitando = false; S.fila = Promise.resolve(); S.busca = null;
+    S.msgs = []; S.fluxo = null; S.digitando = false; S.fila = Promise.resolve(); S.busca = null; S.avisouAniv = "";
     cumprimentar();
     desenhar();
   }
@@ -1539,7 +1867,7 @@ export function criarEdubug({ state, escapeHtml, contexto, manuais, executar, SE
     raizDom.id = "edubug-root";
     raizDom.innerHTML = `
       <button type="button" class="eb-fab" data-eb="abrir" title="Clique para abrir · arraste para mover" aria-label="Abrir o Edubug, assistente do Educa+">
-        <span class="eb-fab-emoji" aria-hidden="true"><span class="eb-emoji-fb">🐞</span><img class="eb-logo" alt=""></span><span class="eb-fab-texto">Edubug</span>
+        <span class="eb-fab-emoji" aria-hidden="true"><span class="eb-emoji-fb">🐞</span><img class="eb-logo" alt=""></span><span class="eb-fab-texto">Edubug</span><span class="eb-badge" hidden aria-hidden="true"></span>
       </button>
       <section class="eb-phone" role="dialog" aria-label="Edubug, assistente do Educa+" hidden>
         <div class="eb-ilha" aria-hidden="true"></div>
@@ -1587,8 +1915,9 @@ export function criarEdubug({ state, escapeHtml, contexto, manuais, executar, SE
     if(abrir){
       aplicarPos();
       $(".eb-hora").textContent = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
-      if(S.msgs.length === 0) cumprimentar();
+      if(S.msgs.length === 0) cumprimentar(); else lembrarAniversarios();
       desenhar();
+      atualizarBadge();
       setTimeout(() => $(".eb-campo")?.focus(), 60);
     }
   }
@@ -1597,7 +1926,8 @@ export function criarEdubug({ state, escapeHtml, contexto, manuais, executar, SE
     const c = contexto();
     const primeiro = String(c.nome || "").trim().split(/\s+/)[0];
     const itens = (SUGESTOES[c.papel] || []).map((r) => ({ rotulo: r, fn: () => receber(r), eco: false }));
-    S.msgs.push(bot(`Oi${primeiro ? ", " + primeiro : ""}! Eu sou o **Edubug** 🐞, o assistente do Educa+.\n\nAjudo a achar respostas nos manuais, levo você até a aba certa${c.papel === "professor" ? ", lanço a chamada de hoje (aluno por aluno), anexo observações" : ""}${c.papel === "professor" || c.papel === "instituicao" ? ", consulto as chamadas do dia" : ""} e, se precisar, deixo a mensagem pronta para a secretaria. Por onde começamos?`, opcoes(itens)));
+    S.msgs.push(bot(`Oi${primeiro ? ", " + primeiro : ""}! Eu sou o **Edubug** 🐞, o assistente do Educa+.\n\nAjudo a achar respostas nos manuais, levo você até a aba certa${c.papel === "professor" ? ", lanço a chamada de hoje (aluno por aluno), anexo observações" : ""}${c.papel === "professor" || c.papel === "instituicao" ? ", consulto as chamadas do dia" : ""}, faço contas e, se precisar, deixo a mensagem pronta para a secretaria. Por onde começamos?`, opcoes(itens)));
+    lembrarAniversarios();   // equipe: avisa quem faz anos hoje / amanhã
   }
 
   /* ---------------- desenho ---------------- */
@@ -1614,6 +1944,12 @@ export function criarEdubug({ state, escapeHtml, contexto, manuais, executar, SE
         <a class="eb-manual" href="${escapeHtml(x.url)}" target="_blank" rel="noopener">
           <strong>${escapeHtml(x.titulo)}</strong><span>${escapeHtml(x.descricao || "")}</span><em>Abrir manual →</em>
         </a>`).join("")}</div>`;
+    }
+    if(comp.tipo === "calc"){
+      return `<div class="eb-cartao eb-calc">
+        <div class="eb-calc-visor"><div class="eb-calc-expr">${escapeHtml(bonitaCalc(comp.expr) || "0")}</div><div class="eb-calc-res">${comp.res ? "= " + escapeHtml(comp.res) : "&nbsp;"}</div></div>
+        <div class="eb-calc-teclas">${TECLAS_CALC.map(([r, cls]) => `<button type="button" class="eb-tecla${cls ? " eb-tecla-" + cls : ""}" data-eb="calc" data-m="${i}" data-k="${escapeHtml(r)}" aria-label="${escapeHtml(r)}">${escapeHtml(r)}</button>`).join("")}</div>
+      </div>`;
     }
     if(comp.tipo === "alunos"){
       const f = S.fluxo;
@@ -1698,6 +2034,7 @@ export function criarEdubug({ state, escapeHtml, contexto, manuais, executar, SE
     const comp = m?.comp;
     if(!comp) return;
 
+    if(tipo === "calc"){ calcTecla(comp, el.dataset.k); desenhar({ manter: true }); return; }
     if(tipo === "op"){
       const it = comp.itens[Number(el.dataset.i)];
       if(!it) return;
@@ -1732,7 +2069,7 @@ export function criarEdubug({ state, escapeHtml, contexto, manuais, executar, SE
 
   /* ---------------- ciclo de vida ---------------- */
   function limpar(){
-    S.msgs = []; S.digitando = false; S.fluxo = null; S.aberto = false; S.fila = Promise.resolve();
+    S.msgs = []; S.digitando = false; S.fluxo = null; S.aberto = false; S.fila = Promise.resolve(); S.avisouAniv = ""; S.parabenizados = new Set();
     if(raizDom){ $(".eb-phone").hidden = true; $(".eb-fab").classList.remove("eb-oculto"); }
   }
 
@@ -1747,6 +2084,7 @@ export function criarEdubug({ state, escapeHtml, contexto, manuais, executar, SE
     garantirRaiz();
     raizDom.style.display = "";
     if(S.uid !== state.authUser.uid){ limpar(); S.uid = state.authUser.uid; }
+    atualizarBadge();   // sinalzinho 🎂 (equipe): confere a cada atualização da tela
   }
 
   function resetar(){ limpar(); }

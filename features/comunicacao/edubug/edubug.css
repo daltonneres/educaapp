@@ -158,3 +158,32 @@
 @media (max-width:520px){
   .eb-status,.eb-topo{cursor:default; touch-action:auto}
 }
+
+/* ==================================================================
+   v5 — sinalzinho de aniversário (🎂) e calculadora dentro da conversa
+   ================================================================== */
+.eb-badge{position:absolute; top:-8px; right:-4px; min-width:24px; height:24px; padding:0 6px; display:flex; align-items:center; justify-content:center; gap:2px;
+  border-radius:12px; background:#ff3b30; color:#fff; font-size:12px; font-weight:800; line-height:1; border:2px solid #fff; box-shadow:0 2px 6px rgba(0,0,0,.3); pointer-events:none}
+.eb-badge[hidden]{display:none}
+.eb-fab-aviso{animation:eb-chama 2.4s ease-in-out infinite}
+@keyframes eb-chama{0%,70%,100%{transform:none} 76%{transform:rotate(-6deg) scale(1.05)} 82%{transform:rotate(6deg) scale(1.05)} 88%{transform:rotate(-4deg)} 94%{transform:rotate(3deg)}}
+.eb-fab-aviso.eb-arrastando{animation:none}
+
+.eb-calc{padding:10px; min-width:260px}
+.eb-calc-visor{background:#1c1c1e; color:#fff; border-radius:12px; padding:8px 12px; text-align:right; margin-bottom:8px; min-height:62px; overflow:hidden}
+.eb-calc-expr{font-size:15px; color:#c7c7cc; min-height:20px; word-break:break-all}
+.eb-calc-res{font-size:24px; font-weight:600; line-height:1.25; word-break:break-all}
+.eb-calc-teclas{display:grid; grid-template-columns:repeat(4,1fr); gap:6px}
+.eb-tecla{border:0; border-radius:12px; padding:11px 0; font:inherit; font-size:17px; font-weight:600; background:#e9e9eb; color:var(--eb-tinta); cursor:pointer; -webkit-tap-highlight-color:transparent}
+.eb-tecla:hover{background:#dcdce0}
+.eb-tecla:active{transform:scale(.95)}
+.eb-tecla-fn{background:#d1d1d6}
+.eb-tecla-fn:hover{background:#c4c4c9}
+.eb-tecla-op{background:#ff9f0a; color:#fff}
+.eb-tecla-op:hover{background:#e68f09}
+.eb-tecla-ok{background:var(--eb-verde); color:#fff; grid-column:span 2}
+.eb-tecla-ok:hover{background:#188049}
+
+@media (prefers-reduced-motion:reduce){
+  .eb-fab-aviso{animation:none}
+}

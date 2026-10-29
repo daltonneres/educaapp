@@ -400,6 +400,10 @@ export function contratoEstadoInicial(){
     emailResp: "", senhaResp: "",
     salvandoAcessos: false,
     resultadoAcessos: null,    // { aluno, responsavel, avisos: [] }
+    // "Novo curso para aluno que já estuda aqui": o formulário vem preenchido com o
+    // cadastro dele, nenhum login novo é criado e o contrato só vincula o curso novo.
+    novoCurso: false,
+    alunoExistenteId: "",
   };
 }
 
@@ -1283,11 +1287,11 @@ export function interpretarContratoTexto(texto){
 /* Formulário (modal)                                                  */
 /* ================================================================== */
 
-function campo(label, field, valor, { tipo = "text", placeholder = "", largura = "" } = {}){
+function campo(label, field, valor, { tipo = "text", placeholder = "", largura = "", readonly = false } = {}){
   return `
     <label class="contrato-campo" style="${largura ? `flex:1 1 ${largura};` : ""}">
       <span>${esc(label)}</span>
-      <input type="${tipo}" class="teacher-text-input" data-contrato-field="${field}" value="${esc(valor || "")}" placeholder="${esc(placeholder)}" ${tipo === "date" ? 'min="2000-01-01" max="2100-12-31"' : ""} />
+      <input type="${tipo}" class="teacher-text-input" data-contrato-field="${field}" value="${esc(valor || "")}" placeholder="${esc(placeholder)}" ${readonly ? "readonly" : ""} ${tipo === "date" ? 'min="2000-01-01" max="2100-12-31"' : ""} />
     </label>`;
 }
 
@@ -1445,8 +1449,8 @@ export function contratoModal(c, { cursos = [], alunos = [], turmas = [] } = {})
     <div class="aluno-modal contrato-modal" role="dialog" aria-modal="true" aria-label="Gerar contrato" data-action="noop">
       <div class="aluno-modal-head">
         <div>
-          <h2>Gerar contrato</h2>
-          <p class="section-eyebrow" style="margin:2px 0 0;">Preencha os dados e o contrato sai pronto para assinatura.</p>
+          <h2>${c.novoCurso ? "Novo curso para aluno existente" : "Gerar contrato"}</h2>
+          <p class="section-eyebrow" style="margin:2px 0 0;">${c.novoCurso ? "Os dados do aluno já vieram do cadastro. Escolha o curso, o horário e os valores — nenhum login novo é criado." : "Preencha os dados e o contrato sai pronto para assinatura."}</p>
         </div>
         <button type="button" class="secretaria-modal-close" style="color:var(--slate);" data-action="fechar-contrato-modal" aria-label="Fechar">${"&times;"}</button>
       </div>
@@ -1461,9 +1465,10 @@ export function contratoModal(c, { cursos = [], alunos = [], turmas = [] } = {})
 
       <div class="aluno-modal-section">
         <h3 class="teacher-label">2. Aluno</h3>
-        ${alunos.length ? `<div class="contrato-linha">${selectCampo("Puxar de um aluno já cadastrado", "alunoCadastrado", "", opcoesAluno, { largura: "320px" })}</div>` : ""}
+        ${c.novoCurso ? `<p class="contrato-novo-curso-aviso">Aluno já cadastrado. O nome fica travado para o curso novo cair no mesmo cadastro. CPF, RG e endereço vêm do último contrato gerado — confira e complete o que faltar.</p>` : ""}
+        ${alunos.length && !c.novoCurso ? `<div class="contrato-linha">${selectCampo("Puxar de um aluno já cadastrado", "alunoCadastrado", "", opcoesAluno, { largura: "320px" })}</div>` : ""}
         <div class="contrato-linha">
-          ${campo("Nome completo", "alunoNome", c.alunoNome, { largura: "260px" })}
+          ${campo("Nome completo", "alunoNome", c.alunoNome, { largura: "260px", readonly: !!c.novoCurso })}
           ${campo("CPF", "alunoCpf", c.alunoCpf, { largura: "140px", placeholder: "000.000.000-00" })}
           ${campo("RG", "alunoRg", c.alunoRg, { largura: "130px" })}
           ${campo("Nascimento", "alunoNascimento", c.alunoNascimento, { tipo: "date", largura: "150px" })}
@@ -1476,10 +1481,10 @@ export function contratoModal(c, { cursos = [], alunos = [], turmas = [] } = {})
           ${campo("WhatsApp do aluno", "contatoAluno", c.contatoAluno, { largura: "170px", placeholder: "(46) 99999-9999" })}
         </div>
         <p class="section-eyebrow" style="margin:6px 0 0;">O WhatsApp e a data de nascimento alimentam a aba "Aniversários". Sem o número do aluno, a mensagem vai para o responsável.</p>
-        <label class="responsavel-vinculo-item" style="margin-top:10px;">
+        ${c.novoCurso ? "" : `<label class="responsavel-vinculo-item" style="margin-top:10px;">
           <input type="checkbox" data-action="contrato-segundo-aluno" ${c.segundoAluno ? "checked" : ""} />
           <span>Contrato com dois alunos (irmãos)</span>
-        </label>
+        </label>`}
         ${blocoAluno2Form}
       </div>
 
@@ -1587,7 +1592,10 @@ export function contratoModal(c, { cursos = [], alunos = [], turmas = [] } = {})
         </div>
       </div>
 
-      <div class="aluno-modal-section">
+      ${c.novoCurso ? `<div class="aluno-modal-section">
+        <h3 class="teacher-label">7. Acesso ao app</h3>
+        <p class="contrato-resumo" style="margin:0;">Nenhum login novo será criado. O aluno e o responsável continuam entrando com o acesso que já têm; o curso novo é só vinculado ao cadastro, e a vigência dele passa a aparecer na aba Renovações.</p>
+      </div>` : `<div class="aluno-modal-section">
         <h3 class="teacher-label">7. Acesso ao app</h3>
         <label class="responsavel-vinculo-item" style="margin-bottom:8px;">
           <input type="checkbox" data-action="contrato-criar-acessos" ${c.criarAcessos ? "checked" : ""} />
@@ -1600,14 +1608,14 @@ export function contratoModal(c, { cursos = [], alunos = [], turmas = [] } = {})
           ${c.semResponsavel ? "" : credencial("Responsável", c.emailResp, c.senhaResp, "resp", c.respNome)}
           <p class="section-eyebrow" style="margin:6px 0 0;">Login e senha saem prontos, montados a partir do nome. A senha tem 6 dígitos e é de uso único: dite pra família e oriente a trocar no primeiro acesso, em "Meu perfil".</p>
         ` : `<p class="section-eyebrow" style="margin:0;">Desmarcado: o contrato sai normalmente, mas nenhum cadastro ou login é criado.</p>`}
-      </div>
+      </div>`}
 
       ${resultadoHtml}
 
       ${c.erro ? `<p class="teacher-error" style="color:var(--red,#C4544A);font-size:12.5px;margin:0 0 8px;">${esc(c.erro)}</p>` : ""}
 
       <div class="contrato-acoes">
-        <button type="button" class="teacher-primary-btn" data-action="contrato-gerar" ${c.salvandoAcessos ? "disabled" : ""}>${c.salvandoAcessos ? "Gerando…" : "Gerar contrato para assinatura"}</button>
+        <button type="button" class="teacher-primary-btn" data-action="contrato-gerar" ${c.salvandoAcessos ? "disabled" : ""}>${c.salvandoAcessos ? "Gerando…" : (c.novoCurso ? "Gerar contrato do novo curso" : "Gerar contrato para assinatura")}</button>
         <button type="button" class="teacher-primary-btn" style="background:transparent;color:var(--slate);border:1px solid rgba(18,32,50,.18);" data-action="fechar-contrato-modal">Cancelar</button>
       </div>
     </div>
@@ -2020,6 +2028,233 @@ export function importarContratosModal(state_, { cursos = [], turmas = [] } = {}
         <button type="button" class="teacher-primary-btn" data-action="import-contrato-confirmar" ${state_.importContratosSalvando || !selecionados ? "disabled" : ""}>${state_.importContratosSalvando ? "Importando…" : `Importar ${selecionados} contrato(s) selecionado(s)`}</button>
         <button type="button" class="teacher-primary-btn" style="background:transparent;color:var(--slate);border:1px solid rgba(18,32,50,.18);" data-action="fechar-importar-contratos-modal">Fechar</button>
       </div>` : ""}
+    </div>
+  </div>`;
+}
+
+
+/* ================================================================== */
+/* Abas da tela Contratos · Renovação de vigência                      */
+/* ------------------------------------------------------------------
+   Cada aluno guarda, no próprio cadastro, uma lista de "matrículas"
+   (uma por curso): { id, curso, inicio, termino, meses, criadoEm,
+   renovacoes: [{ em, meses, de, ate, obs }] }. Renovar NÃO gera
+   contrato novo nem login novo: só estende o término (e, se quiser,
+   lança as mensalidades do período no Financeiro).
+   ================================================================== */
+
+export const CONTRATOS_ABAS = [
+  { key: "gerar", label: "Gerar e importar" },
+  { key: "pendentes", label: "Aguardando assinatura" },
+  { key: "renovar", label: "Renovações" },
+  { key: "novo-curso", label: "Novo curso" },
+];
+
+/* Barra de abas. `badges` = { pendentes: n, renovar: n } (some quando 0). */
+export function contratosSubnavHtml(ativa, badges = {}){
+  return `<div class="subtab-bar contratos-subtabs">${CONTRATOS_ABAS.map(t => {
+    const n = Number(badges[t.key]) || 0;
+    return `
+    <button type="button" class="subtab-btn ${ativa === t.key ? "active" : ""}" data-action="set-contratos-tab" data-key="${t.key}">
+      <span>${esc(t.label)}</span>${n ? `<span class="subtab-badge${t.key === "renovar" ? " is-alerta" : ""}">${n}</span>` : ""}
+    </button>`;
+  }).join("")}</div>`;
+}
+
+/* ---- datas ---- */
+function isoMaisDias(iso, dias){
+  const [a, m, d] = String(iso || "").split("-").map(Number);
+  if(!a || !m || !d) return "";
+  const dt = new Date(Date.UTC(a, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + dias);
+  return dt.toISOString().slice(0, 10);
+}
+export function diasEntreISO(deIso, ateIso){
+  const p = v => String(v || "").split("-").map(Number);
+  const [a1, m1, d1] = p(deIso); const [a2, m2, d2] = p(ateIso);
+  if(!a1 || !a2) return null;
+  return Math.round((Date.UTC(a2, m2 - 1, d2) - Date.UTC(a1, m1 - 1, d1)) / 86400000);
+}
+
+/* Quantos dias antes do término o aluno entra na lista "pra renovar". */
+export const RENOVACAO_JANELA_DIAS = 60;
+
+/* { tipo: "vencido" | "vencendo" | "ok" | "sem", dias, rotulo } */
+export function matriculaSituacao(termino, hojeIso){
+  if(!termino) return { tipo: "sem", dias: null, rotulo: "Sem término registrado" };
+  const dias = diasEntreISO(hojeIso, termino);
+  if(dias === null) return { tipo: "sem", dias: null, rotulo: "Sem término registrado" };
+  if(dias < 0) return { tipo: "vencido", dias, rotulo: `Venceu há ${-dias} ${-dias === 1 ? "dia" : "dias"}` };
+  if(dias === 0) return { tipo: "vencendo", dias, rotulo: "Vence hoje" };
+  if(dias <= RENOVACAO_JANELA_DIAS) return { tipo: "vencendo", dias, rotulo: `Vence em ${dias} ${dias === 1 ? "dia" : "dias"}` };
+  return { tipo: "ok", dias, rotulo: `Em dia · vence em ${dias} dias` };
+}
+
+/* A renovação começa no dia seguinte ao término atual. */
+export function renovacaoNovoTermino(terminoAtual, meses){
+  if(!terminoAtual || !meses) return "";
+  return calcularTermino(isoMaisDias(terminoAtual, 1), meses);
+}
+
+/* Mensalidades do período renovado (uma por mês, a partir do mês seguinte
+   ao término atual). Sem valor ou sem dia de vencimento, devolve []. */
+export function renovacaoParcelas({ terminoAtual, meses, valor, diaVenc }){
+  const n = Number(meses) || 0;
+  const v = numeroLimpo(valor);
+  const dia = Math.min(Math.max(Number(diaVenc) || 0, 0), 31);
+  if(!terminoAtual || !n || !v || !dia) return [];
+  const [a, m] = isoMaisDias(terminoAtual, 1).split("-").map(Number);
+  if(!a || !m) return [];
+  const lista = [];
+  for(let i = 0; i < n; i++){
+    const dt = new Date(Date.UTC(a, m - 1 + i, 1));
+    const ano = dt.getUTCFullYear(); const mes = dt.getUTCMonth() + 1;
+    const ultimo = new Date(Date.UTC(ano, mes, 0)).getUTCDate();
+    const competencia = `${ano}-${String(mes).padStart(2, "0")}`;
+    lista.push({ competencia, valor: v, vencimento: `${competencia}-${String(Math.min(dia, ultimo)).padStart(2, "0")}` });
+  }
+  return lista;
+}
+
+export function renovacaoEstadoInicial(){
+  return {
+    aberto: false, erro: "", salvando: false,
+    alunoId: "", alunoNome: "",
+    matriculaId: "",            // vazio = sem vigência registrada (informa curso e término)
+    opcoes: [],                 // contratos que o aluno já tem: [{ id, curso, termino }]
+    curso: "", terminoAtual: "",
+    meses: "6", mesesCustom: "", novoTermino: "",
+    lancarFinanceiro: false, valorParcela: "", diaVenc: "",
+    obs: "",
+  };
+}
+
+export function renovacaoMeses(r){
+  const m = r.meses === "custom" ? Number(r.mesesCustom) : Number(r.meses);
+  return Number.isFinite(m) && m > 0 ? Math.round(m) : 0;
+}
+
+export function renovacaoRecalcular(r){
+  r.novoTermino = renovacaoNovoTermino(r.terminoAtual, renovacaoMeses(r));
+  return r;
+}
+
+export function renovacaoValidar(r){
+  if(!r.alunoId) return "Aluno não encontrado. Feche e abra de novo.";
+  if(!String(r.curso || "").trim()) return "Escolha o curso que está sendo renovado.";
+  if(!r.terminoAtual || !contratoDataPlausivel(r.terminoAtual)) return "Informe o término atual do contrato.";
+  if(!renovacaoMeses(r)) return "Escolha por quanto tempo renovar.";
+  if(!r.novoTermino || !contratoDataPlausivel(r.novoTermino)) return "Confira o novo término.";
+  if(r.novoTermino <= r.terminoAtual) return "O novo término precisa ser depois do término atual.";
+  if(r.lancarFinanceiro){
+    if(!numeroLimpo(r.valorParcela)) return "Informe o valor da mensalidade para lançar no Financeiro.";
+    const dia = Number(r.diaVenc);
+    if(!(dia >= 1 && dia <= 31)) return "Informe o dia do vencimento (de 1 a 31).";
+  }
+  return "";
+}
+
+function campoRenov(label, field, valor, { tipo = "text", placeholder = "", largura = "", readonly = false } = {}){
+  return `
+    <label class="contrato-campo" style="${largura ? `flex:1 1 ${largura};` : ""}">
+      <span>${esc(label)}</span>
+      <input type="${tipo}" class="teacher-text-input" data-renov-field="${field}" value="${esc(valor || "")}" placeholder="${esc(placeholder)}" ${readonly ? "readonly" : ""} ${tipo === "date" ? 'min="2000-01-01" max="2100-12-31"' : ""} />
+    </label>`;
+}
+
+function selectRenov(label, field, valor, opcoes, { largura = "" } = {}){
+  return `
+    <label class="contrato-campo" style="${largura ? `flex:1 1 ${largura};` : ""}">
+      <span>${esc(label)}</span>
+      <select class="teacher-text-input" data-renov-field="${field}">
+        ${opcoes.map(o => `<option value="${esc(o.valor)}" ${String(valor) === String(o.valor) ? "selected" : ""}>${esc(o.texto)}</option>`).join("")}
+      </select>
+    </label>`;
+}
+
+/* Janela "Renovar contrato". Sem contrato novo, sem login novo. */
+export function renovacaoModal(r, { cursos = [] } = {}){
+  if(!r || !r.aberto) return "";
+  const manual = !r.matriculaId;
+  const meses = renovacaoMeses(r);
+  const parcelas = r.lancarFinanceiro
+    ? renovacaoParcelas({ terminoAtual: r.terminoAtual, meses, valor: r.valorParcela, diaVenc: r.diaVenc }) : [];
+  const listaCursos = cursos.length ? cursos : ["Inglês", "Recreação", "Robótica", "Informática"];
+  const opcoesCurso = [{ valor: "", texto: "— escolha o curso —" }]
+    .concat(listaCursos.map(x => ({ valor: x, texto: x })));
+
+  const resumo = r.terminoAtual && r.novoTermino ? `
+    <p class="contrato-resumo">
+      Vigência atual até <b>${esc(dataBr(r.terminoAtual))}</b> → nova vigência até <b>${esc(dataBr(r.novoTermino))}</b>
+      (${meses} ${meses === 1 ? "mês" : "meses"}).<br />
+      Mantém o contrato, o cadastro e os logins que o aluno já tem — nada novo é criado.
+    </p>` : "";
+
+  return `
+  <div class="aluno-modal-backdrop" data-action="renov-fechar">
+    <div class="aluno-modal contrato-modal renov-modal" role="dialog" aria-modal="true" aria-label="Renovar contrato" data-action="noop">
+      <div class="aluno-modal-head">
+        <div>
+          <h2>Renovar contrato</h2>
+          <p class="section-eyebrow" style="margin:2px 0 0;">${esc(r.alunoNome)}${r.curso ? ` · ${esc(r.curso)}` : ""}</p>
+        </div>
+        <button type="button" class="secretaria-modal-close" style="color:var(--slate);" data-action="renov-fechar" aria-label="Fechar">${"&times;"}</button>
+      </div>
+
+      <div class="aluno-modal-section">
+        <h3 class="teacher-label">1. Contrato que está sendo renovado</h3>
+        ${(r.opcoes || []).length ? `<div class="contrato-linha">
+          ${selectRenov("Qual contrato renovar?", "matriculaId", r.matriculaId || "__novo",
+            (r.opcoes || []).map(o => ({ valor: o.id, texto: `${o.curso || "Curso não informado"}${o.termino ? ` · até ${dataBr(o.termino)}` : ""}` }))
+              .concat([{ valor: "__novo", texto: "Outro curso (informar na mão)" }]), { largura: "340px" })}
+        </div>` : ""}
+        ${manual ? `<p class="contrato-novo-curso-aviso">Informe o curso e até quando vai o contrato atual. Depois de renovar, ele passa a aparecer na lista da aba Renovações.</p>` : ""}
+        <div class="contrato-linha">
+          ${manual
+            ? selectRenov("Curso", "curso", r.curso, opcoesCurso, { largura: "200px" })
+            : campoRenov("Curso", "curso", r.curso, { largura: "200px", readonly: true })}
+          ${campoRenov("Término atual do contrato", "terminoAtual", r.terminoAtual, { tipo: "date", largura: "190px", readonly: !manual })}
+        </div>
+      </div>
+
+      <div class="aluno-modal-section">
+        <h3 class="teacher-label">2. Renovar por quanto tempo?</h3>
+        <div class="contrato-linha">
+          ${selectRenov("Período", "meses", r.meses, [
+            { valor: "6", texto: "6 meses" },
+            { valor: "12", texto: "1 ano (12 meses)" },
+            { valor: "custom", texto: "Outro período" },
+          ], { largura: "180px" })}
+          ${r.meses === "custom" ? campoRenov("Quantos meses", "mesesCustom", r.mesesCustom, { largura: "130px" }) : ""}
+          ${campoRenov("Novo término", "novoTermino", r.novoTermino, { tipo: "date", largura: "180px" })}
+        </div>
+        ${resumo}
+        <div class="contrato-linha" style="margin-top:8px;">
+          ${campoRenov("Observação (opcional)", "obs", r.obs, { largura: "100%", placeholder: "ex.: combinado por WhatsApp com a mãe" })}
+        </div>
+      </div>
+
+      <div class="aluno-modal-section">
+        <h3 class="teacher-label">3. Financeiro (opcional)</h3>
+        <label class="responsavel-vinculo-item" style="margin-bottom:8px;">
+          <input type="checkbox" data-action="renov-financeiro" ${r.lancarFinanceiro ? "checked" : ""} />
+          <span>Lançar as mensalidades do período renovado no Financeiro do aluno</span>
+        </label>
+        ${r.lancarFinanceiro ? `
+          <div class="contrato-linha">
+            ${campoRenov("Valor da mensalidade (R$)", "valorParcela", r.valorParcela, { largura: "190px", placeholder: "350,00" })}
+            ${campoRenov("Dia do vencimento", "diaVenc", r.diaVenc, { largura: "150px", placeholder: "10" })}
+          </div>
+          ${parcelas.length ? `<p class="contrato-resumo" style="margin-top:6px;">Serão lançadas <b>${parcelas.length}</b> mensalidades pendentes, de <b>${esc(parcelas[0].competencia.split("-").reverse().join("/"))}</b> a <b>${esc(parcelas[parcelas.length - 1].competencia.split("-").reverse().join("/"))}</b>, de ${moeda(parcelas[0].valor)} cada. Meses que já têm cobrança não são duplicados.</p>` : ""}
+        ` : `<p class="section-eyebrow" style="margin:0;">Desmarcado: só a vigência é estendida; as mensalidades você lança como já faz hoje.</p>`}
+      </div>
+
+      ${r.erro ? `<p class="teacher-error" style="color:var(--red,#C4544A);font-size:12.5px;margin:0 0 8px;">${esc(r.erro)}</p>` : ""}
+
+      <div class="contrato-acoes">
+        <button type="button" class="teacher-primary-btn" data-action="renov-salvar" ${r.salvando ? "disabled" : ""}>${r.salvando ? "Salvando…" : "Confirmar renovação"}</button>
+        <button type="button" class="teacher-primary-btn" style="background:transparent;color:var(--slate);border:1px solid rgba(18,32,50,.18);" data-action="renov-fechar">Cancelar</button>
+      </div>
     </div>
   </div>`;
 }

@@ -229,16 +229,22 @@ import {
 import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
 import { firebaseConfig } from "../infra/firebase-config.js";
 import { criarHorarios } from "../features/ensino/horarios/horarios.js";
+import { criarConteudos } from "../features/ensino/conteudos/conteudos.js";
+import { criarRelatorios } from "../features/ensino/relatorios/relatorios.js";
 import { criarSuporte } from "../features/comunicacao/suporte/suporte.js";
 import { criarEdubug } from "../features/comunicacao/edubug/edubug.js";   // Edubug: assistente virtual (pop-up)
 import { criarInicio } from "../features/comunicacao/inicio/inicio.js";
 import { criarSolicitacoes } from "../features/comunicacao/solicitacoes/solicitacoes.js";
+import { criarAlunos } from "../features/alunos/alunos.js";
+import { criarFamilia } from "../features/familia/familia.js";
+import { criarFinanceiro } from "../features/financeiro/financeiro.js";
 import { criarCursos, normalizarCatalogo, cursosAtivosDoCatalogo, modalidadesAtivasDoCatalogo, tituloDoCurso } from "../features/gestao/cursos/cursos.js";
 import { criarDev } from "../features/gestao/dev/dev.js";
 import {
   contratoEstadoInicial,
   contratoModal,
   contratoRecalcular,
+  contratoMeses,
   contratoDataPlausivel,
   contratoAplicarEmpresa,
   contratoValidar,
@@ -258,6 +264,14 @@ import {
   importarContratosModal,
   importContratosChipHtml,
   importContratosChipInfo,
+  contratosSubnavHtml,
+  matriculaSituacao,
+  renovacaoEstadoInicial,
+  renovacaoMeses,
+  renovacaoRecalcular,
+  renovacaoValidar,
+  renovacaoParcelas,
+  renovacaoModal,
 } from "../features/gestao/contratos/contratos.js";
 import {
   calendarioHtml,
@@ -1656,6 +1670,8 @@ const state = {
   senhasLoginConsulta: "",        // consulta aplicada (depois de tocar em Localizar)
   senhasLoginVisiveis: {},        // uid -> true quando a senha está à mostra
   buscaModulo: "",                // texto da busca de módulos/funcionalidades (professor e secretaria)
+  buscaModuloPopup: false,        // abre o popup de comando rápido por caminho/módulo
+  buscaModuloComando: "",        // texto digitado no popup de comando rápido
   senhasLoginLiberadaAte: 0,      // timestamp (ms) até quando a lista completa está liberada (0 = bloqueada)
   senhasLoginPedindoSenha: false, // mostrando o campo "digite sua senha" para liberar a lista completa
   senhasLoginSenhaErro: "",
@@ -1804,6 +1820,13 @@ const state = {
   // mora em contratos.js; aqui fica só o que o formulário digitou.
   contrato: contratoEstadoInicial(),
 
+  // Aba "Contratos" — sub-abas: gerar | pendentes | renovar | novo-curso
+  contratosTab: "gerar",
+  renovacao: renovacaoEstadoInicial(),   // janela "Renovar contrato"
+  renovFiltro: "atencao",                // "atencao" (vencidos e a vencer) | "todos"
+  renovBusca: "",
+  novoCursoBusca: "",
+
   // Aba "Contratos" > "Importar contratos": lê vários
   // PDFs de uma vez, tenta reconhecer os dados de cada um e mostra uma
   // prévia editável antes de gravar qualquer coisa no banco.
@@ -1859,6 +1882,8 @@ const suporte = criarSuporte({ state, render, ICONS, escapeHtml, SECRETARIA_WHAT
    ------------------------------------------------------------------ */
 const edubug = criarEdubug({
   state, escapeHtml, SECRETARIA_WHATSAPP, whatsappLinkComTexto,
+  aniversarios: () => edubugAniversarios(),            // lembrete 🎂 (só a equipe)
+  enviarParabens: (d) => enviarParabensComLogo(d),     // mesmo envio da aba Aniversários (texto + cartão com a logo)
   contexto: () => edubugContexto(),
   manuais: () => edubugManuais(),
   executar: (acao) => edubugExecutar(acao),
@@ -1893,6 +1918,43 @@ function edubugManuais(){
   const daEquipe = papel === "instituicao" ? MANUAIS_INSTITUICAO
     : papel === "professor" ? MANUAIS_INSTITUICAO.filter(m => m.professor) : [];
   return [...doSuporte, ...daEquipe];
+}
+
+/* Aniversariantes para o Edubug lembrar (só a EQUIPE da escola, que é quem tem as datas e os
+   contatos). Usa as mesmas listas e o mesmo destino da aba "Aniversários" (aluno -> WhatsApp dele,
+   senão responsável vinculado; professor -> WhatsApp da ficha) e o mesmo texto de parabéns.
+   Só lê o que a aba já carregou: não faz consulta nova ao banco. */
+function edubugAniversarios(){
+  if(state.screen !== "instituicao") return [];
+  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+  const itens = [];
+  const juntarItem = (a, ehProfessor) => {
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(a.nascimento || "")) return;
+    const [ano, mes, dia] = a.nascimento.split("-").map(Number);
+    const idade = hoje.getFullYear() - ano;
+    let prox = new Date(hoje.getFullYear(), mes - 1, dia);
+    if(prox < hoje) prox = new Date(hoje.getFullYear() + 1, mes - 1, dia);
+    const diasFaltam = Math.round((prox - hoje) / 86400000);
+    const ehHoje = dia === hoje.getDate() && mes === hoje.getMonth() + 1;
+    let destino = null;
+    if(ehProfessor){
+      const numero = telefoneValido(a.telefone);
+      if(numero) destino = { quem: "professor", quemNome: a.nome, numero, texto: textoAniversario("professor", { nome: primeiroNome(a.nome), idade }) };
+    } else {
+      const d = destinoDoParabens({ ...a, idade });
+      if(d) destino = { quem: d.tipo, quemNome: d.nome, numero: d.numero, texto: d.texto };
+    }
+    itens.push({
+      id: String(a.id || a.uid || a.email || a.nome),
+      nome: a.nome, primeiro: primeiroNome(a.nome),
+      tipo: ehProfessor ? "professor" : "aluno",
+      detalhe: ehProfessor ? (a.disciplinas || []).join(", ") : (a.turma || ""),
+      dia, mes, idade, diasFaltam, ehHoje, destino,
+    });
+  };
+  (state.instAlunos || []).forEach(a => juntarItem(a, false));
+  (state.gestaoProfessores || []).forEach(a => juntarItem(a, true));
+  return itens.sort((a, b) => (a.diasFaltam - b.diasFaltam) || a.nome.localeCompare(b.nome));
 }
 
 /* Ações do Edubug que mexem no banco. Só rodam depois do "Confirmar" do cartão
@@ -2263,6 +2325,12 @@ const cursosCfg = criarCursos({
   abrirHorarios: () => { state.instTab = "horarios"; render(); horarios.aoAbrir(); },
 });
 
+const alunos = criarAlunos({ state, render, ICONS, escapeHtml });
+const familia = criarFamilia({ state, render, ICONS, escapeHtml });
+const financeiro = criarFinanceiro({ state, render, ICONS, escapeHtml });
+const conteudos = criarConteudos({ state, render, ICONS, escapeHtml });
+const relatorios = criarRelatorios({ state, render, ICONS, escapeHtml });
+
 /* ================================================================== */
 /* Carregamento de dados no Firestore, por perfil                      */
 /* ================================================================== */
@@ -2339,9 +2407,28 @@ async function carregarDadosDoPerfil(){
   throw new Error("Seu usuário não tem um tipo de acesso configurado. Fale com a secretaria.");
 }
 
+/* Matrículas do aluno: uma por curso, com a vigência do contrato e o histórico
+   de renovações. Guardadas no próprio documento do aluno (campo `matriculas`). */
+function normalizarMatriculas(lista){
+  if(!Array.isArray(lista)) return [];
+  return lista.filter(m => m && typeof m === "object").map(m => ({
+    id: m.id || (Date.now().toString(36) + Math.random().toString(36).slice(2, 8)),
+    curso: String(m.curso || ""),
+    inicio: String(m.inicio || ""),       // "AAAA-MM-DD"
+    termino: String(m.termino || ""),     // "AAAA-MM-DD"
+    meses: Number(m.meses) || 0,
+    criadoEm: String(m.criadoEm || ""),
+    renovacoes: Array.isArray(m.renovacoes) ? m.renovacoes.map(r => ({
+      em: String(r?.em || ""), meses: Number(r?.meses) || 0,
+      de: String(r?.de || ""), ate: String(r?.ate || ""), obs: String(r?.obs || ""),
+    })) : [],
+  }));
+}
+
 function normalizeAluno(id, dados){
   return {
     id,
+    matriculas: normalizarMatriculas(dados.matriculas),
     nome: dados.nome || "",
     turma: dados.turma || "",
     contato: dados.contato || "",
@@ -3440,6 +3527,7 @@ function renderPreservandoFoco(){
   if(a && a !== document.body){
     if(a.dataset && a.dataset.contratoField) seletor = `[data-contrato-field="${a.dataset.contratoField}"]`;
     else if(a.dataset && a.dataset.contratoSelect) seletor = `[data-contrato-select="${a.dataset.contratoSelect}"]`;
+    else if(a.dataset && a.dataset.renovField) seletor = `[data-renov-field="${a.dataset.renovField}"]`;
     else if(a.id) seletor = `#${a.id}`;
   }
   render();
@@ -3679,6 +3767,39 @@ function buscarModulos(consulta, navItems){
     .map(x => ({ ...x.m, icon: disponiveis.get(x.m.tab).icon }));
 }
 
+function buscaModulosPopupHtml(navItems){
+  if(!state.buscaModuloPopup || (state.screen !== "instituicao" && state.screen !== "professor")) return "";
+  const q = state.buscaModuloComando || "";
+  const texto = q.trim();
+  const achados = texto.length >= 1 ? buscarModulos(texto.replace(/\//g, " "), navItems) : [];
+  const lista = achados.length
+    ? achados.map(m => `
+      <button type="button" class="busca-mod-item" data-action="busca-ir" data-tab="${escapeHtml(m.tab)}" data-sub="${escapeHtml(m.sub || "")}">
+        <span class="busca-mod-icon">${ICONS[m.icon] || ""}</span>
+        <span class="busca-mod-texto"><strong>${escapeHtml(m.titulo)}</strong><span>${escapeHtml(m.desc)}</span></span>
+      </button>`).join("")
+    : `<div class="busca-mod-vazio">Digite algo como “chamada”, “senha”, “gestao/acessos” ou “calendário”.</div>`;
+
+  return `
+    <div class="busca-mod-popup-backdrop" data-action="busca-popup-fechar">
+      <div class="busca-mod-popup" role="dialog" aria-modal="true" aria-label="Atalho de navegação por módulo">
+        <div class="busca-mod-popup-head">
+          <div>
+            <span class="section-eyebrow">Atalho de navegação</span>
+            <h3>Ir para módulo</h3>
+          </div>
+          <button type="button" class="btn-icon" data-action="busca-popup-fechar" aria-label="Fechar atalho">${ICONS.close}</button>
+        </div>
+        <div class="search-wrap busca-mod-campo busca-mod-campo-popup">
+          ${ICONS.search}
+          <input class="search-input" id="busca-modulo-comando-input" placeholder="Ex.: gestao/acessos, calendário, boletos, senha" value="${escapeHtml(q)}" autocomplete="off" />
+          ${q ? `<button type="button" class="busca-mod-limpar" data-action="busca-comando-limpar" aria-label="Limpar comando">${ICONS.close}</button>` : ""}
+        </div>
+        <div class="busca-mod-lista busca-mod-lista-popup">${lista}</div>
+      </div>
+    </div>`;
+}
+
 function buscaModulosHtml(navItems){
   if(state.screen !== "instituicao" && state.screen !== "professor") return "";
   const q = state.buscaModulo || "";
@@ -3699,8 +3820,10 @@ function buscaModulosHtml(navItems){
         ${ICONS.search}
         <input class="search-input" id="busca-modulo-input" placeholder="Buscar módulo ou funcionalidade (ex.: chamada, senha, boleto)" value="${escapeHtml(q)}" autocomplete="off" />
         ${q ? `<button type="button" class="busca-mod-limpar" data-action="busca-limpar" aria-label="Limpar busca">${ICONS.close}</button>` : ""}
+        <button type="button" class="busca-mod-atalho" data-action="busca-popup-open" aria-label="Abrir atalho de navegação por caminho">Atalho</button>
       </div>
       ${resultado}
+      ${buscaModulosPopupHtml(navItems)}
     </div>`;
 }
 
@@ -5659,7 +5782,8 @@ function renderInstituicao(){
   }) + importarContratosModal(state, {
     cursos: cursosEModalidadesDaEscola(school?.nome || ""),
     turmas: state.instTurmas || [],
-  }) + importContratosChipHtml(state) + contratoVisualizadorModal();
+  }) + importContratosChipHtml(state) + contratoVisualizadorModal()
+    + renovacaoModal(state.renovacao, { cursos: cursosEModalidadesDaEscola(school?.nome || "") });
 }
 
 function gestaoInstituicaoView(school){
@@ -6730,13 +6854,40 @@ function contratosPendentesCard(){
   return html;
 }
 
-/* Aba "Contratos": gerar contrato, importar PDFs e acompanhar quem ainda
-   não assinou. Antes vivia como sub-aba dentro de "Gestão". */
+/* Aba "Contratos", dividida em sub-abas:
+     gerar       -> gerar contrato, importar PDFs e backup dos gerados
+     pendentes   -> contratos aguardando assinatura
+     renovar     -> estender a vigência (6 meses / 1 ano) sem contrato novo
+     novo-curso  -> contrato de um curso novo para aluno que já é daqui */
+function contarContratosPendentes(){
+  const c = state.contratosInst;
+  if(!c.carregado || !state.instAlunos) return 0;
+  const salvos = c.itens;
+  let n = 0;
+  state.instAlunos.forEach(a => {
+    if(a.contratoStatus !== "pendente" && !salvos.some(m => m.alunoId === a.id && m.status === "pendente")) return;
+    const pend = salvos.filter(m => m.alunoId === a.id && m.status === "pendente");
+    n += pend.length || 1;
+  });
+  return n;
+}
+
 function contratosView(school){
-  return `
-    <h2 class="section-title">Contratos</h2>
-    <p class="section-eyebrow">Gere, importe e acompanhe a assinatura dos contratos de ${escapeHtml(school.nome)}.</p>
-    ${contratosPendentesCard()}
+  const tab = ["gerar", "pendentes", "renovar", "novo-curso"].includes(state.contratosTab) ? state.contratosTab : "gerar";
+  const badges = { pendentes: contarContratosPendentes(), renovar: contarRenovacoesAtencao() };
+  const aviso = state.instituicaoMensagem
+    ? `<p class="teacher-success institution-success">${escapeHtml(state.instituicaoMensagem)}</p>` : "";
+
+  let corpo = "";
+  if(tab === "pendentes"){
+    corpo = contratosPendentesCard()
+      || `<div class="management-card management-card-wide" style="max-width:none;"><h3>Aguardando assinatura</h3><p class="contrato-vazio">Nenhum contrato aguardando assinatura. 🎉</p></div>`;
+  } else if(tab === "renovar"){
+    corpo = contratosRenovarView();
+  } else if(tab === "novo-curso"){
+    corpo = contratosNovoCursoView();
+  } else {
+    corpo = `
     <div class="management-grid">
       <div class="management-card">
         <h3>Contratos</h3>
@@ -6751,8 +6902,149 @@ function contratosView(school){
         <p class="section-eyebrow" style="margin-top:8px;">Funciona melhor com os PDFs do próprio modelo da escola — outros formatos podem vir com campos em branco pra preencher na mão.</p>
       </div>
     </div>
-    ${backupContratosCard()}
-    ${state.instituicaoMensagem ? `<p class="teacher-success institution-success">${escapeHtml(state.instituicaoMensagem)}</p>` : ""}`;
+    ${backupContratosCard()}`;
+  }
+
+  return `
+    <h2 class="section-title">Contratos</h2>
+    <p class="section-eyebrow">Gere, importe, renove e acompanhe a assinatura dos contratos de ${escapeHtml(school.nome)}.</p>
+    ${contratosSubnavHtml(tab, badges)}
+    ${corpo}
+    ${aviso}`;
+}
+
+/* ---------- Renovações ---------- */
+function matriculasDaUnidade(){
+  const hoje = dataDeHojeISO();
+  const linhas = [];
+  (state.instAlunos || []).filter(a => a.situacao === "ativo").forEach(a => {
+    (a.matriculas || []).forEach(m => linhas.push({ aluno: a, mat: m, sit: matriculaSituacao(m.termino, hoje) }));
+  });
+  return linhas.sort((x, y) =>
+    String(x.mat.termino || "9999-99-99").localeCompare(String(y.mat.termino || "9999-99-99"))
+    || x.aluno.nome.localeCompare(y.aluno.nome));
+}
+
+function contarRenovacoesAtencao(){
+  return matriculasDaUnidade().filter(l => l.sit.tipo === "vencido" || l.sit.tipo === "vencendo").length;
+}
+
+function linhaRenovacaoHtml({ aluno, mat, sit }){
+  const ult = mat.renovacoes[mat.renovacoes.length - 1];
+  const vigencia = mat.inicio && mat.termino
+    ? `${formatarDataBr(mat.inicio)} a ${formatarDataBr(mat.termino)}`
+    : mat.termino ? `até ${formatarDataBr(mat.termino)}` : "sem término registrado";
+  return `
+    <div class="pendente-contrato-item">
+      <div class="pendente-contrato-info">
+        <strong>${escapeHtml(aluno.nome)}</strong>
+        <span>${escapeHtml(mat.curso || "Curso não informado")} · Vigência ${escapeHtml(vigencia)}</span>
+        <span><span class="renov-pill is-${sit.tipo}">${escapeHtml(sit.rotulo)}</span>${ult ? ` <span class="renov-historico">· última renovação em ${escapeHtml(formatarDataBr(ult.em))} (+${ult.meses} ${ult.meses === 1 ? "mês" : "meses"})${mat.renovacoes.length > 1 ? ` · ${mat.renovacoes.length} renovações` : ""}</span>` : ""}</span>
+      </div>
+      <div class="pendente-contrato-acoes">
+        <button type="button" class="aniversario-btn" data-action="renovar-abrir" data-aluno="${escapeHtml(aluno.id)}" data-mat="${escapeHtml(mat.id)}" data-meses="6">Renovar 6 meses</button>
+        <button type="button" class="aniversario-btn" data-action="renovar-abrir" data-aluno="${escapeHtml(aluno.id)}" data-mat="${escapeHtml(mat.id)}" data-meses="12">Renovar 1 ano</button>
+      </div>
+    </div>`;
+}
+
+function contratosRenovarView(){
+  if(state.instAlunosCarregando || state.instAlunos === null){
+    return `<div class="management-card management-card-wide" style="max-width:none;"><h3>Renovações</h3><p>Carregando…</p></div>`;
+  }
+  const busca = normalizarNome(state.renovBusca || "");
+  const todas = matriculasDaUnidade();
+  const atencao = todas.filter(l => l.sit.tipo === "vencido" || l.sit.tipo === "vencendo" || l.sit.tipo === "sem");
+  let linhas = (state.renovFiltro === "todos" || busca) ? todas : atencao;
+  if(busca) linhas = linhas.filter(l => normalizarNome(l.aluno.nome).includes(busca));
+
+  // quem ainda não tem vigência registrada só aparece na busca
+  const semVigencia = busca
+    ? (state.instAlunos || []).filter(a => a.situacao === "ativo" && !(a.matriculas || []).length && normalizarNome(a.nome).includes(busca)).slice(0, 15)
+    : [];
+
+  const corpoLinhas = linhas.map(linhaRenovacaoHtml).join("")
+    + semVigencia.map(a => `
+    <div class="pendente-contrato-item">
+      <div class="pendente-contrato-info">
+        <strong>${escapeHtml(a.nome)}</strong>
+        <span>${escapeHtml(a.turma || "Sem turma")} · <span class="renov-pill">Sem vigência registrada</span></span>
+      </div>
+      <div class="pendente-contrato-acoes">
+        <button type="button" class="aniversario-btn" data-action="renovar-abrir" data-aluno="${escapeHtml(a.id)}" data-mat="" data-meses="6">Registrar e renovar 6 meses</button>
+        <button type="button" class="aniversario-btn" data-action="renovar-abrir" data-aluno="${escapeHtml(a.id)}" data-mat="" data-meses="12">Registrar e renovar 1 ano</button>
+      </div>
+    </div>`).join("");
+
+  const vazio = busca ? "Nenhum aluno encontrado com esse nome."
+    : state.renovFiltro === "todos" ? "Nenhuma vigência registrada ainda. Ela passa a ser guardada a cada contrato gerado ou importado; para os alunos antigos, busque o nome e use “Registrar e renovar”."
+    : "Ninguém para renovar nos próximos 60 dias. 🎉 Para ver todas as vigências, use “Todas”. Alunos antigos sem vigência registrada aparecem quando você busca pelo nome.";
+
+  return `
+    <div class="management-card management-card-wide" style="max-width:none;">
+      <h3>Renovar contratos${state.renovFiltro === "todos" || busca ? "" : ` (${atencao.length})`}</h3>
+      <p>Renove por 6 meses ou 1 ano sem gerar contrato novo: o aluno mantém o contrato, o cadastro e os logins. O novo término conta a partir do dia seguinte ao término atual.</p>
+      <div class="renov-escolher">
+        <label class="contrato-campo" style="max-width:460px;">
+          <span>Renovar um aluno específico</span>
+          <select class="teacher-text-input" data-renov-pick="1">
+            <option value="">— escolha o aluno —</option>
+            ${(state.instAlunos || []).filter(a => a.situacao === "ativo").sort((a, b) => a.nome.localeCompare(b.nome))
+              .map(a => `<option value="${escapeHtml(a.id)}">${escapeHtml(a.nome)}${a.turma ? ` · ${escapeHtml(a.turma)}` : ""}</option>`).join("")}
+          </select>
+        </label>
+        <p class="section-eyebrow" style="margin:6px 0 0;">Serve para qualquer aluno ativo, esteja ou não na lista abaixo. Se ele tiver mais de um curso, você escolhe qual contrato renovar.</p>
+      </div>
+      <div class="renov-toolbar">
+        <div class="search-wrap">
+          ${ICONS.search}
+          <input class="search-input" id="renovar-busca" placeholder="Filtrar a lista pelo nome" value="${escapeHtml(state.renovBusca || "")}" />
+        </div>
+        <div class="renov-filtros">
+          <button type="button" class="renov-filtro ${state.renovFiltro !== "todos" ? "active" : ""}" data-action="renov-filtro" data-key="atencao">Vencidos e a vencer</button>
+          <button type="button" class="renov-filtro ${state.renovFiltro === "todos" ? "active" : ""}" data-action="renov-filtro" data-key="todos">Todas (${todas.length})</button>
+        </div>
+      </div>
+      ${corpoLinhas ? `<div class="pendente-contrato-lista">${corpoLinhas}</div>` : `<p class="contrato-vazio">${vazio}</p>`}
+    </div>`;
+}
+
+/* ---------- Novo curso para aluno existente ---------- */
+function contratosNovoCursoView(){
+  if(state.instAlunosCarregando || state.instAlunos === null){
+    return `<div class="management-card management-card-wide" style="max-width:none;"><h3>Novo curso</h3><p>Carregando…</p></div>`;
+  }
+  const busca = normalizarNome(state.novoCursoBusca || "");
+  const ativos = (state.instAlunos || []).filter(a => a.situacao === "ativo").sort((a, b) => a.nome.localeCompare(b.nome));
+  const filtrados = busca ? ativos.filter(a => normalizarNome(a.nome).includes(busca)) : ativos;
+  const mostrar = filtrados.slice(0, 30);
+  const linhas = mostrar.map(a => {
+    const cursos = [...new Set((a.matriculas || []).map(m => m.curso).filter(Boolean))];
+    return `
+    <div class="pendente-contrato-item">
+      <div class="pendente-contrato-info">
+        <strong>${escapeHtml(a.nome)}</strong>
+        <span class="novo-curso-cursos">${escapeHtml(a.turma || "Sem turma")}${cursos.length ? ` · Cursos com contrato: ${escapeHtml(cursos.join(", "))}` : ""}</span>
+      </div>
+      <div class="pendente-contrato-acoes">
+        <button type="button" class="aniversario-btn" data-action="novo-curso-abrir" data-id="${escapeHtml(a.id)}">${ICONS.fileText} Novo curso</button>
+      </div>
+    </div>`;
+  }).join("");
+  return `
+    <div class="management-card management-card-wide" style="max-width:none;">
+      <h3>Novo curso para aluno que já estuda aqui</h3>
+      <p>Por exemplo: quem faz Inglês e vai começar Informática. O formulário já vem com os dados do aluno e do responsável; você só escolhe o curso, o horário e os valores. <b>Nenhum login novo é criado</b> — o contrato novo usa o cadastro e os acessos que já existem.</p>
+      <div class="renov-toolbar">
+        <div class="search-wrap">
+          ${ICONS.search}
+          <input class="search-input" id="novocurso-busca" placeholder="Buscar aluno pelo nome" value="${escapeHtml(state.novoCursoBusca || "")}" />
+        </div>
+        <span class="lista-contador"><strong>${filtrados.length}</strong> ${filtrados.length === 1 ? "aluno" : "alunos"}</span>
+      </div>
+      ${linhas ? `<div class="pendente-contrato-lista">${linhas}</div>` : `<p class="contrato-vazio">Nenhum aluno encontrado.</p>`}
+      ${filtrados.length > mostrar.length ? `<p class="section-eyebrow" style="margin-top:10px;">Mostrando ${mostrar.length} de ${filtrados.length}. Digite o nome para filtrar.</p>` : ""}
+    </div>`;
 }
 
 /* Seção "Professores": lista quem já está cadastrado na unidade e permite
@@ -9796,19 +10088,33 @@ async function criarCadastrosDoContrato(c){
   const processarAluno = async ({ nome, nascimento, contato, emailCampo, senhaCampo }) => {
     const nomeLimpo = String(nome || "").trim();
     const emailDigitado = String(c[emailCampo] || "").trim();
-    const jaCadastrado = (state.instAlunos || [])
+    // Novo curso: o aluno é achado pelo id do cadastro (não pelo nome digitado)
+    const porId = (c.novoCurso && c.alunoExistenteId && emailCampo === "emailAluno")
+      ? (state.instAlunos || []).find(a => a.id === c.alunoExistenteId) : null;
+    const jaCadastrado = porId || (state.instAlunos || [])
       .find(a => normalizarNome(a.nome) === normalizarNome(nomeLimpo));
+
+    // Novo curso nunca cria cadastro nem login: se não achou o aluno, para aqui.
+    if(c.novoCurso && !jaCadastrado){
+      const e = new Error("aluno-nao-encontrado");
+      e.code = "novo-curso-sem-cadastro";
+      throw e;
+    }
 
     let alunoId = jaCadastrado?.id || null;
     let acesso = null;
 
     if(jaCadastrado){
-      await updateDoc(doc(db, "alunos", jaCadastrado.id), {
+      const atualiza = {
         nascimento: nascimento || jaCadastrado.nascimento || "",
         contato: contato || jaCadastrado.contato || "",
-        turma: c.curso || jaCadastrado.turma || "",
-      });
-      avisos.push(`${nomeLimpo} já tinha cadastro nesta unidade — atualizei os dados e mantive o acesso que já existia.`);
+      };
+      // curso novo não troca o curso/turma principal que o aluno já tem
+      if(!c.novoCurso) atualiza.turma = c.curso || jaCadastrado.turma || "";
+      await updateDoc(doc(db, "alunos", jaCadastrado.id), atualiza);
+      avisos.push(c.novoCurso
+        ? `${nomeLimpo}: curso ${c.curso} registrado no cadastro que já existia — nenhum login novo foi criado.`
+        : `${nomeLimpo} já tinha cadastro nesta unidade — atualizei os dados e mantive o acesso que já existia.`);
     } else {
       const criado = await criarUsuarioNaInstituicao({
         role: "aluno",
@@ -9866,6 +10172,18 @@ async function criarCadastrosDoContrato(c){
       } catch(err){
         console.error("Erro ao colocar o aluno na turma:", err);
         avisos.push(`Não consegui colocar ${nomeNaTurma} na turma agora${err?.code ? ` (${err.code})` : ""}. Abra a ficha do aluno e adicione a turma por lá.`);
+      }
+    }
+
+    // --- vigência (alimenta a aba Renovações) ---
+    if(alunoId && c.curso && c.dataTermino){
+      try {
+        await registrarMatricula(alunoId, {
+          curso: c.curso, inicio: c.dataInicio || "", termino: c.dataTermino, meses: contratoMeses(c),
+        });
+      } catch(err){
+        console.error("Erro ao registrar a vigência do contrato:", err);
+        avisos.push(`Não consegui registrar a vigência de ${nomeLimpo}${err?.code ? ` (${err.code})` : ""}. Ela pode ser informada depois, na aba Renovações.`);
       }
     }
 
@@ -9973,6 +10291,12 @@ async function criarCadastrosDoContrato(c){
       return null;
     }
 
+    // Novo curso não cria responsável nem login.
+    if(c.novoCurso){
+      avisos.push(`Não encontrei o cadastro de ${nomeLimpo} entre os responsáveis — o contrato saiu normalmente, mas nenhum login novo foi criado.`);
+      return null;
+    }
+
     const criadoResp = await criarUsuarioNaInstituicao({
       role: "responsavel",
       nome: nomeLimpo,
@@ -10044,6 +10368,182 @@ async function gravarStatusContrato(alunoId, status, extras = {}){
   await updateDoc(doc(db, "alunos", alunoId), dados);
   if(aluno) Object.assign(aluno, dados);
   return "ok";
+}
+
+/* Guarda (ou atualiza) a vigência do contrato de um curso no cadastro do aluno.
+   Mesmo curso = mesma matrícula: gerar de novo só atualiza as datas e mantém
+   o histórico de renovações. */
+async function registrarMatricula(alunoId, { curso, inicio, termino, meses }){
+  const ref = doc(db, "alunos", alunoId);
+  const snap = await getDoc(ref);
+  const atuais = normalizarMatriculas(snap.data()?.matriculas);
+  const chave = normalizarNome(curso);
+  const existente = atuais.find(m => normalizarNome(m.curso) === chave);
+  const lista = existente
+    ? atuais.map(m => m === existente
+        ? { ...m, inicio: inicio || m.inicio, termino, meses: Number(meses) || m.meses }
+        : m)
+    : [...atuais, {
+        id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
+        curso, inicio: inicio || "", termino, meses: Number(meses) || 0,
+        criadoEm: dataDeHojeISO(), renovacoes: [],
+      }];
+  await updateDoc(ref, { matriculas: lista });
+  const local = (state.instAlunos || []).find(a => a.id === alunoId);
+  if(local) local.matriculas = lista;
+}
+
+/* Renovação: só estende a vigência (e, se pedido, lança as mensalidades).
+   Não gera contrato, não cria cadastro nem login. */
+/* Abre a janela de renovação. `matId` vazio: se o aluno tem contratos registrados,
+   já vem o que vence primeiro (dá pra trocar na janela); se não tem, informa na mão. */
+function abrirRenovacaoDoAluno(alunoId, matId, meses){
+  const aluno = (state.instAlunos || []).find(a => a.id === alunoId);
+  if(!aluno) return;
+  const lista = aluno.matriculas || [];
+  const mat = lista.find(m => m.id === matId)
+    || (!matId && lista.length
+      ? lista.slice().sort((a, b) => String(a.termino || "9999").localeCompare(String(b.termino || "9999")))[0]
+      : null);
+  const r = renovacaoEstadoInicial();
+  Object.assign(r, {
+    aberto: true, alunoId: aluno.id, alunoNome: aluno.nome,
+    opcoes: lista.map(m => ({ id: m.id, curso: m.curso, termino: m.termino })),
+    matriculaId: mat?.id || "", curso: mat?.curso || "", terminoAtual: mat?.termino || "",
+    meses: meses === "12" ? "12" : "6",
+  });
+  renovacaoRecalcular(r);
+  state.renovacao = r;
+  render();
+}
+
+async function salvarRenovacao(){
+  const r = state.renovacao;
+  const problema = renovacaoValidar(r);
+  if(problema){ r.erro = problema; render(); return; }
+  r.salvando = true; r.erro = "";
+  render();
+  try {
+    const ref = doc(db, "alunos", r.alunoId);
+    const snap = await getDoc(ref);
+    const dados = snap.data() || {};
+    const atuais = normalizarMatriculas(dados.matriculas);
+    const hoje = dataDeHojeISO();
+    const meses = renovacaoMeses(r);
+    const registro = { em: hoje, meses, de: r.terminoAtual, ate: r.novoTermino, obs: String(r.obs || "").trim() };
+
+    const existente = atuais.find(m => m.id === r.matriculaId)
+      || atuais.find(m => normalizarNome(m.curso) === normalizarNome(r.curso));
+    const lista = existente
+      ? atuais.map(m => m === existente ? { ...m, termino: r.novoTermino, renovacoes: [...m.renovacoes, registro] } : m)
+      : [...atuais, {
+          id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
+          curso: r.curso, inicio: "", termino: r.novoTermino, meses: 0, criadoEm: hoje, renovacoes: [registro],
+        }];
+
+    const atualizacao = { matriculas: lista };
+    let novasMensalidades = [];
+    let todasMensalidades = null;
+    if(r.lancarFinanceiro){
+      const parcelas = renovacaoParcelas({ terminoAtual: r.terminoAtual, meses, valor: r.valorParcela, diaVenc: r.diaVenc });
+      const atuaisMens = Array.isArray(dados.financeiro?.mensalidades)
+        ? dados.financeiro.mensalidades.map(normalizeMensalidade) : [];
+      const competencias = new Set(atuaisMens.map(m => m.competencia));
+      novasMensalidades = parcelas
+        .filter(p => !competencias.has(p.competencia))
+        .map(p => normalizeMensalidade({ ...p, status: "pendente", criadoEm: hoje }));
+      if(novasMensalidades.length){
+        todasMensalidades = [...atuaisMens, ...novasMensalidades];
+        atualizacao["financeiro.mensalidades"] = todasMensalidades;
+      }
+    }
+    await updateDoc(ref, atualizacao);
+
+    const local = (state.instAlunos || []).find(a => a.id === r.alunoId);
+    if(local){
+      local.matriculas = lista;
+      if(todasMensalidades){ local.financeiro = local.financeiro || {}; local.financeiro.mensalidades = todasMensalidades; }
+    }
+    state.instituicaoMensagem = `Renovação de ${r.alunoNome} (${r.curso}) registrada: nova vigência até ${formatarDataBr(r.novoTermino)}.`
+      + (r.lancarFinanceiro ? ` ${novasMensalidades.length} mensalidade(s) lançada(s) no Financeiro.` : "");
+    state.renovacao = renovacaoEstadoInicial();
+  } catch(err){
+    console.error("Erro ao renovar contrato:", err);
+    r.salvando = false;
+    r.erro = err?.code === "permission-denied"
+      ? "O Firestore recusou a gravação (permission-denied). Fale com quem cuida das regras do banco."
+      : `Não consegui salvar a renovação agora${err?.code ? ` (${err.code})` : ""}. Tente de novo.`;
+  } finally {
+    render();
+  }
+}
+
+/* Dados do último contrato gerado para o aluno (CPF, RG, endereço, CNPJ…),
+   pra o formulário de novo curso já vir preenchido. null se não houver. */
+async function buscarDadosDoUltimoContrato(aluno){
+  const escolaId = state.escolaSelecionadaId;
+  await carregarContratosGerados(escolaId);
+  const alvo = normalizarNome(aluno.nome);
+  const item = (state.contratosGerados.itens || []).find(i => normalizarNome(i.alunos).includes(alvo));
+  if(!item) return null;
+  const snap = await getDoc(doc(db, "contratosGerados", item.id));
+  return snap.exists() ? (snap.data().dados || null) : null;
+}
+
+async function abrirNovoCurso(alunoId){
+  const aluno = (state.instAlunos || []).find(a => a.id === alunoId);
+  if(!aluno) return;
+  const c = contratoEstadoInicial();
+  c.aberto = true;
+  c.novoCurso = true;
+  c.alunoExistenteId = aluno.id;
+  c.criarAcessos = false;
+  c.alunoNome = aluno.nome;
+  c.alunoNascimento = aluno.nascimento || "";
+  c.contatoAluno = aluno.contato || "";
+
+  const resps = (state.gestaoResponsaveis || []).filter(r => (r.alunosIds || []).includes(aluno.id));
+  if(resps[0]){
+    c.respNome = resps[0].nome || "";
+    c.contatoResp = resps[0].contato || "";
+    c.respParentesco = resps[0].parentesco || "";
+  }
+  c.respsExtras = resps.slice(1).map(r => ({
+    nome: r.nome || "", parentesco: r.parentesco || "", contato: r.contato || "", email: "", senha: "",
+  }));
+
+  const nomeEscola = (state.data.escolas?.[state.escolaSelecionadaId]?.nome || "").toLowerCase();
+  const preferido = nomeEscola.includes("prata") ? "46.616.889/0001-37"
+    : nomeEscola.includes("salto") ? "49.080.272/0001-38" : "";
+  if(preferido) contratoAplicarEmpresa(c, preferido);
+  c.dataAssinatura = dataDeHojeISO();
+  contratoRecalcular(c);
+
+  state.contrato = c;
+  render();
+  garantirPessoasDaUnidade();
+
+  // completa CPF, RG, endereço etc. com o último contrato gerado, sem sobrescrever nada
+  try {
+    const d = await buscarDadosDoUltimoContrato(aluno);
+    if(!d || state.contrato !== c) return;
+    const ehSegundo = !!d.segundoAluno && normalizarNome(d.aluno2Nome || "") === normalizarNome(aluno.nome);
+    const pegar = (campo, valor) => { if(valor && !c[campo]) c[campo] = valor; };
+    pegar("alunoCpf", ehSegundo ? d.aluno2Cpf : d.alunoCpf);
+    pegar("alunoRg", ehSegundo ? d.aluno2Rg : d.alunoRg);
+    pegar("alunoNascimento", ehSegundo ? d.aluno2Nascimento : d.alunoNascimento);
+    ["alunoEndereco", "alunoNumero", "alunoBairro", "alunoCidade",
+     "respCpf", "respRg", "respEndereco", "respNumero", "respBairro", "respCidade",
+     "respParentesco", "contatoResp"].forEach(k => pegar(k, d[k]));
+    if(!c.respNome && d.respNome){ c.respNome = d.respNome; }
+    if(d.semResponsavel && !c.respNome) c.semResponsavel = true;
+    // só troca o CNPJ se a pessoa ainda não começou a preencher o curso novo
+    if(d.cnpj && d.cnpj !== c.cnpj && !c.curso && !c.valorCurso) contratoAplicarEmpresa(c, d.cnpj);
+    pegar("foro", d.foro);
+    render();
+  } catch(err){
+    console.warn("Não consegui puxar os dados do último contrato:", err?.code || err);
+  }
 }
 
 async function marcarContratoEnviado(alunoId){
@@ -11728,13 +12228,49 @@ function bindEvents(){
   });
 
   app.addEventListener("keydown", (e) => {
-    if(!e.target || e.target.id !== "busca-modulo-input") return;
-    if(e.key === "Enter"){
+    if((e.altKey || e.key === "Alt") && e.key.toLowerCase() === "k"){
       e.preventDefault();
-      document.querySelector(".busca-mod-item")?.click();
-    } else if(e.key === "Escape"){
-      state.buscaModulo = "";
+      state.buscaModuloPopup = !state.buscaModuloPopup;
+      if(state.buscaModuloPopup){
+        state.buscaModuloComando = state.buscaModulo || "";
+        render();
+        setTimeout(() => document.getElementById("busca-modulo-comando-input")?.focus(), 0);
+      } else {
+        state.buscaModuloComando = "";
+        render();
+      }
+      return;
+    }
+
+    if(state.buscaModuloPopup && e.key === "Escape"){
+      e.preventDefault();
+      state.buscaModuloPopup = false;
+      state.buscaModuloComando = "";
       render();
+      return;
+    }
+
+    if(!e.target) return;
+    if(e.target.id === "busca-modulo-input"){
+      if(e.key === "Enter"){
+        e.preventDefault();
+        document.querySelector(".busca-mod-item")?.click();
+      } else if(e.key === "Escape"){
+        state.buscaModulo = "";
+        render();
+      }
+      return;
+    }
+    if(e.target.id === "busca-modulo-comando-input"){
+      if(e.key === "Enter"){
+        e.preventDefault();
+        document.querySelector(".busca-mod-popup .busca-mod-item")?.click();
+      } else if(e.key === "Escape"){
+        e.preventDefault();
+        state.buscaModuloPopup = false;
+        state.buscaModuloComando = "";
+        render();
+      }
     }
   });
 
@@ -11745,6 +12281,14 @@ function bindEvents(){
       state.buscaModulo = t.value;
       render();
       const novo = document.getElementById("busca-modulo-input");
+      if(novo){ novo.focus(); novo.setSelectionRange(cursor, cursor); }
+      return;
+    }
+    if(t.id === "busca-modulo-comando-input"){
+      const cursor = t.selectionStart;
+      state.buscaModuloComando = t.value;
+      render();
+      const novo = document.getElementById("busca-modulo-comando-input");
       if(novo){ novo.focus(); novo.setSelectionRange(cursor, cursor); }
       return;
     }
@@ -11786,6 +12330,15 @@ function bindEvents(){
       state.alunosBusca = t.value;
       render();
       const novo = document.getElementById("alunos-busca");
+      if(novo){ novo.focus(); novo.setSelectionRange(cursor, cursor); }
+      return;
+    }
+    if(t.id === "renovar-busca" || t.id === "novocurso-busca"){
+      const cursor = t.selectionStart;
+      const idCampo = t.id;
+      if(idCampo === "renovar-busca") state.renovBusca = t.value; else state.novoCursoBusca = t.value;
+      render();
+      const novo = document.getElementById(idCampo);
       if(novo){ novo.focus(); novo.setSelectionRange(cursor, cursor); }
       return;
     }
@@ -11911,6 +12464,12 @@ function bindEvents(){
     if(t.id === "fin-cobranca-pix"){ state.finCobrancaPix = t.value; return; }
     if(t.id === "fin-cobranca-codigo-barras"){ state.finCobrancaCodigoBarras = t.value; return; }
     if(t.id === "fin-cobranca-link-cartao"){ state.finCobrancaLinkCartao = t.value; return; }
+    // Campos da janela "Renovar contrato": só guardam o valor (o recálculo vem no "change")
+    if(t.dataset && t.dataset.renovField){
+      if(t.type === "date" && t.value && !contratoDataPlausivel(t.value)) return;
+      state.renovacao[t.dataset.renovField] = t.value;
+      return;
+    }
     // Campos do contrato: guardam o valor sem re-renderizar, senão o
     // cursor pula pra fora do input a cada tecla. O recálculo (parcelas,
     // término) acontece no "change", quando a pessoa sai do campo.
@@ -12262,6 +12821,34 @@ function bindEvents(){
       }
       return;
     }
+    if(t.dataset && t.dataset.renovPick){
+      if(t.value) abrirRenovacaoDoAluno(t.value, "", "6");
+      return;
+    }
+    if(t.dataset && t.dataset.renovField){
+      if(t.type === "date" && t.value && !contratoDataPlausivel(t.value)) return;
+      const r = state.renovacao;
+      if(t.dataset.renovField === "matriculaId"){
+        // trocou o contrato: puxa curso e término dele (ou limpa pra informar na mão)
+        const o = (r.opcoes || []).find(x => x.id === t.value);
+        r.matriculaId = o ? o.id : "";
+        r.curso = o ? o.curso : "";
+        r.terminoAtual = o ? o.termino : "";
+        renovacaoRecalcular(r);
+        r.erro = "";
+        render();
+        return;
+      }
+      r[t.dataset.renovField] = t.value;
+      if(["meses", "mesesCustom", "terminoAtual"].includes(t.dataset.renovField)) renovacaoRecalcular(r);
+      r.erro = "";
+      if(t.type === "date" && document.activeElement === t){
+        t.addEventListener("blur", () => setTimeout(renderPreservandoFoco, 0), { once: true });
+      } else {
+        renderPreservandoFoco();
+      }
+      return;
+    }
     if(t.dataset && t.dataset.contratoField){
       // Campo de data: o navegador dispara "change" a cada dígito do ano
       // (0002, 0020, 0202, 2026...). Ignora anos incompletos/absurdos pra
@@ -12457,6 +13044,24 @@ function bindEvents(){
         break;
       case "busca-limpar":
         state.buscaModulo = "";
+        render();
+        break;
+
+      case "busca-comando-limpar":
+        state.buscaModuloComando = "";
+        render();
+        break;
+
+      case "busca-popup-open":
+        state.buscaModuloPopup = true;
+        state.buscaModuloComando = state.buscaModulo || "";
+        render();
+        setTimeout(() => document.getElementById("busca-modulo-comando-input")?.focus(), 0);
+        break;
+
+      case "busca-popup-fechar":
+        state.buscaModuloPopup = false;
+        state.buscaModuloComando = "";
         render();
         break;
 
@@ -14342,7 +14947,43 @@ function bindEvents(){
         break;
       }
 
+      case "set-contratos-tab":
+        state.contratosTab = el.dataset.key;
+        if(el.dataset.key === "renovar" || el.dataset.key === "novo-curso") garantirPessoasDaUnidade();
+        render();
+        break;
+
+      case "renov-filtro":
+        state.renovFiltro = el.dataset.key === "todos" ? "todos" : "atencao";
+        render();
+        break;
+
+      case "renovar-abrir":
+        abrirRenovacaoDoAluno(el.dataset.aluno, el.dataset.mat, el.dataset.meses);
+        break;
+
+      case "renov-fechar":
+        if(state.renovacao.salvando) break;
+        state.renovacao = renovacaoEstadoInicial();
+        render();
+        break;
+
+      case "renov-financeiro":
+        state.renovacao.lancarFinanceiro = !state.renovacao.lancarFinanceiro;
+        render();
+        break;
+
+      case "renov-salvar":
+        await salvarRenovacao();
+        break;
+
+      case "novo-curso-abrir":
+        await abrirNovoCurso(el.dataset.id);
+        break;
+
       case "abrir-contrato-modal": {
+        // vindo de um "novo curso", começa um formulário limpo
+        if(state.contrato.novoCurso) state.contrato = contratoEstadoInicial();
         const c = state.contrato;
         c.aberto = true;
         c.erro = "";
@@ -14366,8 +15007,9 @@ function bindEvents(){
       }
 
       case "fechar-contrato-modal":
-        state.contrato.aberto = false;
-        state.contrato.erro = "";
+        // o rascunho do contrato normal é mantido; o de "novo curso" não
+        if(state.contrato.novoCurso){ state.contrato = contratoEstadoInicial(); }
+        else { state.contrato.aberto = false; state.contrato.erro = ""; }
         render();
         break;
 
@@ -14455,7 +15097,7 @@ function bindEvents(){
           state.instituicaoMensagem += " ATENÇÃO: não consegui guardar a cópia de backup — salve o PDF na aba que abriu.";
         }
 
-        if(!c.criarAcessos){
+        if(!c.criarAcessos && !c.novoCurso){
           c.aberto = false;
           render();
           break;
@@ -14463,7 +15105,7 @@ function bindEvents(){
 
         c.salvandoAcessos = true;
         c.resultadoAcessos = null;
-        contratoSugerirAcessos(c, emailsUsadosDaUnidade());  // só completa o que estiver em branco
+        if(!c.novoCurso) contratoSugerirAcessos(c, emailsUsadosDaUnidade());  // só completa o que estiver em branco
         render();
         try {
           c.resultadoAcessos = await criarCadastrosDoContrato(c);

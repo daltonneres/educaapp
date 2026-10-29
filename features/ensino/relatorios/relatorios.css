@@ -1,0 +1,36 @@
+/* Módulo de relatórios */
+.feature-empty-state {
+  display: grid;
+  place-items: center;
+  min-height: 220px;
+  text-align: center;
+  padding: 28px 18px;
+  border: 1px dashed rgba(18, 32, 50, 0.18);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--ink);
+}
+
+.feature-empty-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 16px;
+  background: rgba(44, 127, 255, 0.08);
+  color: var(--primary);
+  margin-bottom: 12px;
+}
+
+.feature-empty-state h3 {
+  margin: 0 0 8px;
+  font-size: 1.2rem;
+}
+
+.feature-empty-state p {
+  margin: 0;
+  max-width: 520px;
+  line-height: 1.55;
+  color: var(--ink-soft);
+}

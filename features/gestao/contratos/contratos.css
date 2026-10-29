@@ -158,3 +158,45 @@
   font-size: 12.5px; line-height: 1.4; color: #5b4a1e;
 }
 .import-contrato-faltando svg { width: 14px; height: 14px; flex-shrink: 0; margin-top: 1px; color: #c9a24a; }
+
+/* ---------------- Abas da tela Contratos ---------------- */
+.contratos-subtabs { margin: 4px 0 16px; flex-wrap: wrap; }
+.subtab-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 18px; height: 18px; padding: 0 5px; margin-left: 6px;
+  border-radius: 999px; background: rgba(18,32,50,.10); color: var(--ink);
+  font-size: 11px; font-weight: 800; line-height: 1;
+}
+.subtab-badge.is-alerta { background: #c4544a; color: #fff; }
+.contrato-vazio { margin: 0; color: var(--slate); font-size: 13.5px; }
+
+/* ---------------- Renovações ---------------- */
+.renov-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 14px; margin-bottom: 12px; }
+.renov-toolbar .search-wrap { flex: 1 1 260px; max-width: 420px; }
+.renov-filtros { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.renov-filtro {
+  padding: 6px 12px; border-radius: 999px; font-size: 12.5px; font-weight: 700; cursor: pointer;
+  border: 1px solid rgba(18,32,50,.18); background: #fff; color: var(--slate);
+}
+.renov-filtro.active { background: rgba(201,162,74,.16); border-color: var(--gold); color: var(--gold-deep); }
+.renov-pill {
+  display: inline-flex; align-items: center; padding: 2px 9px; border-radius: 999px;
+  font-size: 12px; font-weight: 700; background: rgba(18,32,50,.07); color: var(--slate);
+}
+.renov-pill.is-vencido { background: #fdf1ef; color: #b23b30; }
+.renov-pill.is-vencendo { background: #fff6e3; color: #9a6a12; }
+.renov-pill.is-ok { background: rgba(31,157,85,.12); color: #17803f; }
+.renov-historico { color: var(--slate); font-size: 12px; }
+.renov-modal .contrato-campo input[readonly] { background: rgba(18,32,50,.05); color: var(--slate); cursor: default; }
+
+/* ---------------- Novo curso para aluno existente ---------------- */
+.contrato-novo-curso-aviso {
+  margin: 0 0 10px; padding: 9px 12px; border-radius: 10px;
+  background: #eef6ff; border: 1px solid #cfe3f7; color: #24476b;
+  font-size: 12.5px; line-height: 1.45;
+}
+.contrato-modal .contrato-campo input[readonly] { background: rgba(18,32,50,.05); color: var(--slate); cursor: default; }
+.novo-curso-cursos { color: var(--slate); font-size: 12.5px; }
+
+/* seletor "Renovar um aluno específico" */
+.renov-escolher { margin: 0 0 14px; padding: 12px; border-radius: 12px; background: rgba(201,162,74,.08); border: 1px solid rgba(201,162,74,.28); }

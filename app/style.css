@@ -2950,3 +2950,79 @@ button.ini-linha:hover { border-color: var(--gold); background: rgba(201, 162, 7
     .ini-card-big { font-size: 22px; }
     .ini-relogio { font-size: 24px; }
 }
+
+.busca-mod { position: relative; }
+.busca-mod-campo { position: relative; }
+.busca-mod-campo-popup { margin-bottom: 10px; }
+.busca-mod-atalho {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 1px solid var(--gold);
+  background: rgba(201, 162, 74, 0.10);
+  color: var(--gold-deep);
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.busca-mod-atalho:hover { background: rgba(201, 162, 74, 0.18); }
+
+.busca-mod-popup-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.44);
+  display: grid;
+  place-items: center;
+  z-index: 70;
+  padding: 18px;
+}
+.busca-mod-popup {
+  width: min(680px, 92vw);
+  background: #fff;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 20px;
+  box-shadow: 0 26px 70px rgba(15, 23, 42, 0.22);
+  padding: 20px;
+  max-height: 76vh;
+  overflow: auto;
+}
+.busca-mod-popup-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.busca-mod-popup-head h3 {
+  margin: 4px 0 0;
+  font-size: 22px;
+  color: var(--ink);
+  font-family: var(--font-display);
+}
+.busca-mod-lista-popup { max-height: 46vh; overflow: auto; margin-top: 8px; }
+
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid rgba(15, 23, 42, 0.10);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--slate);
+  cursor: pointer;
+}
+.btn-icon:hover { background: rgba(15, 23, 42, 0.05); }
+.btn-icon svg { width: 16px; height: 16px; }
+
+@media (max-width: 560px) {
+  .busca-mod-atalho { position: static; transform: none; margin: 8px 0 0 auto; }
+  .busca-mod-campo { padding-right: 0; }
+  .busca-mod-popup { padding: 16px; }
+}
