@@ -144,7 +144,7 @@ function moeda(n){
   return "R$" + num.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function numeroLimpo(v){
+export function numeroLimpo(v){
   if(typeof v === "number") return v;
   const s = String(v ?? "").trim().replace(/[^\d,.-]/g, "");
   if(!s) return 0;
@@ -2038,9 +2038,11 @@ export function importarContratosModal(state_, { cursos = [], turmas = [] } = {}
 /* ------------------------------------------------------------------
    Cada aluno guarda, no próprio cadastro, uma lista de "matrículas"
    (uma por curso): { id, curso, inicio, termino, meses, criadoEm,
-   renovacoes: [{ em, meses, de, ate, obs }] }. Renovar NÃO gera
-   contrato novo nem login novo: só estende o término (e, se quiser,
-   lança as mensalidades do período no Financeiro).
+   renovacoes: [{ em, meses, de, ate, obs, valorCurso, numParcelas,
+   valorParcela, reajustePct, contratoId }] }. Renovar estende o término,
+   deixa editar os valores (reajuste), gera o contrato renovado em PDF
+   (que volta pra "Aguardando assinatura") e, se quiser, lança as
+   mensalidades no Financeiro. Nunca cria login novo.
    ================================================================== */
 
 export const CONTRATOS_ABAS = [
@@ -2096,35 +2098,67 @@ export function renovacaoNovoTermino(terminoAtual, meses){
   return calcularTermino(isoMaisDias(terminoAtual, 1), meses);
 }
 
-/* Mensalidades do período renovado (uma por mês, a partir do mês seguinte
-   ao término atual). Sem valor ou sem dia de vencimento, devolve []. */
-export function renovacaoParcelas({ terminoAtual, meses, valor, diaVenc }){
-  const n = Number(meses) || 0;
-  const v = numeroLimpo(valor);
-  const dia = Math.min(Math.max(Number(diaVenc) || 0, 0), 31);
-  if(!terminoAtual || !n || !v || !dia) return [];
-  const [a, m] = isoMaisDias(terminoAtual, 1).split("-").map(Number);
-  if(!a || !m) return [];
+/* "350,5" / 350.5 -> "350,50" (o formato que os campos de valor esperam) */
+function valorCampo(n){
+  const v = Number(n);
+  if(!Number.isFinite(v) || v <= 0) return "";
+  return (Math.round(v * 100) / 100).toFixed(2).replace(".", ",");
+}
+
+/* Mensalidades do período renovado, a partir dos valores digitados na
+   renovação (valor inicial/demais, nº de parcelas e 1º vencimento).
+   Sem valor, sem parcelas ou sem vencimento, devolve []. */
+export function renovacaoParcelas(r){
+  const n = Math.max(0, Math.round(Number(r.numParcelas) || 0));
+  const demais = numeroLimpo(r.valorParcelaDemais);
+  const inicial = numeroLimpo(r.valorParcelaInicial) || demais;
+  const [a, m, d] = String(r.primeiroVencimento || "").split("-").map(Number);
+  if(!n || !demais || !a || !m || !d) return [];
+  const material = numeroLimpo(r.valorMaterial);
+  const qtdIni = (r.formatoValor === "curso-material" && material > 0)
+    ? Math.min(Math.max(Number(r.qtdParcelasIniciais) || 0, 0), n) : 0;
   const lista = [];
   for(let i = 0; i < n; i++){
     const dt = new Date(Date.UTC(a, m - 1 + i, 1));
     const ano = dt.getUTCFullYear(); const mes = dt.getUTCMonth() + 1;
     const ultimo = new Date(Date.UTC(ano, mes, 0)).getUTCDate();
     const competencia = `${ano}-${String(mes).padStart(2, "0")}`;
-    lista.push({ competencia, valor: v, vencimento: `${competencia}-${String(Math.min(dia, ultimo)).padStart(2, "0")}` });
+    lista.push({
+      competencia,
+      valor: i < qtdIni ? inicial : demais,
+      vencimento: `${competencia}-${String(Math.min(d, ultimo)).padStart(2, "0")}`,
+    });
   }
   return lista;
 }
 
 export function renovacaoEstadoInicial(){
   return {
-    aberto: false, erro: "", salvando: false,
+    aberto: false, erro: "", salvando: false, etapa: "",
     alunoId: "", alunoNome: "",
     matriculaId: "",            // vazio = sem vigência registrada (informa curso e término)
     opcoes: [],                 // contratos que o aluno já tem: [{ id, curso, termino }]
     curso: "", terminoAtual: "",
     meses: "6", mesesCustom: "", novoTermino: "",
-    lancarFinanceiro: false, valorParcela: "", diaVenc: "",
+    // ---- contrato novo (PDF) ----
+    gerarContrato: true,        // gera o PDF e deixa em "Aguardando assinatura"
+    base: null,                 // dados do contrato anterior (CPF, endereço, horário…) — ver script.js
+    baseCarregada: false,       // false enquanto está buscando o contrato anterior
+    baseSintetica: false,       // true = não achou contrato anterior; dados vieram só do cadastro
+    baseEhSegundo: false,       // o aluno era o 2º aluno do contrato anterior (irmãos)
+    baseFinanceiro: false,      // valores vieram da última mensalidade do Financeiro (sem contrato anterior com valores)
+    cnpj: "",
+    // ---- valores (editáveis — é aqui que entra o reajuste) ----
+    mensalidadeAnterior: 0,     // mensalidade do contrato anterior (número)
+    reajustePct: "",            // ex.: "5" = +5% sobre a mensalidade anterior
+    valorEditado: false,        // true = a pessoa digitou o valor do curso na mão
+    formatoValor: "total",
+    valorCurso: "", valorMaterial: "",
+    numParcelas: "", qtdParcelasIniciais: "3",
+    valorParcelaInicial: "", valorParcelaDemais: "",
+    formaPagamento: "BOLETO",
+    primeiroVencimento: "", vencEditado: false, diaVencPadrao: 10,
+    lancarFinanceiro: true,
     obs: "",
   };
 }
@@ -2134,22 +2168,159 @@ export function renovacaoMeses(r){
   return Number.isFinite(m) && m > 0 ? Math.round(m) : 0;
 }
 
-export function renovacaoRecalcular(r){
-  r.novoTermino = renovacaoNovoTermino(r.terminoAtual, renovacaoMeses(r));
+/* Vencimento padrão: no mês seguinte ao término atual, no dia que o
+   contrato anterior já usava (ou dia 10). */
+function renovacaoVencimentoPadrao(r){
+  const ini = isoMaisDias(r.terminoAtual, 1);
+  const [a, m] = ini.split("-").map(Number);
+  if(!a || !m) return "";
+  const dia = Math.min(Math.max(Number(r.diaVencPadrao) || 10, 1), 31);
+  const no = (ano, mes) => {   // mes 1-12 (aceita 13 = janeiro do ano seguinte)
+    const dt = new Date(Date.UTC(ano, mes - 1, 1));
+    const ultimo = new Date(Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth() + 1, 0)).getUTCDate();
+    return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}-${String(Math.min(dia, ultimo)).padStart(2, "0")}`;
+  };
+  const candidato = no(a, m);
+  // se o dia do vencimento cai ANTES do início do período renovado, vai pro mês seguinte
+  return candidato < ini ? no(a, m + 1) : candidato;
+}
+
+/* Preenche os valores da renovação a partir do contrato anterior. */
+export function renovacaoAplicarBase(r, base){
+  r.base = base || null;
+  r.baseCarregada = true;
+  const b = base || {};
+  if(b.cnpj) r.cnpj = b.cnpj;
+  r.formatoValor = b.formatoValor || r.formatoValor || "total";
+  if(b.formaPagamento) r.formaPagamento = String(b.formaPagamento).toUpperCase();
+  if(b.qtdParcelasIniciais) r.qtdParcelasIniciais = String(b.qtdParcelasIniciais);
+  const dia = Number(String(b.primeiroVencimento || "").slice(8, 10));
+  if(dia >= 1 && dia <= 31) r.diaVencPadrao = dia;
+
+  // mensalidade anterior = parcela "demais" (sem o material); se faltar, curso ÷ parcelas
+  let mens = numeroLimpo(b.valorParcelaDemais);
+  if(!mens){
+    const n = Number(b.numParcelas) || contratoMeses(b);
+    if(n) mens = numeroLimpo(b.valorCurso) / n;
+  }
+  r.mensalidadeAnterior = Math.round(mens * 100) / 100;
+  r.valorEditado = false;
+  r.valorMaterial = "";   // material normalmente não se repete na renovação; preencha se for cobrar
+  renovacaoRecalcular(r, "base");
   return r;
 }
 
-export function renovacaoValidar(r){
+/* Recalcula o que dá pra deduzir. `origem` diz o que mudou:
+   "meses" | "terminoAtual" | "reajuste" | "valor" | "parcela" | "base". */
+export function renovacaoRecalcular(r, origem = ""){
+  const meses = renovacaoMeses(r);
+  r.novoTermino = renovacaoNovoTermino(r.terminoAtual, meses);
+  if(origem === "parcela") return r;
+
+  // valor do curso = mensalidade anterior × (1 + reajuste) × meses, enquanto não for digitado na mão
+  if(r.mensalidadeAnterior && meses && !r.valorEditado){
+    const fator = 1 + (numeroLimpo(r.reajustePct) || 0) / 100;
+    r.valorCurso = valorCampo(r.mensalidadeAnterior * fator * meses);
+  }
+
+  const forcar = origem === "meses" || origem === "reajuste" || origem === "base" || !r.numParcelas;
+  const molde = {
+    ...r, tipoPagamento: "parcelado", duracao: String(meses || ""), duracaoCustom: "", dataInicio: "",
+  };
+  contratoRecalcular(molde, { forcarParcelas: forcar });
+  r.numParcelas = molde.numParcelas;
+  r.valorParcelaInicial = molde.valorParcelaInicial;
+  r.valorParcelaDemais = molde.valorParcelaDemais;
+
+  if(!r.vencEditado) r.primeiroVencimento = renovacaoVencimentoPadrao(r);
+  return r;
+}
+
+/* Grava um campo digitado/escolhido na janela e devolve a "origem" pra
+   renovacaoRecalcular ("" = não precisa recalcular). Campos "base.xxx"
+   são dados do contratante (CPF, responsável…) que vão pro contrato. */
+export function renovacaoSetCampo(r, campo, valor){
+  if(String(campo).startsWith("base.")){
+    r.base = r.base || {};
+    r.base[String(campo).slice(5)] = valor;
+    return "";
+  }
+  r[campo] = valor;
+  switch(campo){
+    case "meses": case "mesesCustom": return "meses";
+    case "terminoAtual": return "terminoAtual";
+    case "reajustePct": r.valorEditado = false; return "reajuste";
+    case "valorCurso": r.valorEditado = true; return "valor";
+    case "valorMaterial": case "numParcelas": case "qtdParcelasIniciais": case "formatoValor": return "valor";
+    case "valorParcelaInicial": case "valorParcelaDemais": return "parcela";
+    case "primeiroVencimento": r.vencEditado = true; return "";
+    default: return "";
+  }
+}
+
+/* Monta o formulário de contrato (o mesmo do "Gerar contrato") da renovação:
+   dados do contratante vêm do contrato anterior; período e valores, da janela. */
+const NAO_COPIAR_DO_ANTERIOR = new Set([
+  "aberto", "erro", "salvandoAcessos", "resultadoAcessos", "criarAcessos",
+  "emailAluno", "senhaAluno", "emailAluno2", "senhaAluno2", "emailResp", "senhaResp",
+  "novoCurso", "alunoExistenteId", "turmaId",
+  "pixCopiaCola", "codigoBarras", "primeiraParcelaPaga", "primeiraParcelaMes", "primeiraParcelaData",
+  "dataInicio", "dataTermino", "dataAssinatura", "primeiroVencimento",
+]);
+
+export function contratoDeRenovacao(r, { hoje = "" } = {}){
+  const c = contratoEstadoInicial();
+  if(r.cnpj) contratoAplicarEmpresa(c, r.cnpj);
+  const b = r.base || {};
+  Object.keys(c).forEach(k => {
+    if(NAO_COPIAR_DO_ANTERIOR.has(k)) return;
+    if(b[k] !== undefined && b[k] !== null && b[k] !== "") c[k] = JSON.parse(JSON.stringify(b[k]));
+  });
+  if(r.baseEhSegundo){   // o contrato anterior era de irmãos e este aluno era o 2º
+    c.alunoNome = b.aluno2Nome || r.alunoNome; c.alunoCpf = b.aluno2Cpf || "";
+    c.alunoRg = b.aluno2Rg || ""; c.alunoNascimento = b.aluno2Nascimento || "";
+    c.contatoAluno = b.contatoAluno2 || "";
+  }
+  c.segundoAluno = false;
+  c.aluno2Nome = ""; c.aluno2Cpf = ""; c.aluno2Rg = ""; c.aluno2Nascimento = ""; c.contatoAluno2 = "";
+  if(Array.isArray(c.respsExtras)) c.respsExtras = c.respsExtras.map(x => ({ ...x, email: "", senha: "" }));
+
+  if(!c.alunoNome) c.alunoNome = r.alunoNome;
+  c.cnpj = r.cnpj || c.cnpj;
+  c.curso = r.curso;
+  c.duracao = String(renovacaoMeses(r)); c.duracaoCustom = "";
+  c.dataInicio = isoMaisDias(r.terminoAtual, 1);
+  c.dataTermino = r.novoTermino;
+  c.tipoPagamento = "parcelado";
+  c.formatoValor = r.formatoValor || "total";
+  c.valorCurso = r.valorCurso; c.valorMaterial = r.valorMaterial;
+  c.numParcelas = r.numParcelas; c.qtdParcelasIniciais = r.qtdParcelasIniciais;
+  c.valorParcelaInicial = r.valorParcelaInicial; c.valorParcelaDemais = r.valorParcelaDemais;
+  c.formaPagamento = r.formaPagamento || "BOLETO";
+  c.primeiroVencimento = r.primeiroVencimento;
+  c.dataAssinatura = hoje || c.dataAssinatura;
+  c.criarAcessos = false;
+  return c;
+}
+
+export function renovacaoValidar(r, { hoje = "" } = {}){
   if(!r.alunoId) return "Aluno não encontrado. Feche e abra de novo.";
   if(!String(r.curso || "").trim()) return "Escolha o curso que está sendo renovado.";
   if(!r.terminoAtual || !contratoDataPlausivel(r.terminoAtual)) return "Informe o término atual do contrato.";
   if(!renovacaoMeses(r)) return "Escolha por quanto tempo renovar.";
   if(!r.novoTermino || !contratoDataPlausivel(r.novoTermino)) return "Confira o novo término.";
   if(r.novoTermino <= r.terminoAtual) return "O novo término precisa ser depois do término atual.";
-  if(r.lancarFinanceiro){
-    if(!numeroLimpo(r.valorParcela)) return "Informe o valor da mensalidade para lançar no Financeiro.";
-    const dia = Number(r.diaVenc);
-    if(!(dia >= 1 && dia <= 31)) return "Informe o dia do vencimento (de 1 a 31).";
+  if(r.gerarContrato || r.lancarFinanceiro){
+    if(!numeroLimpo(r.valorCurso)) return "Informe o valor do curso (ou a mensalidade) da renovação.";
+    if(!(Number(r.numParcelas) >= 1)) return "Informe em quantas parcelas o valor será dividido.";
+    if(!numeroLimpo(r.valorParcelaDemais)) return "Informe o valor da parcela.";
+    if(!r.primeiroVencimento || !contratoDataPlausivel(r.primeiroVencimento)) return "Informe o 1º vencimento.";
+  }
+  if(r.gerarContrato){
+    if(!r.baseCarregada) return "Aguarde: ainda estou buscando os dados do contrato anterior.";
+    if(!r.cnpj) return "Escolha o CNPJ da empresa que vai assinar o contrato.";
+    const problema = contratoValidar(contratoDeRenovacao(r, { hoje }));
+    if(problema) return `Dados do contratante: ${problema}`;
   }
   return "";
 }
@@ -2172,23 +2343,46 @@ function selectRenov(label, field, valor, opcoes, { largura = "" } = {}){
     </label>`;
 }
 
-/* Janela "Renovar contrato". Sem contrato novo, sem login novo. */
+/* Janela "Renovar contrato": estende a vigência, deixa editar os valores
+   (reajuste) e gera o contrato novo em PDF, que volta pra assinatura. */
 export function renovacaoModal(r, { cursos = [] } = {}){
   if(!r || !r.aberto) return "";
   const manual = !r.matriculaId;
   const meses = renovacaoMeses(r);
-  const parcelas = r.lancarFinanceiro
-    ? renovacaoParcelas({ terminoAtual: r.terminoAtual, meses, valor: r.valorParcela, diaVenc: r.diaVenc }) : [];
+  const b = r.base || {};
+  const parcelas = (r.gerarContrato || r.lancarFinanceiro) ? renovacaoParcelas(r) : [];
   const listaCursos = cursos.length ? cursos : ["Inglês", "Recreação", "Robótica", "Informática"];
   const opcoesCurso = [{ valor: "", texto: "— escolha o curso —" }]
     .concat(listaCursos.map(x => ({ valor: x, texto: x })));
+  const comMaterial = r.formatoValor === "curso-material" && numeroLimpo(r.valorMaterial) > 0;
+  const total = numeroLimpo(r.valorCurso) + numeroLimpo(r.valorMaterial);
 
   const resumo = r.terminoAtual && r.novoTermino ? `
     <p class="contrato-resumo">
       Vigência atual até <b>${esc(dataBr(r.terminoAtual))}</b> → nova vigência até <b>${esc(dataBr(r.novoTermino))}</b>
-      (${meses} ${meses === 1 ? "mês" : "meses"}).<br />
-      Mantém o contrato, o cadastro e os logins que o aluno já tem — nada novo é criado.
+      (${meses} ${meses === 1 ? "mês" : "meses"}).
     </p>` : "";
+
+  const resumoValores = parcelas.length ? `
+    <p class="contrato-resumo" style="margin-top:8px;">
+      Total <b>${moeda(total)}</b> em <b>${parcelas.length}</b> parcelas
+      ${comMaterial && parcelas[0].valor !== parcelas[parcelas.length - 1].valor
+        ? `(as primeiras de <b>${moeda(parcelas[0].valor)}</b>, as demais de <b>${moeda(parcelas[parcelas.length - 1].valor)}</b>)`
+        : `de <b>${moeda(parcelas[0].valor)}</b>`},
+      de <b>${esc(parcelas[0].competencia.split("-").reverse().join("/"))}</b> a <b>${esc(parcelas[parcelas.length - 1].competencia.split("-").reverse().join("/"))}</b>.
+    </p>` : "";
+
+  const avisoBase = !r.gerarContrato ? "" : !r.baseCarregada
+    ? `<p class="renov-aviso">Buscando os dados do contrato anterior…</p>`
+    : r.baseSintetica
+      ? `<p class="renov-aviso is-alerta">Não achei contrato anterior gerado pelo sistema para este aluno. CPF, endereço e horário podem sair em branco — confira e complete em “Dados do contratante” abaixo.</p>`
+      : `<p class="renov-aviso">Dados do contratante, horário e dias de aula vêm do contrato anterior${r.baseEhSegundo ? " (o anterior era de irmãos; este novo sai só para este aluno)" : ""}.</p>`;
+
+  const empresasOpcoes = [{ valor: "", texto: "— escolha o CNPJ —" }]
+    .concat(EMPRESAS.map(e => ({ valor: e.cnpj, texto: `${e.cnpj} · ${e.cidade}` })));
+
+  const faltaContratante = r.gerarContrato && r.baseCarregada
+    && (!(b.respNome || "").trim() && !b.semResponsavel || !(b.alunoCpf || "").trim());
 
   return `
   <div class="aluno-modal-backdrop" data-action="renov-fechar">
@@ -2235,25 +2429,70 @@ export function renovacaoModal(r, { cursos = [] } = {}){
       </div>
 
       <div class="aluno-modal-section">
-        <h3 class="teacher-label">3. Financeiro (opcional)</h3>
+        <h3 class="teacher-label">3. Valores da renovação (reajuste)</h3>
+        ${r.mensalidadeAnterior
+          ? `<p class="section-eyebrow" style="margin:0 0 8px;">${r.baseFinanceiro ? "Última mensalidade lançada no Financeiro" : "Mensalidade do contrato anterior"}: <b>${moeda(r.mensalidadeAnterior)}</b>. Digite o reajuste em % e o valor é recalculado — ou digite os valores direto, que valem os que estiverem na tela.</p>`
+          : `<p class="section-eyebrow" style="margin:0 0 8px;">Não achei a mensalidade anterior. Informe os valores da renovação.</p>`}
+        <div class="contrato-linha">
+          ${campoRenov("Reajuste (%)", "reajustePct", r.reajustePct, { largura: "130px", placeholder: "ex.: 5" })}
+          ${campoRenov("Valor do curso no período (R$)", "valorCurso", r.valorCurso, { largura: "200px", placeholder: "4.200,00" })}
+          ${campoRenov("Material (R$, se cobrar)", "valorMaterial", r.valorMaterial, { largura: "170px", placeholder: "0,00" })}
+        </div>
+        <div class="contrato-linha">
+          ${campoRenov("Nº de parcelas", "numParcelas", r.numParcelas, { largura: "120px" })}
+          ${comMaterial ? campoRenov("Parcelas iniciais (com material)", "qtdParcelasIniciais", r.qtdParcelasIniciais, { largura: "190px" }) : ""}
+          ${comMaterial ? campoRenov("Valor das parcelas iniciais (R$)", "valorParcelaInicial", r.valorParcelaInicial, { largura: "200px" }) : ""}
+          ${campoRenov(comMaterial ? "Valor das demais parcelas (R$)" : "Valor da parcela (R$)", "valorParcelaDemais", r.valorParcelaDemais, { largura: "190px" })}
+        </div>
+        <div class="contrato-linha">
+          ${campoRenov("1º vencimento", "primeiroVencimento", r.primeiroVencimento, { tipo: "date", largura: "170px" })}
+          ${selectRenov("Forma de pagamento", "formaPagamento", r.formaPagamento, [
+            { valor: "BOLETO", texto: "Boleto" }, { valor: "PIX", texto: "Pix" },
+            { valor: "CARTÃO", texto: "Cartão" }, { valor: "DINHEIRO", texto: "Dinheiro" },
+          ], { largura: "160px" })}
+          ${selectRenov("Modelo de valor", "formatoValor", r.formatoValor || "total", [
+            { valor: "total", texto: "Parcelas iguais" },
+            { valor: "curso-material", texto: "Curso + material (parcelas iniciais maiores)" },
+          ], { largura: "260px" })}
+        </div>
+        ${resumoValores}
+      </div>
+
+      <div class="aluno-modal-section">
+        <h3 class="teacher-label">4. Contrato e Financeiro</h3>
         <label class="responsavel-vinculo-item" style="margin-bottom:8px;">
+          <input type="checkbox" data-action="renov-gerar-contrato" ${r.gerarContrato ? "checked" : ""} />
+          <span>Gerar o contrato renovado em PDF e mandar para <b>Aguardando assinatura</b> (com backup no sistema e cópia neste computador)</span>
+        </label>
+        ${r.gerarContrato ? `
+          ${avisoBase}
+          ${!b.cnpj ? `<div class="contrato-linha">${selectRenov("CNPJ da empresa", "cnpj", r.cnpj, empresasOpcoes, { largura: "320px" })}</div>` : `<p class="section-eyebrow" style="margin:0 0 8px;">Empresa: <b>${esc(r.cnpj)}</b></p>`}
+          <details class="renov-contratante" ${faltaContratante || r.baseSintetica ? "open" : ""}>
+            <summary>Dados do contratante (conferir)</summary>
+            <div class="contrato-linha" style="margin-top:8px;">
+              ${campoRenov("Responsável", "base.respNome", b.respNome, { largura: "240px" })}
+              ${campoRenov("CPF do responsável", "base.respCpf", b.respCpf, { largura: "170px" })}
+              ${campoRenov("CPF do aluno", "base.alunoCpf", b.alunoCpf, { largura: "170px" })}
+            </div>
+            <div class="contrato-linha">
+              ${campoRenov("Endereço do aluno", "base.alunoEndereco", b.alunoEndereco, { largura: "260px" })}
+              ${campoRenov("Nº", "base.alunoNumero", b.alunoNumero, { largura: "80px" })}
+              ${campoRenov("Bairro", "base.alunoBairro", b.alunoBairro, { largura: "160px" })}
+            </div>
+          </details>` : `<p class="section-eyebrow" style="margin:0 0 8px;">Desmarcado: nenhum contrato novo é gerado; só a vigência é estendida.</p>`}
+        <label class="responsavel-vinculo-item" style="margin:10px 0 0;">
           <input type="checkbox" data-action="renov-financeiro" ${r.lancarFinanceiro ? "checked" : ""} />
           <span>Lançar as mensalidades do período renovado no Financeiro do aluno</span>
         </label>
-        ${r.lancarFinanceiro ? `
-          <div class="contrato-linha">
-            ${campoRenov("Valor da mensalidade (R$)", "valorParcela", r.valorParcela, { largura: "190px", placeholder: "350,00" })}
-            ${campoRenov("Dia do vencimento", "diaVenc", r.diaVenc, { largura: "150px", placeholder: "10" })}
-          </div>
-          ${parcelas.length ? `<p class="contrato-resumo" style="margin-top:6px;">Serão lançadas <b>${parcelas.length}</b> mensalidades pendentes, de <b>${esc(parcelas[0].competencia.split("-").reverse().join("/"))}</b> a <b>${esc(parcelas[parcelas.length - 1].competencia.split("-").reverse().join("/"))}</b>, de ${moeda(parcelas[0].valor)} cada. Meses que já têm cobrança não são duplicados.</p>` : ""}
-        ` : `<p class="section-eyebrow" style="margin:0;">Desmarcado: só a vigência é estendida; as mensalidades você lança como já faz hoje.</p>`}
+        ${r.lancarFinanceiro ? `<p class="section-eyebrow" style="margin:6px 0 0;">Meses que já têm cobrança não são duplicados.</p>` : ""}
       </div>
 
       ${r.erro ? `<p class="teacher-error" style="color:var(--red,#C4544A);font-size:12.5px;margin:0 0 8px;">${esc(r.erro)}</p>` : ""}
+      ${r.salvando && r.etapa ? `<p class="section-eyebrow" style="margin:0 0 8px;">${esc(r.etapa)}</p>` : ""}
 
       <div class="contrato-acoes">
-        <button type="button" class="teacher-primary-btn" data-action="renov-salvar" ${r.salvando ? "disabled" : ""}>${r.salvando ? "Salvando…" : "Confirmar renovação"}</button>
-        <button type="button" class="teacher-primary-btn" style="background:transparent;color:var(--slate);border:1px solid rgba(18,32,50,.18);" data-action="renov-fechar">Cancelar</button>
+        <button type="button" class="teacher-primary-btn" data-action="renov-salvar" ${r.salvando ? "disabled" : ""}>${r.salvando ? "Salvando…" : (r.gerarContrato ? "Confirmar e gerar contrato" : "Confirmar renovação")}</button>
+        <button type="button" class="teacher-primary-btn" style="background:transparent;color:var(--slate);border:1px solid rgba(18,32,50,.18);" data-action="renov-fechar" ${r.salvando ? "disabled" : ""}>Cancelar</button>
       </div>
     </div>
   </div>`;

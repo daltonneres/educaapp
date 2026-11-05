@@ -110,7 +110,7 @@
      notas: { [nomeAluno]: number }   // só entra quem tem nota lançada
      atualizadoEm
 
-   certificadosAluno/{turmaId_modulo_nomeDoAluno}   (certificado de um módulo,
+   certificadosAluno/{turmaId_livro_ano_nomeDoAluno}   (certificado de um livro,
                                 anexado pela secretaria ou pelo professor —
                                 hoje, um link do Drive. Recreação não entra
                                 aqui: não tem módulo pra certificar. Mesmo
@@ -118,7 +118,8 @@
                                 notasAluno, pra reanexar o mesmo módulo do
                                 mesmo aluno atualizar em vez de duplicar)
      alunoKey, alunoNome, escolaId, turmaId, turmaNome, disciplina
-     modulo (ex.: "Módulo 1"), link (URL do Drive)
+     livro (ex.: "Guess What 2"), ano (2020 em diante), link (URL do Drive)
+     modulo (cópia do livro, só pra registros antigos continuarem legíveis)
      anexadoPorId, anexadoPorNome, atualizadoEm
 
    notasAluno/{atividadeId_nomeDoAluno}   (cópia "por aluno" de cada nota
@@ -272,7 +273,26 @@ import {
   renovacaoValidar,
   renovacaoParcelas,
   renovacaoModal,
+  renovacaoAplicarBase,
+  renovacaoSetCampo,
+  contratoDeRenovacao,
+  numeroLimpo,
 } from "../features/gestao/contratos/contratos.js";
+import {
+  nomeSeguro,
+  nomeArquivoContrato,
+  htmlParaPdfFile,
+  guardarCopiaLocal,
+  resumoCopiaLocal,
+  pastaSuportada,
+  escolherPasta,
+  removerPasta,
+  prepararPasta,
+  resumoLocal,
+  exportarTudoParaPasta,
+  listarCopiasLocais,
+  baixarCopiaLocal,
+} from "../features/gestao/contratos/contratos-local.js";
 import {
   calendarioHtml,
   eventoFormModalHtml,
@@ -1826,6 +1846,8 @@ const state = {
   renovFiltro: "atencao",                // "atencao" (vencidos e a vencer) | "todos"
   renovBusca: "",
   novoCursoBusca: "",
+  // Cópia local dos contratos (pasta do computador + IndexedDB) — ver contratos-local.js
+  contratoLocal: { carregado: false, carregando: false, total: 0, bytes: 0, pasta: "", suportado: true, msg: "" },
 
   // Aba "Contratos" > "Importar contratos": lê vários
   // PDFs de uma vez, tenta reconhecer os dados de cada um e mostra uma
@@ -1855,7 +1877,8 @@ const state = {
   certCarregando: false,
   certErro: "",
   certFormAlunoNome: null,         // aluno com o formulário de "novo certificado" aberto
-  certFormModulo: "",
+  certFormLivro: "",
+  certFormAno: "",                 // ano escolhido no formulário (padrão: ano atual)
   certFormLink: "",
   certFormErro: "",
   certSalvando: false,
@@ -2421,6 +2444,9 @@ function normalizarMatriculas(lista){
     renovacoes: Array.isArray(m.renovacoes) ? m.renovacoes.map(r => ({
       em: String(r?.em || ""), meses: Number(r?.meses) || 0,
       de: String(r?.de || ""), ate: String(r?.ate || ""), obs: String(r?.obs || ""),
+      valorCurso: Number(r?.valorCurso) || 0, numParcelas: Number(r?.numParcelas) || 0,
+      valorParcela: Number(r?.valorParcela) || 0, reajustePct: Number(r?.reajustePct) || 0,
+      contratoId: String(r?.contratoId || ""),
     })) : [],
   }));
 }
@@ -4059,8 +4085,8 @@ function certificadosView(student, ehResponsavel){
     ? cache.registros.map(c => `
       <div class="row">
         <div>
-          <strong style="display:block;font-size:14px;color:var(--ink);">${escapeHtml(c.modulo)}</strong>
-          <span style="font-size:12px;color:var(--slate);">Anexado em ${escapeHtml((c.atualizadoEm || "").slice(0, 10))}</span>
+          <strong style="display:block;font-size:14px;color:var(--ink);">${escapeHtml(c.livro || c.modulo || "")}${c.ano ? ` · ${escapeHtml(String(c.ano))}` : ""}</strong>
+          <span style="font-size:12px;color:var(--slate);">${c.turmaNome ? `${escapeHtml(c.turmaNome)} · ` : ""}Anexado em ${escapeHtml((c.atualizadoEm || "").slice(0, 10))}</span>
         </div>
         <a class="attendance-btn" style="text-decoration:none;" href="${escapeHtml(c.link)}" target="_blank" rel="noopener">${ICONS.award} Ver certificado</a>
       </div>`).join("")
@@ -4412,8 +4438,17 @@ async function carregarBoletimDoAluno(student, forcar = false){
    mesmo padrão de "notasAluno"/"presencasAluno": id determinístico (pra
    reanexar o mesmo módulo do mesmo aluno atualizar em vez de duplicar) e
    alunoKey pra quem lê do lado do aluno/responsável. */
-function certificadoDocId(turmaId, modulo, alunoNome){
-  return `${turmaId}_${slugNome(modulo, "modulo")}_${slugNome(alunoNome, "aluno")}`;
+function certificadoDocId(turmaId, livro, ano, alunoNome){
+  return `${turmaId}_${slugNome(livro, "livro")}_${ano}_${slugNome(alunoNome, "aluno")}`;
+}
+
+/* Anos que a escola pode escolher ao registrar um certificado: de 2020 até
+   o ano que vem (a escola também lança certificados antigos). */
+function anosParaCertificado(){
+  const fim = new Date().getFullYear() + 1;
+  const anos = [];
+  for(let a = fim; a >= 2020; a--) anos.push(a);
+  return anos;
 }
 
 /* Todos os certificados já anexados pra uma turma (usado do lado de quem
@@ -4426,13 +4461,17 @@ async function carregarCertificadosDaTurma(turma, forcar = false){
   state.certErro = "";
   render();
   try {
-    const snap = await getDocs(query(collection(db, "certificadosAluno"), where("turmaId", "==", turma.id)));
+    // Filtra por escolaId também: as regras do Firestore só liberam a consulta
+    // quando provam que todos os resultados são da escola de quem está logado
+    // (mesmo padrão das outras coleções — ver carregarTurmasDoProfessorGestao).
+    const snap = await getDocs(query(collection(db, "certificadosAluno"), where("escolaId", "==", turma.escolaId), where("turmaId", "==", turma.id)));
     state.certLista = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     state.certListaTurmaId = turma.id;
   } catch(err){
+    console.error("Erro ao carregar certificados da turma:", err?.code, err);
     state.certLista = [];
     state.certListaTurmaId = turma.id;
-    state.certErro = "Não foi possível carregar os certificados desta turma. Tente de novo.";
+    state.certErro = `Não foi possível carregar os certificados desta turma${err?.code ? ` (${err.code})` : ""}. Tente de novo.`;
   } finally {
     state.certCarregando = false;
     render();
@@ -4442,8 +4481,8 @@ async function carregarCertificadosDaTurma(turma, forcar = false){
 /* Salva (ou corrige, se já existir o mesmo módulo pra esse aluno nessa
    turma) o link do certificado. Quem chama (secretaria ou professor) já
    está identificado por state.authUser/state.perfil. */
-async function salvarCertificado(turma, alunoNome, modulo, link){
-  const id = certificadoDocId(turma.id, modulo, alunoNome);
+async function salvarCertificado(turma, alunoNome, livro, ano, link){
+  const id = certificadoDocId(turma.id, livro, ano, alunoNome);
   const agora = new Date().toISOString();
   const dados = {
     alunoKey: chaveAluno(turma.escolaId, alunoNome),
@@ -4452,7 +4491,9 @@ async function salvarCertificado(turma, alunoNome, modulo, link){
     turmaId: turma.id,
     turmaNome: turma.nome || "",
     disciplina: turma.disciplina || "",
-    modulo,
+    livro,
+    ano: Number(ano),
+    modulo: livro,
     link,
     anexadoPorId: state.authUser ? state.authUser.uid : "",
     anexadoPorNome: (state.perfil && state.perfil.nome) || state.data.professorNome || "",
@@ -4480,7 +4521,7 @@ async function carregarCertificadosDoAluno(student, forcar = false){
   try {
     const chave = chaveAluno(student.escolaId, student.nome);
     const snap = await getDocs(query(collection(db, "certificadosAluno"), where("escolaId", "==", student.escolaId), where("alunoKey", "==", chave)));
-    cache.registros = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.modulo || "").localeCompare(b.modulo || ""));
+    cache.registros = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (Number(b.ano) || 0) - (Number(a.ano) || 0) || (a.livro || a.modulo || "").localeCompare(b.livro || b.modulo || ""));
     cache.carregadoEm = Date.now();
   } catch(err){
     cache.erro = mensagemErroCalendario(err);
@@ -5613,7 +5654,7 @@ function certificadosGestaoView(turmasDisponiveis){
   const turmas = (turmasDisponiveis || []).filter(t => !ehTurmaDeRecreacao(t.disciplina || t.nome));
   const intro = `
     <h2 class="section-title">Certificados</h2>
-    <p class="section-eyebrow">Ao fim de cada módulo, anexe aqui o certificado do aluno — hoje, como um link do Drive. A Recreação não entra: não tem módulo pra certificar.</p>`;
+    <p class="section-eyebrow">Registre o certificado de cada aluno: turma, livro, ano e o link do Drive. Dá pra lançar certificados antigos (de 2020 em diante). A Recreação não entra: não tem livro pra certificar.</p>`;
 
   if(turmas.length === 0){
     return `${intro}<p class="section-eyebrow">Nenhuma turma disponível ainda.</p>`;
@@ -5637,7 +5678,7 @@ function certificadosGestaoView(turmasDisponiveis){
   const certsDaTurma = state.certListaTurmaId === turmaAtual.id ? (state.certLista || []) : [];
   const alunos = turmaAtual.alunos || [];
   const linhasAlunos = alunos.length
-    ? alunos.map(alunoNome => certificadoAlunoRowHtml(alunoNome, certsDaTurma.filter(c => c.alunoNome === alunoNome))).join("")
+    ? alunos.map(alunoNome => certificadoAlunoRowHtml(alunoNome, certsDaTurma.filter(c => c.alunoNome === alunoNome), turmaAtual)).join("")
     : `<div style="padding:20px;font-size:14px;color:var(--slate);">Esta turma ainda não tem alunos.</div>`;
 
   return `
@@ -5653,30 +5694,42 @@ function certificadosGestaoView(turmasDisponiveis){
 /* Uma linha por aluno: os certificados já anexados (cada um vira um link
    pro Drive) e, quando o formulário está aberto pra esse aluno, os campos
    pra anexar mais um módulo. */
-function certificadoAlunoRowHtml(alunoNome, certs){
+function certificadoAlunoRowHtml(alunoNome, certs, turma){
   const formAberto = state.certFormAlunoNome === alunoNome;
 
   const chips = certs.length
-    ? certs.map(c => `<span class="pill pill-green" style="margin:2px 6px 2px 0;"><a href="${escapeHtml(c.link)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">${ICONS.award} ${escapeHtml(c.modulo)}</a></span>`).join("")
+    ? certs.map(c => `<span class="pill pill-green" style="margin:2px 6px 2px 0;"><a href="${escapeHtml(c.link)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">${ICONS.award} ${escapeHtml(c.livro || c.modulo || "")}${c.ano ? ` · ${escapeHtml(String(c.ano))}` : ""}</a></span>`).join("")
     : `<span style="font-size:12.5px;color:var(--slate);">Nenhum certificado anexado</span>`;
 
   const excluirBtns = certs.length ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;">${certs.map(c => `
     <button type="button" class="attendance-btn" data-action="excluir-certificado" data-id="${escapeHtml(c.id)}" ${state.certExcluindoId === c.id ? "disabled" : ""}>
-      ${state.certExcluindoId === c.id ? "Excluindo…" : (state.certExcluirConfirmId === c.id ? `Excluir "${escapeHtml(c.modulo)}"?` : `${ICONS.trash} Excluir "${escapeHtml(c.modulo)}"`)}
+      ${state.certExcluindoId === c.id ? "Excluindo…" : (state.certExcluirConfirmId === c.id ? `Excluir "${escapeHtml(c.livro || c.modulo || "")}${c.ano ? ` ${escapeHtml(String(c.ano))}` : ""}"?` : `${ICONS.trash} Excluir "${escapeHtml(c.livro || c.modulo || "")}${c.ano ? ` ${escapeHtml(String(c.ano))}` : ""}"`)}
     </button>`).join("")}</div>` : "";
 
+  const anoSel = String(state.certFormAno || new Date().getFullYear());
+  const desab = state.certSalvando ? "disabled" : "";
   const form = formAberto ? `
     <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">
-      <div style="flex:1;min-width:140px;">
-        <label class="teacher-label" for="cert-form-modulo">Módulo</label>
-        <input id="cert-form-modulo" class="teacher-text-input" value="${escapeHtml(state.certFormModulo)}" placeholder="Ex.: Módulo 1" ${state.certSalvando ? "disabled" : ""} />
+      <div style="flex:1;min-width:150px;">
+        <label class="teacher-label" for="cert-form-turma">Turma</label>
+        <input id="cert-form-turma" class="teacher-text-input" value="${escapeHtml((turma && turma.nome) || "")}" readonly disabled />
+      </div>
+      <div style="flex:1;min-width:150px;">
+        <label class="teacher-label" for="cert-form-livro">Livro</label>
+        <input id="cert-form-livro" class="teacher-text-input" value="${escapeHtml(state.certFormLivro)}" placeholder="Ex.: Guess What 2" ${desab} />
+      </div>
+      <div style="width:100px;">
+        <label class="teacher-label" for="cert-form-ano">Ano</label>
+        <select id="cert-form-ano" class="teacher-text-input" ${desab}>
+          ${anosParaCertificado().map(a => `<option value="${a}" ${String(a) === anoSel ? "selected" : ""}>${a}</option>`).join("")}
+        </select>
       </div>
       <div style="flex:2;min-width:220px;">
-        <label class="teacher-label" for="cert-form-link">Link do Drive</label>
-        <input id="cert-form-link" class="teacher-text-input" value="${escapeHtml(state.certFormLink)}" placeholder="https://drive.google.com/…" ${state.certSalvando ? "disabled" : ""} />
+        <label class="teacher-label" for="cert-form-link">Link</label>
+        <input id="cert-form-link" class="teacher-text-input" value="${escapeHtml(state.certFormLink)}" placeholder="https://drive.google.com/…" ${desab} />
       </div>
-      <button type="button" class="teacher-primary-btn" data-action="salvar-certificado" data-aluno="${escapeHtml(alunoNome)}" ${state.certSalvando ? "disabled" : ""}>${state.certSalvando ? "Salvando…" : "Salvar"}</button>
-      <button type="button" class="attendance-btn" data-action="cancelar-certificado-form" ${state.certSalvando ? "disabled" : ""}>Cancelar</button>
+      <button type="button" class="teacher-primary-btn" data-action="salvar-certificado" data-aluno="${escapeHtml(alunoNome)}" ${desab}>${state.certSalvando ? "Salvando…" : "Salvar"}</button>
+      <button type="button" class="attendance-btn" data-action="cancelar-certificado-form" ${desab}>Cancelar</button>
     </div>
     ${state.certFormErro ? `<p class="teacher-error" style="color:var(--red,#C4544A);font-size:12.5px;margin-top:6px;">${escapeHtml(state.certFormErro)}</p>` : ""}` : "";
 
@@ -6902,7 +6955,8 @@ function contratosView(school){
         <p class="section-eyebrow" style="margin-top:8px;">Funciona melhor com os PDFs do próprio modelo da escola — outros formatos podem vir com campos em branco pra preencher na mão.</p>
       </div>
     </div>
-    ${backupContratosCard()}`;
+    ${backupContratosCard()}
+    ${pastaLocalCard()}`;
   }
 
   return `
@@ -8996,7 +9050,59 @@ async function salvarContratoPdf({ alunoId, escolaId, arquivo, status, enviadoEm
   });
   batch.set(ref, meta);
   await batch.commit();
-  return normalizeContrato(ref.id, meta);
+  const salvo = normalizeContrato(ref.id, meta);
+  // cópia neste computador (navegador + pasta escolhida). Nunca derruba o salvamento.
+  salvo.copiaLocal = await guardarCopiaDoArquivoLocal(arquivo, alunoId);
+  return salvo;
+}
+
+/* Guarda uma cópia do PDF neste computador: sempre no navegador (IndexedDB) e, se a
+   secretaria escolheu uma pasta, também lá — numa subpasta com o nome do aluno. */
+async function guardarCopiaDoArquivoLocal(arquivo, alunoId){
+  try {
+    const aluno = (state.instAlunos || []).find(a => a.id === alunoId);
+    const nomeAluno = aluno?.nome || "aluno";
+    const original = String(arquivo.name || "contrato.pdf");
+    const nome = /^Contrato_/.test(original) ? original : nomeArquivoContrato({
+      aluno: nomeAluno, data: dataDeHojeISO(), sufixo: original.replace(/\.pdf$/i, ""),
+    });
+    const r = await guardarCopiaLocal({
+      nome, blob: arquivo, subpasta: nomeSeguro(nomeAluno) || "aluno",
+      meta: { alunoId, origem: original },
+    });
+    state.contratoLocal.carregado = false;   // recarrega o resumo da pasta
+    return r;
+  } catch(err){
+    console.warn("Cópia local do contrato falhou:", err?.message || err);
+    return { navegador: false, pasta: false, erro: String(err?.message || err) };
+  }
+}
+
+/* HTML do contrato -> PDF (File) já com nome padrão. Usa a mesma folha da impressão. */
+async function gerarPdfDoContrato(c, sufixo = ""){
+  const logoUrl = new URL("imgs/logoeduca.jpeg", window.location.href).href;
+  const pacote = contratoBackupPacote(c, logoUrl);
+  if(!pacote) throw new Error("contrato-vazio");
+  const nome = nomeArquivoContrato({
+    aluno: contratoNomesAlunos(c), curso: c.curso, data: dataDeHojeISO(), sufixo,
+  });
+  return htmlParaPdfFile(pacote.html, nome);
+}
+
+/* Contrato recém-gerado no formulário: PDF + cópia local (em segundo plano). */
+async function salvarCopiaLocalDoContratoGerado(c){
+  try {
+    const arquivo = await gerarPdfDoContrato(c, "");
+    const r = await guardarCopiaLocal({
+      nome: arquivo.name, blob: arquivo, subpasta: nomeSeguro(contratoNomesAlunos(c)) || "aluno",
+      meta: { origem: "gerado" },
+    });
+    state.contratoLocal.carregado = false;
+    return resumoCopiaLocal(r);
+  } catch(err){
+    console.warn("Cópia local (PDF) do contrato gerado falhou:", err?.message || err);
+    return "Não consegui gerar o PDF da cópia local (o contrato em si está na aba que abriu).";
+  }
 }
 
 async function lerDataUrlDoContrato(meta){
@@ -9352,6 +9458,43 @@ function backupContratosCard(){
       <h3>Backup dos contratos gerados${g.carregado ? ` (${g.itens.length})` : ""}</h3>
       <p>Cada contrato gerado pelo sistema é guardado aqui automaticamente, mesmo que você esqueça de salvar o PDF. Abra para imprimir de novo ou baixe uma cópia.</p>
       ${corpo}
+    </div>`;
+}
+
+/* Cartão "Cópia dos contratos neste computador" (aba Gerar e importar). */
+async function carregarResumoLocal(){
+  const L = state.contratoLocal;
+  if(L.carregando) return;
+  L.carregando = true;
+  try {
+    const r = await resumoLocal();
+    Object.assign(L, { total: r.total, bytes: r.bytes, pasta: r.pasta, suportado: r.pastaSuportada });
+  } catch { /* sem IndexedDB: o cartão só mostra o que dá */ }
+  L.carregando = false; L.carregado = true;
+  render();
+}
+
+function pastaLocalCard(){
+  const L = state.contratoLocal;
+  if(!L.carregado && !L.carregando) setTimeout(carregarResumoLocal, 0);
+  const tam = L.bytes ? ` (${tamanhoLegivel(L.bytes)})` : "";
+  const status = !L.carregado ? "Verificando…"
+    : L.pasta ? `Pasta escolhida: <b>${escapeHtml(L.pasta)}</b>. Cada contrato é gravado em PDF numa subpasta com o nome do aluno.`
+    : L.suportado ? "Nenhuma pasta escolhida ainda. Escolha uma (ex.: Documentos › Contratos Educa) para os PDFs também ficarem salvos no computador."
+    : "Este navegador não permite escolher uma pasta (use o Chrome ou o Edge). As cópias ficam guardadas no navegador.";
+  return `
+    <div class="management-card management-card-wide" style="max-width:none;margin-top:16px;">
+      <h3>Cópia dos contratos neste computador</h3>
+      <p>Todo contrato gerado, importado ou renovado ganha uma cópia em PDF aqui, além do backup do sistema. ${status}</p>
+      <p class="section-eyebrow" style="margin:0 0 10px;">Guardado no navegador: <b>${L.total}</b> arquivo(s)${tam}.</p>
+      <div class="contrato-acoes">
+        ${L.suportado ? `<button type="button" class="teacher-primary-btn" data-action="local-pasta-escolher">${L.pasta ? "Trocar pasta" : "Escolher pasta"}</button>` : ""}
+        ${L.pasta ? `<button type="button" class="aniversario-btn" data-action="local-pasta-liberar">Liberar acesso à pasta</button>
+          <button type="button" class="aniversario-btn" data-action="local-pasta-exportar">Copiar tudo do navegador para a pasta</button>
+          <button type="button" class="aniversario-btn" data-action="local-pasta-remover">Desconectar pasta</button>` : ""}
+        ${L.total ? `<button type="button" class="aniversario-btn" data-action="local-baixar-todos">Baixar tudo</button>` : ""}
+      </div>
+      ${L.msg ? `<p class="section-eyebrow" style="margin-top:10px;">${escapeHtml(L.msg)}</p>` : ""}
     </div>`;
 }
 
@@ -10393,8 +10536,101 @@ async function registrarMatricula(alunoId, { curso, inicio, termino, meses }){
   if(local) local.matriculas = lista;
 }
 
-/* Renovação: só estende a vigência (e, se pedido, lança as mensalidades).
-   Não gera contrato, não cria cadastro nem login. */
+/* Renovação: estende a vigência, deixa editar os valores (reajuste) e, por padrão,
+   gera o contrato renovado em PDF, que volta pra "Aguardando assinatura" (com backup
+   no sistema e cópia neste computador). Não cria cadastro nem login. */
+
+/* CNPJ da unidade selecionada (mesma regra do "Novo curso"). */
+function cnpjPreferidoDaEscola(){
+  const nomeEscola = (state.data.escolas?.[state.escolaSelecionadaId]?.nome || "").toLowerCase();
+  return nomeEscola.includes("prata") ? "46.616.889/0001-37"
+    : nomeEscola.includes("salto") ? "49.080.272/0001-38" : "";
+}
+
+/* Quando não existe contrato anterior gerado pelo sistema: monta o que dá a partir do cadastro. */
+function baseSinteticaDoAluno(aluno){
+  const base = {
+    alunoNome: aluno.nome, alunoNascimento: aluno.nascimento || "", contatoAluno: aluno.contato || "",
+    respsExtras: [],
+  };
+  const resps = (state.gestaoResponsaveis || []).filter(x => (x.alunosIds || []).includes(aluno.id));
+  if(resps[0]){
+    base.respNome = resps[0].nome || ""; base.contatoResp = resps[0].contato || "";
+    base.respParentesco = resps[0].parentesco || "";
+  }
+  base.respsExtras = resps.slice(1).map(x => ({
+    nome: x.nome || "", parentesco: x.parentesco || "", contato: x.contato || "", email: "", senha: "",
+  }));
+  const cnpj = cnpjPreferidoDaEscola();
+  if(cnpj) base.cnpj = cnpj;
+  return base;
+}
+
+/* Última mensalidade lançada no Financeiro do aluno -> valor, dia de vencimento e forma
+   de pagamento (usado quando não há contrato anterior com valores). null se não houver. */
+function valoresDoFinanceiroDoAluno(aluno){
+  const lista = (aluno.financeiro?.mensalidades || [])
+    .filter(m => Number(m.valor) > 0 && m.competencia)
+    .sort((a, b) => String(b.competencia).localeCompare(String(a.competencia)));
+  if(!lista.length) return null;
+  const ult = lista[0];
+  const fmt = String(ult.formaPagamento || "").toLowerCase();
+  const forma = fmt.includes("pix") ? "PIX" : fmt.includes("din") ? "DINHEIRO"
+    : fmt.includes("cart") ? "CARTÃO" : "BOLETO";
+  const dia = Number(String(ult.vencimento || "").slice(8, 10));
+  const out = {
+    valorParcelaDemais: (Math.round(Number(ult.valor) * 100) / 100).toFixed(2).replace(".", ","),
+    formaPagamento: forma,
+  };
+  if(dia >= 1 && dia <= 31) out.primeiroVencimento = `2000-01-${String(dia).padStart(2, "0")}`;
+  return out;
+}
+
+/* Procura os dados do contrato anterior do aluno (de preferência o do mesmo curso). */
+async function buscarBaseDaRenovacao(aluno, curso){
+  const escolaId = state.escolaSelecionadaId;
+  await carregarContratosGerados(escolaId);
+  for(let i = 0; i < 40 && state.contratosGerados.carregando; i++) await new Promise(res => setTimeout(res, 150));
+  const alvo = normalizarNome(aluno.nome);
+  const doAluno = (state.contratosGerados.itens || []).filter(i => normalizarNome(i.alunos).includes(alvo));
+  if(!doAluno.length) return { dados: null, ehSegundo: false };
+  const chave = normalizarNome(curso || "");
+  const item = (chave && doAluno.find(i => normalizarNome(i.curso) === chave)) || doAluno[0];
+  const snap = await getDoc(doc(db, "contratosGerados", item.id));
+  const dados = snap.exists() ? (snap.data().dados || null) : null;
+  const ehSegundo = !!dados?.segundoAluno && normalizarNome(dados.aluno2Nome || "") === alvo;
+  return { dados, ehSegundo };
+}
+
+/* Busca o contrato anterior e preenche valores/dados da janela. Pode ser chamado de novo
+   quando a pessoa troca o contrato que está renovando. */
+async function carregarBaseRenovacao(){
+  const r = state.renovacao;
+  if(!r.aberto || !r.alunoId) return;
+  const aluno = (state.instAlunos || []).find(a => a.id === r.alunoId);
+  if(!aluno) return;
+  let dados = null, ehSegundo = false;
+  try {
+    ({ dados, ehSegundo } = await buscarBaseDaRenovacao(aluno, r.curso));
+  } catch(err){
+    console.warn("Não consegui buscar o contrato anterior:", err?.code || err);
+  }
+  if(state.renovacao !== r || !r.aberto) return;   // fechou ou abriu outra
+  r.baseSintetica = !dados;
+  r.baseEhSegundo = ehSegundo;
+  const base = dados || baseSinteticaDoAluno(aluno);
+  // sem valores no contrato anterior: usa a última mensalidade lançada no Financeiro do aluno
+  r.baseFinanceiro = false;
+  if(!numeroLimpo(base.valorParcelaDemais) && !numeroLimpo(base.valorCurso)){
+    const f = valoresDoFinanceiroDoAluno(aluno);
+    if(f){ Object.assign(base, f); r.baseFinanceiro = true; }
+  }
+  r.cnpj = base.cnpj || cnpjPreferidoDaEscola() || "";
+  renovacaoAplicarBase(r, base);
+  r.erro = "";
+  render();
+}
+
 /* Abre a janela de renovação. `matId` vazio: se o aluno tem contratos registrados,
    já vem o que vence primeiro (dá pra trocar na janela); se não tem, informa na mão. */
 function abrirRenovacaoDoAluno(alunoId, matId, meses){
@@ -10412,26 +10648,57 @@ function abrirRenovacaoDoAluno(alunoId, matId, meses){
     matriculaId: mat?.id || "", curso: mat?.curso || "", terminoAtual: mat?.termino || "",
     meses: meses === "12" ? "12" : "6",
   });
-  renovacaoRecalcular(r);
+  renovacaoRecalcular(r, "terminoAtual");
   state.renovacao = r;
   render();
+  carregarBaseRenovacao();
 }
 
 async function salvarRenovacao(){
   const r = state.renovacao;
-  const problema = renovacaoValidar(r);
+  const hoje = dataDeHojeISO();
+  const problema = renovacaoValidar(r, { hoje });
   if(problema){ r.erro = problema; render(); return; }
-  r.salvando = true; r.erro = "";
+  r.salvando = true; r.erro = ""; r.etapa = r.gerarContrato ? "Gerando o PDF do contrato…" : "Salvando…";
+  // pede acesso à pasta do computador agora, enquanto o clique ainda vale
+  const permissaoPasta = r.gerarContrato ? prepararPasta().catch(() => false) : null;
   render();
+
+  const escolaId = state.escolaSelecionadaId;
+  let contratoSalvo = null;
   try {
+    // 1) contrato renovado em PDF (se falhar aqui, nada foi gravado ainda)
+    let c = null, arquivo = null;
+    if(r.gerarContrato){
+      c = contratoDeRenovacao(r, { hoje });
+      arquivo = await gerarPdfDoContrato(c, "renovacao");
+      await permissaoPasta;
+    }
+
     const ref = doc(db, "alunos", r.alunoId);
     const snap = await getDoc(ref);
     const dados = snap.data() || {};
     const atuais = normalizarMatriculas(dados.matriculas);
-    const hoje = dataDeHojeISO();
     const meses = renovacaoMeses(r);
-    const registro = { em: hoje, meses, de: r.terminoAtual, ate: r.novoTermino, obs: String(r.obs || "").trim() };
 
+    // 2) PDF entra como "pendente" (volta pra assinatura) + backup do contrato gerado
+    let copiaLocalTxt = "";
+    if(arquivo){
+      r.etapa = "Guardando o contrato no sistema…"; render();
+      contratoSalvo = await salvarContratoPdf({ alunoId: r.alunoId, escolaId, arquivo, status: "pendente" });
+      copiaLocalTxt = contratoSalvo.copiaLocal ? resumoCopiaLocal(contratoSalvo.copiaLocal) : "";
+      try { await salvarBackupContratoGerado(c); }
+      catch(err){ console.warn("Backup do contrato renovado falhou:", err?.code || err); copiaLocalTxt += " (O backup em HTML não ficou guardado, mas o PDF está salvo.)"; }
+    }
+
+    // 3) vigência + histórico (com os valores e o contrato novo)
+    r.etapa = "Atualizando a vigência…"; render();
+    const registro = {
+      em: hoje, meses, de: r.terminoAtual, ate: r.novoTermino, obs: String(r.obs || "").trim(),
+      valorCurso: numeroLimpo(r.valorCurso), numParcelas: Number(r.numParcelas) || 0,
+      valorParcela: numeroLimpo(r.valorParcelaDemais), reajustePct: numeroLimpo(r.reajustePct),
+      contratoId: contratoSalvo?.id || "",
+    };
     const existente = atuais.find(m => m.id === r.matriculaId)
       || atuais.find(m => normalizarNome(m.curso) === normalizarNome(r.curso));
     const lista = existente
@@ -10442,10 +10709,11 @@ async function salvarRenovacao(){
         }];
 
     const atualizacao = { matriculas: lista };
+    if(r.gerarContrato) atualizacao.contratoEnviadoEm = "";   // contrato novo: ainda não foi enviado
     let novasMensalidades = [];
     let todasMensalidades = null;
     if(r.lancarFinanceiro){
-      const parcelas = renovacaoParcelas({ terminoAtual: r.terminoAtual, meses, valor: r.valorParcela, diaVenc: r.diaVenc });
+      const parcelas = renovacaoParcelas(r);
       const atuaisMens = Array.isArray(dados.financeiro?.mensalidades)
         ? dados.financeiro.mensalidades.map(normalizeMensalidade) : [];
       const competencias = new Set(atuaisMens.map(m => m.competencia));
@@ -10462,17 +10730,37 @@ async function salvarRenovacao(){
     const local = (state.instAlunos || []).find(a => a.id === r.alunoId);
     if(local){
       local.matriculas = lista;
+      if(r.gerarContrato) local.contratoEnviadoEm = "";
       if(todasMensalidades){ local.financeiro = local.financeiro || {}; local.financeiro.mensalidades = todasMensalidades; }
     }
+
+    // 4) resumo do aluno: com contrato pendente, volta a "aguardando assinatura"
+    if(contratoSalvo){
+      try { await sincronizarResumoContratos(r.alunoId, escolaId); }
+      catch(err){ console.warn("Não consegui atualizar o resumo de contratos:", err?.code || err); }
+    }
+
     state.instituicaoMensagem = `Renovação de ${r.alunoNome} (${r.curso}) registrada: nova vigência até ${formatarDataBr(r.novoTermino)}.`
+      + (contratoSalvo ? ` Contrato renovado gerado em PDF e enviado para “Aguardando assinatura”. ${copiaLocalTxt}` : "")
       + (r.lancarFinanceiro ? ` ${novasMensalidades.length} mensalidade(s) lançada(s) no Financeiro.` : "");
     state.renovacao = renovacaoEstadoInicial();
+    if(contratoSalvo){
+      state.contratosTab = "pendentes";
+      carregarContratosDaEscola(escolaId, true);
+    }
   } catch(err){
     console.error("Erro ao renovar contrato:", err);
-    r.salvando = false;
-    r.erro = err?.code === "permission-denied"
-      ? "O Firestore recusou a gravação (permission-denied). Fale com quem cuida das regras do banco."
-      : `Não consegui salvar a renovação agora${err?.code ? ` (${err.code})` : ""}. Tente de novo.`;
+    r.salvando = false; r.etapa = "";
+    if(err?.message === "html2pdf-ausente"){
+      r.erro = "A biblioteca que gera o PDF não carregou (internet?). Recarregue a página e tente de novo — ou desmarque “Gerar o contrato renovado em PDF” para renovar só a vigência.";
+    } else if(contratoSalvo){
+      r.erro = `O contrato renovado foi salvo em “Aguardando assinatura”, mas não consegui atualizar a vigência${err?.code ? ` (${err.code})` : ""}. Feche esta janela e confira a aba Aguardando assinatura; renove a vigência de novo desmarcando “Gerar o contrato” (assim não duplica o PDF).`;
+      carregarContratosDaEscola(escolaId, true);
+    } else {
+      r.erro = err?.code === "permission-denied"
+        ? "O Firestore recusou a gravação (permission-denied). Fale com quem cuida das regras do banco."
+        : `Não consegui salvar a renovação agora${err?.code ? ` (${err.code})` : ""}. Tente de novo.`;
+    }
   } finally {
     render();
   }
@@ -12467,7 +12755,7 @@ function bindEvents(){
     // Campos da janela "Renovar contrato": só guardam o valor (o recálculo vem no "change")
     if(t.dataset && t.dataset.renovField){
       if(t.type === "date" && t.value && !contratoDataPlausivel(t.value)) return;
-      state.renovacao[t.dataset.renovField] = t.value;
+      renovacaoSetCampo(state.renovacao, t.dataset.renovField, t.value);
       return;
     }
     // Campos do contrato: guardam o valor sem re-renderizar, senão o
@@ -12517,7 +12805,8 @@ function bindEvents(){
     if(t.id === "nova-turma-nome"){ state.novaTurmaNome = t.value; return; }
     if(t.id === "nova-turma-horario"){ state.novaTurmaHorario = t.value; return; }
     if(t.id === "nova-turma-sala"){ state.novaTurmaSala = t.value; return; }
-    if(t.id === "cert-form-modulo"){ state.certFormModulo = t.value; return; }
+    if(t.id === "cert-form-livro"){ state.certFormLivro = t.value; return; }
+    if(t.id === "cert-form-ano"){ state.certFormAno = t.value; return; }
     if(t.id === "cert-form-link"){ state.certFormLink = t.value; return; }
   });
 
@@ -12834,13 +13123,16 @@ function bindEvents(){
         r.matriculaId = o ? o.id : "";
         r.curso = o ? o.curso : "";
         r.terminoAtual = o ? o.termino : "";
-        renovacaoRecalcular(r);
+        r.vencEditado = false;
+        renovacaoRecalcular(r, "terminoAtual");
         r.erro = "";
+        r.baseCarregada = false;
         render();
+        carregarBaseRenovacao();   // o contrato anterior pode ser de outro curso
         return;
       }
-      r[t.dataset.renovField] = t.value;
-      if(["meses", "mesesCustom", "terminoAtual"].includes(t.dataset.renovField)) renovacaoRecalcular(r);
+      const origemRenov = renovacaoSetCampo(r, t.dataset.renovField, t.value);
+      if(origemRenov) renovacaoRecalcular(r, origemRenov);
       r.erro = "";
       if(t.type === "date" && document.activeElement === t){
         t.addEventListener("blur", () => setTimeout(renderPreservandoFoco, 0), { once: true });
@@ -13625,7 +13917,8 @@ function bindEvents(){
       case "set-cert-turma": {
         state.certTurmaId = el.dataset.id;
         state.certFormAlunoNome = null;
-        state.certFormModulo = "";
+        state.certFormLivro = "";
+        state.certFormAno = "";
         state.certFormLink = "";
         state.certFormErro = "";
         state.certExcluirConfirmId = null;
@@ -13637,24 +13930,32 @@ function bindEvents(){
       }
       case "abrir-certificado-form":
         state.certFormAlunoNome = el.dataset.aluno;
-        state.certFormModulo = "";
+        state.certFormLivro = "";
+        state.certFormAno = "";
         state.certFormLink = "";
         state.certFormErro = "";
         render();
         break;
       case "cancelar-certificado-form":
         state.certFormAlunoNome = null;
-        state.certFormModulo = "";
+        state.certFormLivro = "";
+        state.certFormAno = "";
         state.certFormLink = "";
         state.certFormErro = "";
         render();
         break;
       case "salvar-certificado": {
         const alunoNomeCert = el.dataset.aluno;
-        const moduloCert = (state.certFormModulo || "").trim();
+        const livroCert = (state.certFormLivro || "").trim();
+        const anoCert = Number(state.certFormAno || new Date().getFullYear());
         const linkCert = (state.certFormLink || "").trim();
-        if(!moduloCert){
-          state.certFormErro = "Informe o módulo.";
+        if(!livroCert){
+          state.certFormErro = "Informe o livro.";
+          render();
+          break;
+        }
+        if(!Number.isInteger(anoCert) || anoCert < 2020){
+          state.certFormErro = "Escolha o ano (de 2020 em diante).";
           render();
           break;
         }
@@ -13670,13 +13971,15 @@ function bindEvents(){
         state.certSalvando = true;
         render();
         try {
-          const salvo = await salvarCertificado(turmaCertSalvar, alunoNomeCert, moduloCert, linkCert);
+          const salvo = await salvarCertificado(turmaCertSalvar, alunoNomeCert, livroCert, anoCert, linkCert);
           state.certLista = [...(state.certLista || []).filter(c => c.id !== salvo.id), salvo];
           state.certFormAlunoNome = null;
-          state.certFormModulo = "";
+          state.certFormLivro = "";
+          state.certFormAno = "";
           state.certFormLink = "";
         } catch(err){
-          state.certFormErro = "Não foi possível salvar o certificado. Tente de novo.";
+          console.error("Erro ao salvar certificado:", err?.code, err);
+          state.certFormErro = `Não foi possível salvar o certificado${err?.code ? ` (${err.code})` : ""}. Tente de novo.`;
         } finally {
           state.certSalvando = false;
           render();
@@ -13697,7 +14000,8 @@ function bindEvents(){
           await excluirCertificado(certId);
           state.certLista = (state.certLista || []).filter(c => c.id !== certId);
         } catch(err){
-          state.certErro = "Não foi possível excluir o certificado. Tente de novo.";
+          console.error("Erro ao excluir certificado:", err?.code, err);
+          state.certErro = `Não foi possível excluir o certificado${err?.code ? ` (${err.code})` : ""}. Tente de novo.`;
         } finally {
           state.certExcluindoId = null;
           render();
@@ -14973,9 +15277,69 @@ function bindEvents(){
         render();
         break;
 
+      case "renov-gerar-contrato":
+        state.renovacao.gerarContrato = !state.renovacao.gerarContrato;
+        state.renovacao.erro = "";
+        render();
+        break;
+
       case "renov-salvar":
         await salvarRenovacao();
         break;
+
+      // ---- cópia dos contratos neste computador ----
+      case "local-pasta-escolher": {
+        const L = state.contratoLocal;
+        try {
+          const nome = await escolherPasta();
+          L.msg = `Pasta “${nome}” escolhida. Os próximos contratos também serão gravados lá, numa subpasta por aluno.`;
+        } catch(err){
+          if(err?.name === "AbortError") break;   // fechou o seletor
+          L.msg = err?.message === "sem-suporte"
+            ? "Este navegador não deixa escolher uma pasta (use o Chrome ou o Edge). As cópias continuam guardadas no navegador."
+            : `Não consegui usar essa pasta${err?.name ? ` (${err.name})` : ""}. Tente outra.`;
+        }
+        L.carregado = false;
+        render();
+        break;
+      }
+
+      case "local-pasta-liberar": {
+        const L = state.contratoLocal;
+        const ok = await prepararPasta();
+        L.msg = ok ? "Acesso à pasta liberado." : "O navegador não liberou o acesso à pasta. Clique de novo e aceite o pedido.";
+        L.carregado = false;
+        render();
+        break;
+      }
+
+      case "local-pasta-exportar": {
+        const L = state.contratoLocal;
+        const ok = await prepararPasta();
+        if(!ok){ L.msg = "Escolha uma pasta (e libere o acesso) antes de copiar."; render(); break; }
+        const r = await exportarTudoParaPasta();
+        L.msg = `${r.gravados} arquivo(s) copiado(s) para a pasta${r.falhas ? `; ${r.falhas} não foram` : ""}.`;
+        render();
+        break;
+      }
+
+      case "local-pasta-remover": {
+        await removerPasta();
+        state.contratoLocal.msg = "Pasta desconectada. As cópias continuam no navegador.";
+        state.contratoLocal.carregado = false;
+        render();
+        break;
+      }
+
+      case "local-baixar-todos": {
+        const L = state.contratoLocal;
+        const lista = await listarCopiasLocais();
+        if(!lista.length){ L.msg = "Ainda não há cópias guardadas no navegador."; render(); break; }
+        L.msg = `Baixando ${lista.length} arquivo(s)… se o navegador perguntar, permita vários downloads.`;
+        render();
+        for(const item of lista){ await baixarCopiaLocal(item.id); await new Promise(res => setTimeout(res, 350)); }
+        break;
+      }
 
       case "novo-curso-abrir":
         await abrirNovoCurso(el.dataset.id);
@@ -15079,6 +15443,7 @@ function bindEvents(){
         // A janela precisa abrir no clique, antes de qualquer await, senão
         // o navegador entende como pop-up e bloqueia.
         const abriu = abrirContratoParaImpressao(c);
+        prepararPasta().catch(() => false);   // pede acesso à pasta de cópias enquanto o clique vale (sem esperar)
         if(!abriu){
           c.erro = "O navegador bloqueou a janela do contrato. Libere os pop-ups deste site e tente de novo.";
           render();
@@ -15095,6 +15460,14 @@ function bindEvents(){
         } catch(err){
           console.error("Erro ao guardar o backup do contrato:", err);
           state.instituicaoMensagem += " ATENÇÃO: não consegui guardar a cópia de backup — salve o PDF na aba que abriu.";
+        }
+
+        // Cópia em PDF neste computador (navegador + pasta), em segundo plano.
+        {
+          const copiaParaLocal = JSON.parse(JSON.stringify(c));
+          salvarCopiaLocalDoContratoGerado(copiaParaLocal).then(txt => {
+            if(txt){ state.instituicaoMensagem = `${state.instituicaoMensagem || ""} ${txt}`.trim(); render(); }
+          });
         }
 
         if(!c.criarAcessos && !c.novoCurso){

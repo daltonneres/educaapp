@@ -200,3 +200,13 @@
 
 /* seletor "Renovar um aluno específico" */
 .renov-escolher { margin: 0 0 14px; padding: 12px; border-radius: 12px; background: rgba(201,162,74,.08); border: 1px solid rgba(201,162,74,.28); }
+
+/* ---------------- Renovação com contrato (valores, reajuste, PDF) ---------------- */
+.renov-aviso { margin: 0 0 8px; font-size: 12.5px; line-height: 1.45; color: var(--slate); }
+.renov-aviso.is-alerta {
+  padding: 8px 10px; border-radius: 10px; background: #fff6e3; border: 1px solid #ecd9a6; color: #5b4a1e;
+}
+.renov-contratante { margin: 4px 0 0; }
+.renov-contratante > summary {
+  cursor: pointer; font-size: 12.5px; font-weight: 700; color: var(--ink); padding: 4px 0;
+}
