@@ -2379,7 +2379,7 @@ export function renovacaoModal(r, { cursos = [] } = {}){
       : `<p class="renov-aviso">Dados do contratante, horário e dias de aula vêm do contrato anterior${r.baseEhSegundo ? " (o anterior era de irmãos; este novo sai só para este aluno)" : ""}.</p>`;
 
   const empresasOpcoes = [{ valor: "", texto: "— escolha o CNPJ —" }]
-    .concat(EMPRESAS.map(e => ({ valor: e.cnpj, texto: `${e.cnpj} · ${e.cidade}` })));
+    .concat(EMPRESAS.map(e => ({ valor: e.cnpj, texto: `${e.cnpj} · ${e.cidade === "SALTO DO LONTRA" ? "Salto do Lontra" : "Nova Prata do Iguaçu"} (${e.socia.split(" ")[0]})` })));
 
   const faltaContratante = r.gerarContrato && r.baseCarregada
     && (!(b.respNome || "").trim() && !b.semResponsavel || !(b.alunoCpf || "").trim());
@@ -2466,7 +2466,8 @@ export function renovacaoModal(r, { cursos = [] } = {}){
         </label>
         ${r.gerarContrato ? `
           ${avisoBase}
-          ${!b.cnpj ? `<div class="contrato-linha">${selectRenov("CNPJ da empresa", "cnpj", r.cnpj, empresasOpcoes, { largura: "320px" })}</div>` : `<p class="section-eyebrow" style="margin:0 0 8px;">Empresa: <b>${esc(r.cnpj)}</b></p>`}
+          <div class="contrato-linha">${selectRenov("CNPJ da empresa (escolha qual vai assinar a renovação)", "cnpj", r.cnpj, empresasOpcoes, { largura: "380px" })}</div>
+          ${b.cnpj && r.cnpj && b.cnpj !== r.cnpj ? `<p class="renov-aviso is-alerta">O contrato anterior foi feito com o CNPJ ${esc(b.cnpj)}; a renovação sairá com o CNPJ escolhido acima.</p>` : ""}
           <details class="renov-contratante" ${faltaContratante || r.baseSintetica ? "open" : ""}>
             <summary>Dados do contratante (conferir)</summary>
             <div class="contrato-linha" style="margin-top:8px;">

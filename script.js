@@ -1742,6 +1742,7 @@ const state = {
 
   // ficha do aluno (modal aberto ao clicar num aluno da lista)
   alunoDetalheId: null,
+  alunoModalAba: "dados",     // aba aberta na ficha do aluno: dados | turmas | financeiro | responsaveis | saude | acesso
   alunoDetalheNomeInput: "",
   alunoDetalheContatoInput: "",
   alunoDetalheSexoInput: "",   // "masculino" | "feminino" — foto padrão do aluno
@@ -1780,6 +1781,13 @@ const state = {
   alunoSitSalvando: false,
   alunoSitErro: "",
   alunoSitMensagem: "",
+  alunoCancelConfirmando: false,   // ficha do aluno > "Cancelar matrícula"
+  alunoCancelMotivo: "",
+  alunoCancelando: false,
+  alunosMostrarCancelados: false,  // aba Alunos: mostra também os cancelados
+  terminoModal: { aberto: false, alunoId: "", alunoNome: "", matId: "", curso: "", termino: "", salvando: false, erro: "" },  // "Informar término do contrato"
+  avisoVencDispensado: false,      // aviso de contratos vencendo: fechado nesta sessão
+  renovCancelandoId: "",           // aluno sendo cancelado por falta de renovação
   finStatusSalvandoId: "",      // id da cobrança que está sendo alternada pendente/pago (Financeiro > Consultar boletos)
   finStatusErro: "",
   finCobrancaBusca: "",         // texto digitado na busca de aluno (Financeiro > Lançar cobrança)
@@ -3564,6 +3572,19 @@ function renderPreservandoFoco(){
 }
 
 function render(){
+  // Guarda a rolagem do corpo da ficha do aluno (e da barra de abas) e devolve depois:
+  // o render() recria o HTML inteiro, e sem isso a ficha "pulava" pro topo toda vez que
+  // algo carregava (turmas, responsáveis, contratos) — inclusive no meio de um toque.
+  const corpoAntes = document.querySelector(".aluno-modal-corpo");
+  const abasAntes = document.querySelector(".am-aba-barra");
+  const rolagem = corpoAntes ? corpoAntes.scrollTop : 0;
+  const rolagemAbas = abasAntes ? abasAntes.scrollLeft : 0;
+  renderCompleto();
+  if(rolagem){ const c = document.querySelector(".aluno-modal-corpo"); if(c) c.scrollTop = rolagem; }
+  if(rolagemAbas){ const b = document.querySelector(".am-aba-barra"); if(b) b.scrollLeft = rolagemAbas; }
+}
+
+function renderCompleto(){
   const telasComLogin = ["aluno", "familia", "professor", "instituicao", "escola-picker"];
   if(telasComLogin.includes(state.screen) && dev.emManutencao()){
     app.innerHTML = dev.telaManutencao();
@@ -3853,20 +3874,73 @@ function buscaModulosHtml(navItems){
     </div>`;
 }
 
+const GRUPOS_NAV = {
+  instituicao: [
+    { titulo: "Visão geral", keys: ["inicio"] },
+    { titulo: "Rotina pedagógica", keys: ["turmas", "cursos", "calendario", "horarios", "relatorio", "conteudos", "relconteudos"] },
+    { titulo: "Pessoas e comunidade", keys: ["alunos", "aniversarios", "professores", "responsaveis", "solicitacoes"] },
+    { titulo: "Gestão da unidade", keys: ["estatisticas", "financeiro", "contratos", "aval", "certificados", "senhas", "gestao"] },
+    { titulo: "Minha conta", keys: ["perfil", "dev"] },
+  ],
+  professor: [
+    { titulo: "Meu dia", keys: ["inicio", "calendario", "horarios"] },
+    { titulo: "Turmas e aulas", keys: ["turmas", "aulas"] },
+    { titulo: "Ensino", keys: ["conteudos", "relconteudos", "avaliacoes", "aval", "certificados"] },
+    { titulo: "Ajuda e conta", keys: ["suporte", "perfil"] },
+  ],
+  familia: [
+    { titulo: "Acompanhar aprendizagem", keys: ["calendario", "notas", "presenca", "aval", "certificados"] },
+    { titulo: "Escola e documentos", keys: ["comunicados", "contratos", "ficha"] },
+    { titulo: "Financeiro", keys: ["financeiro"] },
+    { titulo: "Ajuda", keys: ["suporte"] },
+  ],
+  aluno: [
+    { titulo: "Minha aprendizagem", keys: ["calendario", "notas", "presenca", "aval", "certificados"] },
+    { titulo: "Vida escolar", keys: ["comunicados", "ficha"] },
+    { titulo: "Ajuda", keys: ["suporte"] },
+  ],
+};
+
+function gruposNavAtuais(navItems){
+  const mapa = new Map(navItems.map(item => [item.key, item]));
+  const grupos = GRUPOS_NAV[state.screen] || [];
+  const vistos = new Set();
+  const resultado = grupos.map(grupo => ({
+    titulo: grupo.titulo,
+    itens: grupo.keys.map(key => mapa.get(key)).filter(item => {
+      if(!item || vistos.has(item.key)) return false;
+      vistos.add(item.key);
+      return true;
+    }),
+  })).filter(grupo => grupo.itens.length);
+  const restantes = navItems.filter(item => !vistos.has(item.key));
+  if(restantes.length) resultado.push({ titulo: "Outros", itens: restantes });
+  return resultado;
+}
+
 function shell({ navItems, active, headerSub, headerTitle, headerFoto, bodyHtml, navAction, schoolBadge, schoolBadgeClickable }){
   // Bloqueio de módulos pelo painel dev (config/app > modulos)
   const rotuloAtivo = navItems.find(i => i.key === active)?.label;
   if(dev.moduloBloqueado(state.screen, active)) bodyHtml = dev.moduloIndisponivel(rotuloAtivo);
   navItems = dev.filtrarNav(state.screen, navItems);
-  const navBtns = navItems.map(item => `
-    <button class="nav-btn ${active===item.key?'active':''}" data-action="${navAction}" data-key="${item.key}">
-      ${ICONS[item.icon]} ${item.label}
-    </button>`).join("");
+  const navGroups = gruposNavAtuais(navItems);
+  const navBtns = navGroups.map(grupo => `
+    <div class="sidebar-nav-group">
+      <div class="sidebar-nav-group-title">${grupo.titulo}</div>
+      ${grupo.itens.map(item => `
+        <button class="nav-btn ${active===item.key?'active':''}" data-action="${navAction}" data-key="${item.key}">
+          ${ICONS[item.icon]} <span>${item.label}</span>
+        </button>`).join("")}
+    </div>`).join("");
 
-  const mobileDrawerBtns = navItems.map(item => `
-    <button class="mobile-drawer-btn ${active===item.key?'active':''}" data-action="${navAction}" data-key="${item.key}">
-      ${ICONS[item.icon]} <span>${item.label}</span>
-    </button>`).join("");
+  const mobileDrawerBtns = navGroups.map(grupo => `
+    <div class="mobile-drawer-group">
+      <div class="mobile-drawer-group-title">${grupo.titulo}</div>
+      ${grupo.itens.map(item => `
+        <button class="mobile-drawer-btn ${active===item.key?'active':''}" data-action="${navAction}" data-key="${item.key}">
+          ${ICONS[item.icon]} <span>${item.label}</span>
+        </button>`).join("")}
+    </div>`).join("");
 
   return `
   <div class="shell">
@@ -4627,7 +4701,7 @@ function calendarioProfessorView(){
    um item já salvo não entram nele automaticamente — mesma limitação que
    já existe hoje pros avisos de turma do professor. */
 function destinatariosDaEscola(escolaId, cursos){
-  const alunos = (state.instAlunos || []).filter(a => a.escolaId === escolaId);
+  const alunos = (state.instAlunos || []).filter(a => a.escolaId === escolaId && a.situacao !== "cancelado");
   // cursos ausente/null = comportamento antigo, vale pra escola inteira.
   if(!Array.isArray(cursos)){
     return [...new Set(alunos.map(a => chaveAluno(a.escolaId, a.nome)))];
@@ -5836,7 +5910,8 @@ function renderInstituicao(){
     cursos: cursosEModalidadesDaEscola(school?.nome || ""),
     turmas: state.instTurmas || [],
   }) + importContratosChipHtml(state) + contratoVisualizadorModal()
-    + renovacaoModal(state.renovacao, { cursos: cursosEModalidadesDaEscola(school?.nome || "") });
+    + renovacaoModal(state.renovacao, { cursos: cursosEModalidadesDaEscola(school?.nome || "") })
+    + terminoModalHtml() + avisoVencimentosModal();
 }
 
 function gestaoInstituicaoView(school){
@@ -5864,7 +5939,7 @@ function gestaoInstituicaoView(school){
     ? alunos.filter(a => !a.uid && !ehTurmaDeRecreacao(a.turma)).length + responsaveis.filter(r => !r.uid).length
     : "—";
   const tiles = [
-    { rotulo: "Alunos", valor: num(alunos), icon: ICONS.users, aba: "alunos" },
+    { rotulo: "Alunos", valor: num(Array.isArray(alunos) ? alunos.filter(a => a.situacao !== "cancelado") : alunos), icon: ICONS.users, aba: "alunos" },
     { rotulo: "Professores", valor: num(professores), icon: ICONS.users2, aba: "professores" },
     { rotulo: "Responsáveis", valor: num(responsaveis), icon: ICONS.user, aba: "responsaveis" },
     { rotulo: "Sem login", valor: semLogin, icon: ICONS.key, aba: null, alerta: semLogin !== "—" && semLogin > 0 },
@@ -5880,12 +5955,14 @@ function gestaoInstituicaoView(school){
   }).join("")}</div>`;
 
   return `
-    <h2 class="section-title">Gestão da unidade</h2>
-    <p class="section-eyebrow">Cadastros e acessos de ${escapeHtml(school.nome)}. Turmas de professores e vínculos de responsáveis ficam nas abas Professores e Responsáveis; contratos têm aba própria.</p>
-    ${resumo}
-    ${subNav}
-    ${corpo}
-    ${state.instituicaoMensagem ? `<p class="teacher-success institution-success">${escapeHtml(state.instituicaoMensagem)}</p>` : ""}`;
+    <div class="screen-layout screen-layout-gestao">
+      <header class="screen-intro"><div><span class="screen-kicker">Administração</span><h2 class="section-title">Gestão da unidade</h2>
+      <p class="section-eyebrow">Cadastros e acessos de ${escapeHtml(school.nome)}. Turmas de professores e vínculos de responsáveis ficam nas abas Professores e Responsáveis; contratos têm aba própria.</p></div></header>
+      ${resumo}
+      ${subNav}
+      ${corpo}
+      ${state.instituicaoMensagem ? `<p class="teacher-success institution-success">${escapeHtml(state.instituicaoMensagem)}</p>` : ""}
+    </div>`;
 }
 
 /* Aba "Professores": lista de quem já está cadastrado na unidade, com um
@@ -5932,9 +6009,9 @@ function gestaoCadastroView(school){
 
   // Só mostra o seletor de unidade(s) se a instituição tiver mais de uma
   // escola vinculada — professor de unidade única não precisa escolher.
-  const campoEscolasProfessor = (role === "professor" && escolasDisponiveis.length > 1) ? `
+  const campoEscolasProfessor = ((role === "professor" || role === "instituicao") && escolasDisponiveis.length > 1) ? `
         <div class="responsavel-vinculo-list" style="margin-top:8px;">
-          <p class="section-eyebrow" style="margin:6px 0 4px;">Dá aula em qual(is) unidade(s)?</p>
+          <p class="section-eyebrow" style="margin:6px 0 4px;">${role === "instituicao" ? "Terá acesso a qual(is) unidade(s)? Com mais de uma, ela escolhe a unidade ao entrar." : "Dá aula em qual(is) unidade(s)?"}</p>
           ${escolasDisponiveis.map(esc => `
             <label class="responsavel-vinculo-item">
               <input type="checkbox" data-action="toggle-escola-professor" data-escola="${escapeHtml(esc.id)}" ${state.novoUsuarioEscolasIds.includes(esc.id) ? "checked" : ""} />
@@ -6050,7 +6127,7 @@ function gestaoCadastroView(school){
     instituicao: {
       titulo: "Cadastro da equipe",
       itens: [
-        "Acesso administrativo completo à unidade atual.",
+        "Acesso administrativo completo às unidades marcadas (por padrão, só a atual).",
         "A pessoa troca a própria senha em Meu perfil.",
         "Só cadastre quem realmente precisa ver dados financeiros e de alunos.",
       ],
@@ -6243,7 +6320,7 @@ function pessoasDaAbaSenhas(){
     };
   };
   return [
-    ...(state.instAlunos || []).filter(a => a.uid || !ehTurmaDeRecreacao(a.turma)).map(a => montar("aluno", a)),
+    ...(state.instAlunos || []).filter(a => a.situacao !== "cancelado" && (a.uid || !ehTurmaDeRecreacao(a.turma))).map(a => montar("aluno", a)),
     ...(state.gestaoResponsaveis || []).map(r => montar("responsavel", r)),
   ].map(p => ({ ...p, foraPadrao: !!p.uid && loginForaDoPadrao(p.tipo, p.ref.nome, p.email) }));
 }
@@ -6444,8 +6521,9 @@ function senhasLoginView(school){
     ? `<p class="${state.senhasLoginMsg.tipo === "erro" ? "teacher-error" : "teacher-success"}" style="${state.senhasLoginMsg.tipo === "erro" ? "color:var(--red,#C4544A);font-size:12.5px;" : ""}margin:8px 0;">${escapeHtml(state.senhasLoginMsg.texto)}</p>` : "";
 
   return `
-    <h2 class="section-title">Senhas e login</h2>
-    <p class="section-eyebrow">${escapeHtml(school.nome)} · busque pelo nome para ver o login e a senha de um aluno ou responsável. A senha é gerada uma vez, fica guardada aqui e a família não precisa trocá-la.</p>
+    <div class="screen-layout screen-layout-senhas">
+      <header class="screen-intro"><div><span class="screen-kicker">Acesso à plataforma</span><h2 class="section-title">Senhas e login</h2>
+      <p class="section-eyebrow">${escapeHtml(school.nome)} · busque pelo nome para ver o login e a senha de um aluno ou responsável. A senha é gerada uma vez, fica guardada aqui e a família não precisa trocá-la.</p></div></header>
     <div class="management-card management-card-wide">
       ${senhasEsqueciHtml()}
       ${aviso}
@@ -6461,14 +6539,14 @@ function senhasLoginView(school){
       ${painelLiberarLista(liberada, pronto)}
       <div class="card flush">${linhas}</div>
       <p class="section-eyebrow" style="margin-top:10px;">Visível só para a equipe administrativa. Professores e equipe continuam em Gestão &gt; Senhas &amp; acessos.</p>
-    </div>`;
+    </div></div>`;
 }
 
 /* Quem está sem login de verdade: alunos (menos os só de Recreação, que
    não têm login por regra) e responsáveis sem uid. Professor sempre tem. */
 function pessoasSemLogin(){
   const alunos = (state.instAlunos || [])
-    .filter(a => !a.uid && !ehTurmaDeRecreacao(a.turma))
+    .filter(a => a.situacao !== "cancelado" && !a.uid && !ehTurmaDeRecreacao(a.turma))
     .map(a => ({ tipo: "aluno", ref: a }));
   const resps = (state.gestaoResponsaveis || [])
     .filter(r => !r.uid)
@@ -6677,7 +6755,7 @@ function gestaoAcessosView(){
   // buscar por nome sem se importar com a aba em que ela "mora".
   const pessoas = [];
   if(grupo === "todos" || grupo === "alunos" || grupo === "semlogin"){
-    (state.instAlunos || []).forEach(a => pessoas.push({
+    (state.instAlunos || []).filter(a => a.situacao !== "cancelado").forEach(a => pessoas.push({
       tipo: "aluno", docId: a.id, uid: a.uid || null,
       nome: a.nome, detalhe: a.turma || "Sem curso", email: a.email || "",
       semLoginNormal: !a.uid && ehTurmaDeRecreacao(a.turma),
@@ -6960,11 +7038,196 @@ function contratosView(school){
   }
 
   return `
-    <h2 class="section-title">Contratos</h2>
-    <p class="section-eyebrow">Gere, importe, renove e acompanhe a assinatura dos contratos de ${escapeHtml(school.nome)}.</p>
-    ${contratosSubnavHtml(tab, badges)}
-    ${corpo}
-    ${aviso}`;
+    <div class="screen-layout screen-layout-contratos">
+      <header class="screen-intro"><div><span class="screen-kicker">Matrículas e documentos</span><h2 class="section-title">Contratos</h2>
+      <p class="section-eyebrow">Gere, importe, renove e acompanhe a assinatura dos contratos de ${escapeHtml(school.nome)}.</p></div></header>
+      <div class="contratos-nav-wrap">${contratosSubnavHtml(tab, badges)}</div>
+      <div class="contratos-corpo">${corpo}</div>
+      ${aviso}
+    </div>`;
+}
+
+/* ---------- Cancelamento / encerramento do cadastro ---------- */
+/* Aluno saiu da escola: vira "cancelado", sai de TODAS as turmas (a chamada lê o NOME
+   dentro de turmas/{id}.alunos, então tirar de lá é o que faz ele sumir da chamada) e
+   sai do resumo da escola. O cadastro fica guardado como "cancelado" — é ele que
+   alimenta as Estatísticas e o histórico (contratos, financeiro). Para apagar de vez,
+   continua existindo "Excluir aluno". */
+async function cancelarMatriculaDoAluno(aluno, { motivo = "", data = "" } = {}){
+  const escolaId = state.escolaSelecionadaId;
+  const resumoAntigo = { nome: aluno.nome, turma: aluno.turma };
+  const dados = {
+    situacao: "cancelado",
+    situacaoEm: data || dataDeHojeISO(),
+    motivoSaida: String(motivo || "").trim(),
+  };
+  await updateDoc(doc(db, "alunos", aluno.id), dados);
+  Object.assign(aluno, dados);
+
+  let turmasOk = true;
+  try {
+    const alvoNome = normalizarNome(aluno.nome);
+    // homônimo ainda ativo na unidade: não mexe nas turmas, pra não tirar o aluno errado
+    const homonimo = (state.instAlunos || []).some(a => a.id !== aluno.id && a.situacao !== "cancelado" && normalizarNome(a.nome) === alvoNome);
+    if(!homonimo){
+      const turmasSnap = await getDocs(query(collection(db, "turmas"), where("escolaId", "==", escolaId)));
+      await Promise.all(turmasSnap.docs.map(async d => {
+        const gravados = (d.data().alunos || []).filter(n => normalizarNome(n) === alvoNome);
+        if(!gravados.length) return;
+        await updateDoc(d.ref, { alunos: arrayRemove(...gravados) });
+        const local = (state.instTurmas || []).find(t => t.id === d.id);
+        if(local) local.alunos = (local.alunos || []).filter(n => normalizarNome(n) !== alvoNome);
+      }));
+    } else {
+      turmasOk = false;
+    }
+  } catch(e){
+    turmasOk = false;
+    console.warn("Não consegui tirar o aluno cancelado das turmas:", e?.code || e);
+  }
+  try {
+    await updateDoc(doc(db, "escolas", escolaId), { alunos: arrayRemove(resumoAntigo) });
+  } catch(_e){ /* resumo da escola: não bloqueia o cancelamento */ }
+  return { turmasOk };
+}
+
+function mensagemDeCancelamento(aluno, r){
+  return `Matrícula de ${aluno.nome} cancelada.` + (r.turmasOk
+    ? " Ele saiu das turmas e deixou de entrar na chamada."
+    : " Atenção: não consegui tirar o nome das turmas (ou há outro aluno ativo com o mesmo nome). Confira na ficha, em “Turmas”.");
+}
+
+/* ---------- Término do contrato (obrigatório) ---------- */
+function isoMaisDias(n){
+  const d = new Date();
+  d.setDate(d.getDate() + n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/* Alunos ativos sem data de término do contrato: nenhuma matrícula registrada, ou
+   matrícula sem término. Essas pessoas precisam ter a data informada. */
+function pendenciasDeTermino(){
+  const out = [];
+  (state.instAlunos || []).filter(a => a.situacao === "ativo").forEach(a => {
+    const ms = a.matriculas || [];
+    if(!ms.length) out.push({ aluno: a, mat: null });
+    else ms.filter(m => !m.termino).forEach(m => out.push({ aluno: a, mat: m }));
+  });
+  return out.sort((x, y) => x.aluno.nome.localeCompare(y.aluno.nome));
+}
+
+/* Contratos vencidos ou que vencem nos próximos 7 dias (alunos ativos). */
+function vencimentosParaAviso(){
+  const hoje = dataDeHojeISO();
+  const limite = isoMaisDias(7);
+  return matriculasDaUnidade()
+    .filter(l => l.mat.termino && l.mat.termino <= limite)
+    .map(l => ({ ...l, vencido: l.mat.termino < hoje }));
+}
+
+async function definirTerminoDaMatricula(alunoId, matId, curso, termino){
+  if(!matId) return registrarMatricula(alunoId, { curso, inicio: "", termino, meses: 0 });
+  const ref = doc(db, "alunos", alunoId);
+  const snap = await getDoc(ref);
+  const atuais = normalizarMatriculas(snap.data()?.matriculas);
+  const lista = atuais.map(m => m.id === matId ? { ...m, termino, curso: m.curso || curso } : m);
+  await updateDoc(ref, { matriculas: lista });
+  const local = (state.instAlunos || []).find(a => a.id === alunoId);
+  if(local) local.matriculas = lista;
+}
+
+function abrirTerminoModal(alunoId, matId){
+  const aluno = (state.instAlunos || []).find(a => a.id === alunoId);
+  if(!aluno) return;
+  const mat = (aluno.matriculas || []).find(m => m.id === matId) || null;
+  state.terminoModal = {
+    aberto: true, alunoId: aluno.id, alunoNome: aluno.nome, matId: mat?.id || "",
+    curso: mat?.curso || aluno.turma || "", termino: mat?.termino || "", salvando: false, erro: "",
+  };
+  render();
+}
+
+function terminoModalHtml(){
+  const m = state.terminoModal;
+  if(!m || !m.aberto) return "";
+  return `
+  <div class="aluno-modal-backdrop" data-action="termino-fechar">
+    <div class="aluno-modal" role="dialog" aria-modal="true" aria-label="Informar término do contrato" data-action="noop" style="max-width:460px;">
+      <div class="aluno-modal-head">
+        <div><h2>Término do contrato</h2><p class="section-eyebrow" style="margin:2px 0 0;">${escapeHtml(m.alunoNome)}</p></div>
+        <button type="button" class="secretaria-modal-close" style="color:var(--slate);" data-action="termino-fechar" aria-label="Fechar">${ICONS.close}</button>
+      </div>
+      <div class="aluno-modal-section">
+        <label class="teacher-label" for="termino-curso" style="display:block;">Curso do contrato</label>
+        <input id="termino-curso" class="teacher-text-input" placeholder="Ex.: Inglês, Reforço…" value="${escapeHtml(m.curso)}" />
+        <label class="teacher-label" for="termino-data" style="display:block;margin-top:10px;">Data de término do contrato</label>
+        <input id="termino-data" type="date" class="teacher-text-input" value="${escapeHtml(m.termino)}" />
+        <p class="section-eyebrow" style="margin:6px 0 0;">Com a data registrada, o aluno entra no controle de vencimento e na aba Renovações.</p>
+        ${m.erro ? `<p class="teacher-error" style="color:var(--red);font-size:12.5px;margin-top:8px;">${escapeHtml(m.erro)}</p>` : ""}
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;">
+          <button type="button" class="teacher-primary-btn" style="margin-top:0;" data-action="termino-salvar" ${m.salvando ? "disabled" : ""}>${m.salvando ? "Salvando…" : "Salvar término"}</button>
+          <button type="button" class="btn-secondary" data-action="termino-fechar" ${m.salvando ? "disabled" : ""}>Cancelar</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+/* ---------- Aviso de contratos vencendo / sem término ---------- */
+/* Abre sozinho (uma vez por sessão) quando há contrato vencido, vencendo em até 7 dias
+   ou aluno sem data de término. Leva para a tela de renovação; quem não renovar pode
+   ser cancelado ali mesmo (sai da turma e da chamada). */
+function avisoVencimentosModal(){
+  const escolaId = state.escolaSelecionadaId;
+  if(!escolaId || state.avisoVencDispensado) return "";
+  if(state.instAlunos === null || state.instAlunosEscolaId !== escolaId){
+    if(!state.instAlunosCarregando) setTimeout(() => {
+      if(state.instAlunos === null && !state.instAlunosCarregando) carregarAlunosDaInstituicao(escolaId);
+    }, 0);
+    return "";
+  }
+  if(state.renovacao?.aberto || state.terminoModal?.aberto) return "";
+  const venc = vencimentosParaAviso();
+  const semTermino = pendenciasDeTermino();
+  if(!venc.length && !semTermino.length) return "";
+
+  const linha = ({ aluno, mat, vencido }) => `
+    <div class="pendente-contrato-item">
+      <div class="pendente-contrato-info">
+        <strong>${escapeHtml(aluno.nome)}</strong>
+        <span>${escapeHtml(mat.curso || "Curso não informado")} · ${vencido ? `<span class="renov-pill is-vencido">Venceu em ${escapeHtml(formatarDataBr(mat.termino))}</span>` : `<span class="renov-pill is-vencendo">Vence em ${escapeHtml(formatarDataBr(mat.termino))}</span>`}</span>
+      </div>
+      <div class="pendente-contrato-acoes">
+        <button type="button" class="aniversario-btn" data-action="renovar-abrir" data-aluno="${escapeHtml(aluno.id)}" data-mat="${escapeHtml(mat.id)}" data-meses="6">Renovar</button>
+        ${vencido ? `<button type="button" class="btn-danger" style="padding:6px 10px;font-size:12.5px;" data-action="renov-cancelar-aluno" data-aluno="${escapeHtml(aluno.id)}" ${state.renovCancelandoId ? "disabled" : ""}>${state.renovCancelandoId === aluno.id ? "Cancelando…" : "Não renovou — cancelar"}</button>` : ""}
+      </div>
+    </div>`;
+
+  const vencHtml = venc.length ? `
+    <h3 class="teacher-label" style="margin-top:4px;">Contratos vencidos ou vencendo (${venc.length})</h3>
+    <div class="pendente-contrato-lista">${venc.slice(0, 15).map(linha).join("")}</div>
+    ${venc.length > 15 ? `<p class="section-eyebrow" style="margin:6px 0 0;">E mais ${venc.length - 15}. Veja todos na aba Contratos › Renovar.</p>` : ""}` : "";
+  const semHtml = semTermino.length ? `
+    <h3 class="teacher-label" style="margin-top:14px;">Sem data de término do contrato (${semTermino.length})</h3>
+    <p class="section-eyebrow" style="margin:0;">Esses alunos precisam ter a data de término informada. Faça isso em Contratos › Renovar.</p>` : "";
+
+  return `
+  <div class="aluno-modal-backdrop" data-action="aviso-venc-fechar">
+    <div class="aluno-modal" role="dialog" aria-modal="true" aria-label="Contratos para renovar" data-action="noop" style="max-width:640px;">
+      <div class="aluno-modal-head">
+        <div><h2>Contratos para renovar</h2><p class="section-eyebrow" style="margin:2px 0 0;">Quem não renovar tem o cadastro cancelado e sai das turmas e da chamada.</p></div>
+        <button type="button" class="secretaria-modal-close" style="color:var(--slate);" data-action="aviso-venc-fechar" aria-label="Fechar">${ICONS.close}</button>
+      </div>
+      <div class="aluno-modal-section">
+        ${vencHtml}${semHtml}
+        ${state.instituicaoMensagem ? `<p class="teacher-success" style="margin-top:10px;">${escapeHtml(state.instituicaoMensagem)}</p>` : ""}
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px;">
+          <button type="button" class="teacher-primary-btn" style="margin-top:0;" data-action="aviso-venc-ir">Ir para a tela de renovação</button>
+          <button type="button" class="btn-secondary" data-action="aviso-venc-fechar">Lembrar depois</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
 }
 
 /* ---------- Renovações ---------- */
@@ -6980,7 +7243,8 @@ function matriculasDaUnidade(){
 }
 
 function contarRenovacoesAtencao(){
-  return matriculasDaUnidade().filter(l => l.sit.tipo === "vencido" || l.sit.tipo === "vencendo").length;
+  return matriculasDaUnidade().filter(l => l.sit.tipo === "vencido" || l.sit.tipo === "vencendo").length
+    + pendenciasDeTermino().length;
 }
 
 function linhaRenovacaoHtml({ aluno, mat, sit }){
@@ -6998,8 +7262,30 @@ function linhaRenovacaoHtml({ aluno, mat, sit }){
       <div class="pendente-contrato-acoes">
         <button type="button" class="aniversario-btn" data-action="renovar-abrir" data-aluno="${escapeHtml(aluno.id)}" data-mat="${escapeHtml(mat.id)}" data-meses="6">Renovar 6 meses</button>
         <button type="button" class="aniversario-btn" data-action="renovar-abrir" data-aluno="${escapeHtml(aluno.id)}" data-mat="${escapeHtml(mat.id)}" data-meses="12">Renovar 1 ano</button>
+        ${sit.tipo === "vencido" ? `<button type="button" class="btn-danger" style="padding:6px 10px;font-size:12.5px;" data-action="renov-cancelar-aluno" data-aluno="${escapeHtml(aluno.id)}" ${state.renovCancelandoId ? "disabled" : ""}>${state.renovCancelandoId === aluno.id ? "Cancelando…" : "Não renovou — cancelar"}</button>` : ""}
       </div>
     </div>`;
+}
+
+function semTerminoHtml(){
+  const lista = pendenciasDeTermino();
+  if(!lista.length) return "";
+  return `
+      <div class="renov-escolher" style="border-color:var(--gold, #b8893b);">
+        <h4 class="teacher-label" style="margin:0 0 4px;">Sem data de término do contrato (${lista.length})</h4>
+        <p class="section-eyebrow" style="margin:0 0 8px;">Informe a data de término de cada aluno abaixo. Sem ela o sistema não consegue avisar quando o contrato vencer.</p>
+        <div class="pendente-contrato-lista">${lista.slice(0, 40).map(({ aluno, mat }) => `
+          <div class="pendente-contrato-item">
+            <div class="pendente-contrato-info">
+              <strong>${escapeHtml(aluno.nome)}</strong>
+              <span>${escapeHtml((mat && mat.curso) || aluno.turma || "Sem curso")} · <span class="renov-pill">Sem término registrado</span></span>
+            </div>
+            <div class="pendente-contrato-acoes">
+              <button type="button" class="aniversario-btn" data-action="termino-abrir" data-aluno="${escapeHtml(aluno.id)}" data-mat="${escapeHtml(mat ? mat.id : "")}">Informar término</button>
+            </div>
+          </div>`).join("")}</div>
+        ${lista.length > 40 ? `<p class="section-eyebrow" style="margin:6px 0 0;">Mostrando 40 de ${lista.length}; ao salvar, a lista avança.</p>` : ""}
+      </div>`;
 }
 
 function contratosRenovarView(){
@@ -7038,6 +7324,7 @@ function contratosRenovarView(){
     <div class="management-card management-card-wide" style="max-width:none;">
       <h3>Renovar contratos${state.renovFiltro === "todos" || busca ? "" : ` (${atencao.length})`}</h3>
       <p>Renove por 6 meses ou 1 ano sem gerar contrato novo: o aluno mantém o contrato, o cadastro e os logins. O novo término conta a partir do dia seguinte ao término atual.</p>
+      ${semTerminoHtml()}
       <div class="renov-escolher">
         <label class="contrato-campo" style="max-width:460px;">
           <span>Renovar um aluno específico</span>
@@ -7687,7 +7974,7 @@ async function mudarPapelNovoUsuario(papel){
   if(papel === "responsavel" && state.escolaSelecionadaId){
     await carregarAlunosParaVinculo(state.escolaSelecionadaId);
   }
-  if(papel === "professor" && state.novoUsuarioEscolasIds.length === 0 && state.escolaSelecionadaId){
+  if((papel === "professor" || papel === "instituicao") && state.novoUsuarioEscolasIds.length === 0 && state.escolaSelecionadaId){
     // começa marcado só na unidade atual; a secretaria desmarca/marca
     // outras se o professor também der aula nelas.
     state.novoUsuarioEscolasIds = [state.escolaSelecionadaId];
@@ -10179,7 +10466,10 @@ async function criarUsuarioNaInstituicao({ role, nome, email, senha, escolaId, e
       usuarioDoc.escolasIds = listaEscolas;
       usuarioDoc.escolaId = listaEscolas[0];
     }
-    if(role === "instituicao") usuarioDoc.escolasIds = [escolaId];
+    if(role === "instituicao"){
+      // Equipe pode ter acesso a mais de uma unidade (a pessoa escolhe a unidade ao entrar).
+      usuarioDoc.escolasIds = (escolasIds && escolasIds.length) ? escolasIds : [escolaId];
+    }
 
     await setDoc(doc(db, "usuarios", uid), usuarioDoc);
 
@@ -11109,36 +11399,36 @@ function estatisticasVisaoGeralHtml(school){
     <button type="button" class="subtab-btn ${state.estPeriodo === p.key ? "active" : ""}" data-action="set-est-periodo" data-key="${p.key}"><span>${p.label}</span></button>`).join("")}</div>`;
 
   return `
-    <h2 class="section-title">Visão geral</h2>
-    <p class="section-eyebrow">${escapeHtml(school.nome)} · período: ${escapeHtml(periodoLabel)} (a partir de ${escapeHtml(formatarDataBr(inicio))})</p>
-    ${periodoBar}
-
-    <h2 class="section-title" style="margin-top:18px;">Alunos</h2>
-    <div class="grid-cards">
+    <div class="stats-overview">
+      <header class="stats-overview-head"><div><span class="screen-kicker">Visão geral</span><h3>Indicadores da unidade</h3>
+        <p>${escapeHtml(school.nome)} · período: ${escapeHtml(periodoLabel)} (a partir de ${escapeHtml(formatarDataBr(inicio))})</p></div>
+        ${periodoBar}
+      </header>
+      <section class="stats-section"><div class="stats-section-head"><div><span class="screen-kicker">Matrículas</span><h3>Alunos</h3></div></div>
+      <div class="grid-cards">
       ${estCard("Alunos ativos", ativos.length, `${alunos.length} cadastrados no total`)}
       ${estCard("Alunos inativos", inativos.length, inativados.length ? `${inativados.length} ficaram inativos no período` : "Pausaram ou trancaram")}
       ${estCard("Alunos novos", novos.length, `Matriculados no período`, "var(--green, #2f6b4f)")}
       ${estCard("Cancelamentos", cancelamentos.length, `${cancelados.length} cancelados no total`, cancelamentos.length ? "var(--red)" : "")}
       ${estCard("Saldo do período", (saldo > 0 ? "+" : "") + saldo, "Novos menos cancelamentos", saldo < 0 ? "var(--red)" : "")}
       ${estCard("Aniversariantes do mês", aniversariantes, "Entre os alunos ativos")}
-    </div>
-    ${semMatricula ? `<p class="section-eyebrow" style="margin-top:10px;">${semMatricula} aluno(s) sem data de matrícula não entram em "alunos novos". Preencha em Alunos → ficha → Situação na escola.</p>` : ""}
+      </div>
+      ${semMatricula ? `<p class="section-eyebrow stats-footnote">${semMatricula} aluno(s) sem data de matrícula não entram em "alunos novos". Preencha em Alunos → ficha → Situação na escola.</p>` : ""}</section>
 
-    <h2 class="section-title" style="margin-top:22px;">Contratos</h2>
-    <div class="grid-cards">
+      <section class="stats-section"><div class="stats-section-head"><div><span class="screen-kicker">Documentação</span><h3>Contratos</h3></div></div>
+      <div class="grid-cards">
       ${estCard("Assinados", assinados.length, pctAssinado === null ? "" : `${pctAssinado}% dos alunos (sem contar cancelados)`, "var(--green, #2f6b4f)")}
       ${estCard("Pendentes de assinatura", pendentes.length, pendentes7 ? `${pendentes7} há mais de 7 dias` : "Nenhum atrasado", pendentes7 ? "var(--red)" : "")}
       ${estCard("Sem contrato registrado", semContrato.length, "Alunos sem status de contrato")}
+      </div>
+      <div class="stats-subsection"><h4>Aguardando assinatura</h4><div class="card flush">${pendentesHtml}</div></div></section>
+
+      <section class="stats-section"><div class="stats-section-head"><div><span class="screen-kicker">Movimentação</span><h3>Entradas e saídas</h3></div><span class="stats-note">Cancelamentos e alunos que ficaram inativos no período</span></div>
+      <div class="card flush">${saidasHtml}</div></section>
+
+      <section class="stats-section"><div class="stats-section-head"><div><span class="screen-kicker">Distribuição</span><h3>Alunos ativos por turma</h3></div></div>
+      <div class="card flush">${turmasHtml}</div></section>
     </div>
-    <h3 style="font-family:var(--font-display);font-size:17px;color:var(--ink);font-weight:500;margin-top:16px;">Aguardando assinatura</h3>
-    <div class="card flush">${pendentesHtml}</div>
-
-    <h2 class="section-title" style="margin-top:22px;">Entradas e saídas</h2>
-    <p class="section-eyebrow">Cancelamentos e alunos que ficaram inativos no período.</p>
-    <div class="card flush">${saidasHtml}</div>
-
-    <h2 class="section-title" style="margin-top:22px;">Alunos ativos por turma</h2>
-    <div class="card flush">${turmasHtml}</div>
   `;
 }
 
@@ -11189,12 +11479,12 @@ function estatisticasView(school){
       return `
       <div class="card${destaque ? " turma-destaque-card" : ""}" style="${destaque ? "" : ""}">
         ${destaque ? `<div class="turma-destaque-badge">${ICONS.trendUp} Maior frequência</div>` : ""}
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
-          <div>
-            <div style="font-size:15.5px;font-weight:600;color:var(--ink);">${escapeHtml(t.nome)}</div>
-            ${t.disciplina ? `<div style="font-size:12.5px;color:var(--slate);margin-top:2px;">${escapeHtml(t.disciplina)}</div>` : ""}
+        <div class="stats-turma-head">
+          <div class="stats-turma-info">
+            <div class="stats-turma-nome">${escapeHtml(t.nome)}</div>
+            ${t.disciplina ? `<div class="stats-turma-disciplina">${escapeHtml(t.disciplina)}</div>` : ""}
           </div>
-          ${presencaHojeHtml}
+          <div class="stats-turma-status">${presencaHojeHtml}</div>
         </div>
         ${frequenciaHtml}
       </div>`;
@@ -11202,13 +11492,15 @@ function estatisticasView(school){
   }
 
   return `
-    ${estatisticasVisaoGeralHtml(school)}
-    <h2 class="section-title" style="margin-top:28px;">Frequência de hoje</h2>
-    <p class="section-eyebrow">${escapeHtml(dataDeHojeExtenso())}</p>
-    <div class="grid-cards turma-cards-grid">${turmasHtml}</div>
-    <h2 class="section-title" style="margin-top:22px;">Alunos com mais faltas</h2>
-    <p class="section-eyebrow">Últimos 30 dias · acompanhamento recomendado</p>
-    <div class="card flush">${faltantes}</div>`;
+    <div class="screen-layout screen-layout-estatisticas">
+      <header class="screen-intro"><div><span class="screen-kicker">Acompanhamento da unidade</span><h2 class="section-title">Estatísticas</h2>
+      <p class="section-eyebrow">Indicadores de matrícula, presença e atividade de ${escapeHtml(school.nome)}.</p></div></header>
+      ${estatisticasVisaoGeralHtml(school)}
+      <section class="stats-section"><div class="stats-section-head"><div><span class="screen-kicker">Hoje</span><h3>Frequência por turma</h3></div><span class="stats-date">${escapeHtml(dataDeHojeExtenso())}</span></div>
+      <div class="grid-cards turma-cards-grid">${turmasHtml}</div></section>
+      <section class="stats-section stats-absenteismo"><div class="stats-section-head"><div><span class="screen-kicker">Últimos 30 dias</span><h3>Alunos com mais faltas</h3></div><span class="stats-note">Acompanhamento recomendado</span></div>
+      <div class="card flush">${faltantes}</div></section>
+    </div>`;
 }
 
 /* Todas as cobranças de todos os alunos da unidade, já com o aluno dono
@@ -11223,11 +11515,13 @@ function todasCobrancas(alunos){
 }
 
 function financeiroInstituicaoView(school){
+  const cabecalho = `<header class="screen-intro"><div><span class="screen-kicker">Cobranças da unidade</span><h2 class="section-title">Financeiro</h2>
+    <p class="section-eyebrow">Consulte pagamentos, lance cobranças avulsas e prepare carnês em um só lugar.</p></div></header>`;
   if(state.instAlunosCarregando && state.instAlunos === null){
-    return `<h2 class="section-title">Financeiro</h2><div style="padding:20px;font-size:14px;color:var(--slate);">Carregando financeiro…</div>`;
+    return `<div class="screen-layout screen-layout-financeiro">${cabecalho}<div class="financeiro-estado">Carregando financeiro…</div></div>`;
   }
   if(state.instAlunosErro){
-    return `<h2 class="section-title">Financeiro</h2><div style="padding:20px;font-size:14px;color:var(--red);">${escapeHtml(state.instAlunosErro)}</div>`;
+    return `<div class="screen-layout screen-layout-financeiro">${cabecalho}<div class="financeiro-estado financeiro-estado-erro">${escapeHtml(state.instAlunosErro)}</div></div>`;
   }
 
   const subTabs = [
@@ -11235,7 +11529,7 @@ function financeiroInstituicaoView(school){
     { key: "lancar", label: "Cobrança avulsa", icon: ICONS.fileText },
     { key: "carne", label: "Carnê", icon: ICONS.upload },
   ];
-  const subNav = `<div class="subtab-bar">${subTabs.map(t => `
+  const subNav = `<div class="subtab-bar financeiro-subtabs">${subTabs.map(t => `
     <button type="button" class="subtab-btn ${state.finSubTab === t.key ? "active" : ""}" data-action="set-fin-subtab" data-key="${t.key}">
       ${t.icon}<span>${t.label}</span>
     </button>`).join("")}</div>`;
@@ -11245,10 +11539,11 @@ function financeiroInstituicaoView(school){
     : (state.finSubTab === "carne" ? financeiroCarneView() : financeiroConsultarView());
 
   return `
-    <h2 class="section-title">Financeiro</h2>
-    ${subNav}
-    ${corpo}
-    ${state.instituicaoMensagem ? `<p class="teacher-success institution-success">${escapeHtml(state.instituicaoMensagem)}</p>` : ""}`;
+    <div class="screen-layout screen-layout-financeiro">
+      ${cabecalho}
+      <div class="financeiro-workspace">${subNav}<div class="financeiro-corpo">${corpo}</div></div>
+      ${state.instituicaoMensagem ? `<p class="teacher-success institution-success">${escapeHtml(state.instituicaoMensagem)}</p>` : ""}
+    </div>`;
 }
 
 /* Busca de aluno (Financeiro > Lançar cobrança). Sem escolha feita: campo de
@@ -11416,21 +11711,27 @@ function alunosView(school){
     rows = `<div style="padding:20px;font-size:14px;color:var(--red);">${escapeHtml(state.instAlunosErro)}</div>`;
     total = school.alunos.length;
   } else {
-    const filtrados = (lista || []).filter(s => s.nome.toLowerCase().includes(busca));
+    const termoBusca = semAcento(state.alunosBusca).trim();
+    const filtrados = (lista || []).filter(s => (!termoBusca
+        || semAcento(s.nome).includes(termoBusca)
+        || semAcento(s.turma).includes(termoBusca)
+        || semAcento(s.idAluno).includes(termoBusca))
+      && (state.alunosMostrarCancelados || s.situacao !== "cancelado"));
     rows = filtrados.map(s => `
       <button type="button" class="row aluno-row pessoa-row" data-action="abrir-aluno" data-id="${escapeHtml(s.id)}">
         ${avatarHtml(fotoDoAluno(s), iniciaisDoNome(s.nome))}
         <span class="pessoa-info">
           <span class="pessoa-nome">${escapeHtml(s.nome)}</span>
-          <span class="pessoa-sub">${escapeHtml(s.turma || "Sem turma")}</span>
+          <span class="pessoa-sub">${escapeHtml(s.turma || "Sem turma")}${s.situacao === "cancelado" ? " · Cancelado" : s.situacao === "inativo" ? " · Inativo" : ""}</span>
         </span>
         <span class="pessoa-meta">
           ${s.idAluno ? `<span class="id-aluno-tag">ID ${escapeHtml(s.idAluno)}</span>` : ""}
           <span class="pessoa-chevron">${ICONS.chevronRight}</span>
         </span>
       </button>`).join("") || `<div class="lista-vazia">Nenhum aluno encontrado.</div>`;
-    total = (lista || []).length;
+    total = (lista || []).filter(a => a.situacao !== "cancelado").length;
   }
+  const qtdCancelados = (lista || []).filter(a => a.situacao === "cancelado").length;
 
   const comLoginRec = state.instAlunos ? alunosRecreacaoComLogin() : [];
   const avisoLoginRec = comLoginRec.length > 0 ? `
@@ -11458,14 +11759,20 @@ function alunosView(school){
     <div class="lista-toolbar">
       <div class="search-wrap">
         ${ICONS.search}
-        <input class="search-input" id="alunos-busca" placeholder="Buscar aluno pelo nome" value="${escapeHtml(state.alunosBusca)}" />
+        <input class="search-input" id="alunos-busca" placeholder="Buscar por nome, turma ou ID" value="${escapeHtml(state.alunosBusca)}" />
       </div>
       <span class="lista-contador"><strong>${total}</strong> ${total === 1 ? "aluno ativo" : "alunos ativos"}</span>
+      ${qtdCancelados ? `<button type="button" class="btn-secondary" data-action="alunos-toggle-cancelados">${state.alunosMostrarCancelados ? "Ocultar cancelados" : `Ver cancelados (${qtdCancelados})`}</button>` : ""}
     </div>
-    ${avisoLoginRec}
-    ${avisoSemId}
     <div class="card flush lista-pessoas">${rows}</div>
-    ${state.instituicaoMensagem ? `<p class="teacher-success institution-success">${escapeHtml(state.instituicaoMensagem)}</p>` : ""}`;
+    ${state.instituicaoMensagem ? `<p class="teacher-success institution-success">${escapeHtml(state.instituicaoMensagem)}</p>` : ""}
+    ${(avisoLoginRec || avisoSemId) ? `
+    <details class="alunos-manutencao" ${(state.removerLoginConfirmando || state.removerLoginRodando || state.gerandoIdAluno) ? "open" : ""}>
+      <summary>Manutenção de cadastros${(comLoginRec.length || semId) ? ` <span class="alunos-manutencao-qtd">${(comLoginRec.length ? 1 : 0) + (semId ? 1 : 0)}</span>` : ""}</summary>
+      <p class="section-eyebrow" style="margin:8px 0 12px;">Ações em lote para vários alunos de uma vez. Ficam aqui embaixo de propósito, longe da lista.</p>
+      ${avisoLoginRec}
+      ${avisoSemId}
+    </details>` : ""}`;
 }
 
 /* ------------------------------------------------------------------
@@ -11746,6 +12053,19 @@ function alunoDetalheModal(){
       </div>`).join("")}</div>`;
   }
 
+  const cancelarHtml = aluno.situacao === "cancelado" ? `
+    <p class="section-eyebrow" style="margin:12px 0 0;">Matrícula cancelada${aluno.situacaoEm ? ` em ${escapeHtml(formatarDataBr(aluno.situacaoEm))}` : ""}. Ele não aparece mais nas turmas nem na chamada. Para reativar, mude a situação para “Ativo” e coloque-o na turma de novo.</p>`
+    : state.alunoCancelConfirmando ? `
+    <div class="aluno-modal-confirm" style="margin-top:12px;">
+      <p>Cancelar a matrícula de <strong>${escapeHtml(aluno.nome)}</strong>? Ele sai de todas as turmas, deixa de ser contado na chamada e some das listas. O cadastro fica guardado como “Cancelado” (Estatísticas e histórico).</p>
+      <input id="aluno-cancel-motivo" class="teacher-text-input" placeholder="Motivo do cancelamento (opcional)" value="${escapeHtml(state.alunoCancelMotivo)}" />
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;">
+        <button type="button" class="btn-danger" data-action="confirmar-cancelamento-aluno" ${state.alunoCancelando ? "disabled" : ""}>${state.alunoCancelando ? "Cancelando…" : "Sim, cancelar matrícula"}</button>
+        <button type="button" class="btn-secondary" data-action="desistir-cancelamento-aluno" ${state.alunoCancelando ? "disabled" : ""}>Voltar</button>
+      </div>
+    </div>` : `
+    <button type="button" class="btn-danger" style="margin-top:12px;" data-action="iniciar-cancelamento-aluno">Cancelar matrícula (aluno saiu da escola)</button>`;
+
   const excluirHtml = state.alunoExcluirConfirmando ? `
     <div class="aluno-modal-confirm">
       <p>Tem certeza? Essa ação apaga o cadastro do aluno e não pode ser desfeita.</p>
@@ -11756,9 +12076,149 @@ function alunoDetalheModal(){
     </div>` : `
     <button type="button" class="btn-danger" data-action="iniciar-exclusao-aluno">${ICONS.trash} Excluir aluno</button>`;
 
+  const abas = [
+    { key: "dados", label: "Dados" },
+    { key: "turmas", label: "Turmas" },
+    { key: "financeiro", label: "Financeiro" },
+    { key: "responsaveis", label: "Responsáveis" },
+    { key: "saude", label: "Saúde" },
+    { key: "acesso", label: "Acesso" },
+  ];
+  const aba = abas.some(a => a.key === state.alunoModalAba) ? state.alunoModalAba : "dados";
+
+  const abaDados = `
+      <div class="aluno-modal-section">
+        <h3 class="teacher-label">Dados do aluno</h3>
+        <div class="am-grid">
+          <div class="am-full">
+            <label class="teacher-label" for="aluno-detalhe-nome">Nome do aluno</label>
+            <input id="aluno-detalhe-nome" class="teacher-text-input" placeholder="Nome completo" value="${escapeHtml(state.alunoDetalheNomeInput)}" />
+          </div>
+          <div class="am-full">
+            <label class="teacher-label" for="aluno-detalhe-contato">Contato</label>
+            <input id="aluno-detalhe-contato" class="teacher-text-input" placeholder="WhatsApp (com DDD) ou e-mail" value="${escapeHtml(state.alunoDetalheContatoInput)}" />
+          </div>
+          <div>
+            <label class="teacher-label" for="aluno-detalhe-nascimento">Data de nascimento</label>
+            <input id="aluno-detalhe-nascimento" type="date" class="teacher-text-input" value="${escapeHtml(state.alunoDetalheNascimentoInput)}" />
+          </div>
+          <div>
+            <label class="teacher-label" for="aluno-detalhe-sexo">Aluno(a) é</label>
+            <select id="aluno-detalhe-sexo" class="teacher-text-input">
+              <option value="" ${!state.alunoDetalheSexoInput ? "selected" : ""} disabled>Selecione</option>
+              <option value="masculino" ${state.alunoDetalheSexoInput === "masculino" ? "selected" : ""}>Menino</option>
+              <option value="feminino" ${state.alunoDetalheSexoInput === "feminino" ? "selected" : ""}>Menina</option>
+            </select>
+          </div>
+        </div>
+        <p class="section-eyebrow am-dica">Com a data preenchida o aluno aparece na aba "Aniversários". Menino/menina define a foto padrão da lista e da ficha.</p>
+        <div class="am-rodape">
+          <button type="button" class="teacher-primary-btn" data-action="salvar-aluno-contato" ${state.alunoDetalheSalvandoContato ? "disabled" : ""}>${state.alunoDetalheSalvandoContato ? "Salvando…" : "Salvar dados"}</button>
+        </div>
+      </div>
+
+      <div class="aluno-modal-section">
+        <h3 class="teacher-label">Situação na escola</h3>
+        <div class="am-grid">
+          <div>
+            <label class="teacher-label" for="aluno-sit-situacao">Situação</label>
+            <select id="aluno-sit-situacao" class="teacher-text-input">
+              <option value="ativo" ${state.alunoSitSituacao === "ativo" ? "selected" : ""}>Ativo</option>
+              <option value="inativo" ${state.alunoSitSituacao === "inativo" ? "selected" : ""}>Inativo (pausou ou trancou)</option>
+              <option value="cancelado" ${state.alunoSitSituacao === "cancelado" ? "selected" : ""}>Cancelado (saiu da escola)</option>
+            </select>
+          </div>
+          <div>
+            <label class="teacher-label" for="aluno-sit-matricula">Matriculado em</label>
+            <input id="aluno-sit-matricula" type="date" class="teacher-text-input" value="${escapeHtml(state.alunoSitMatricula)}" />
+          </div>
+          ${state.alunoSitSituacao !== "ativo" ? `
+          <div>
+            <label class="teacher-label" for="aluno-sit-data">${state.alunoSitSituacao === "cancelado" ? "Data do cancelamento" : "Inativo desde"}</label>
+            <input id="aluno-sit-data" type="date" class="teacher-text-input" value="${escapeHtml(state.alunoSitData)}" />
+          </div>
+          <div>
+            <label class="teacher-label" for="aluno-sit-motivo">Motivo (opcional)</label>
+            <input id="aluno-sit-motivo" class="teacher-text-input" placeholder="Motivo" value="${escapeHtml(state.alunoSitMotivo)}" />
+          </div>` : ""}
+        </div>
+        <p class="section-eyebrow am-dica">Alimenta a aba Estatísticas (alunos novos, ativos, inativos e cancelamentos).</p>
+        ${state.alunoSitErro ? `<p class="teacher-error" style="color:var(--red);font-size:12.5px;margin-top:8px;">${escapeHtml(state.alunoSitErro)}</p>` : ""}
+        ${state.alunoSitMensagem ? `<p class="teacher-success" style="margin-top:8px;">${escapeHtml(state.alunoSitMensagem)}</p>` : ""}
+        <div class="am-rodape">
+          <button type="button" class="teacher-primary-btn" data-action="salvar-situacao-aluno" ${state.alunoSitSalvando ? "disabled" : ""}>${state.alunoSitSalvando ? "Salvando…" : "Salvar situação"}</button>
+        </div>
+      </div>`;
+
+  const abaTurmas = `
+      <div class="aluno-modal-section">
+        <h3 class="teacher-label">Turmas</h3>
+        ${turmasHtml}
+        ${state.alunoTurmaErro ? `<p class="teacher-error" style="color:var(--red);font-size:12.5px;margin-top:8px;">${escapeHtml(state.alunoTurmaErro)}</p>` : ""}
+        ${state.alunoTurmaMensagem ? `<p class="teacher-success" style="margin-top:8px;">${escapeHtml(state.alunoTurmaMensagem)}</p>` : ""}
+      </div>
+      ${contratosAlunoSection(aluno)}`;
+
+  const abaFinanceiro = `
+      <div class="aluno-modal-section">
+        <h3 class="teacher-label">Frequência</h3>
+        <p class="section-eyebrow" style="margin:0;">${aluno.presenca.percentual}% de presença · ${aluno.presenca.faltasMes} faltas no mês</p>
+      </div>
+      ${financeiroAlunoSection(aluno)}`;
+
+  const abaResponsaveis = `
+      <div class="aluno-modal-section">
+        <h3 class="teacher-label">Responsáveis vinculados</h3>
+        ${respHtml}
+      </div>
+      <div class="aluno-modal-section">
+        <h3 class="teacher-label">Cadastrar responsável</h3>
+        <div class="am-grid">
+          <div class="am-full"><input id="aluno-resp-nome" class="teacher-text-input" placeholder="Nome completo do responsável" value="${escapeHtml(state.alunoRespNome)}" /></div>
+          <div><input id="aluno-resp-contato" class="teacher-text-input" placeholder="Contato (opcional)" value="${escapeHtml(state.alunoRespContato)}" /></div>
+          <div>${parentescoSelectHtml("aluno-resp-parentesco", state.alunoRespParentesco)}</div>
+        </div>
+        ${state.alunoRespErro ? `<p class="teacher-error" style="color:var(--red);font-size:12.5px;margin-top:8px;">${escapeHtml(state.alunoRespErro)}</p>` : ""}
+        ${state.alunoRespMensagem ? `<p class="teacher-success" style="margin-top:8px;">${escapeHtml(state.alunoRespMensagem)}</p>` : ""}
+        <div class="am-rodape">
+          <button type="button" class="teacher-primary-btn" data-action="cadastrar-responsavel-do-aluno" ${state.alunoRespSalvando ? "disabled" : ""}>${state.alunoRespSalvando ? "Salvando…" : "Cadastrar e vincular"}</button>
+        </div>
+      </div>`;
+
+  const abaSaude = alunoFichaSecretariaHtml(aluno);
+
+  const abaAcesso = `
+      <div class="aluno-modal-section">
+        <h3 class="teacher-label">Acesso ao app</h3>
+        <p class="section-eyebrow" style="margin:0 0 10px;">${aluno.email ? `Entra com <strong style="color:var(--ink);">${escapeHtml(aluno.email)}</strong>` : "E-mail de acesso não registrado neste cadastro."}</p>
+        <button type="button" class="btn-secondary" data-action="abrir-acesso-usuario" data-tipo="aluno" data-id="${escapeHtml(aluno.id)}" data-uid="${escapeHtml(aluno.uid || "")}" data-nome="${escapeHtml(aluno.nome)}" data-email="${escapeHtml(aluno.email || "")}">${ICONS.key} Trocar senha / gerenciar acesso</button>
+      </div>
+
+      <div class="aluno-modal-section aluno-modal-danger">
+        <h3 class="teacher-label">Zona de perigo</h3>
+        <p class="section-eyebrow" style="margin:0 0 12px;">Ações que mudam ou apagam o cadastro. Cada uma pede uma confirmação.</p>
+        <div class="am-perigo-lista">
+          ${(aluno.uid || aluno.email) ? `<div class="am-perigo-item">${state.alunoLoginConfirmando ? `
+          <div class="aluno-modal-confirm">
+            <p>Remover o login deste aluno? O cadastro e o histórico continuam; só o e-mail e a senha deixam de funcionar.</p>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;">
+              <button type="button" class="btn-danger" data-action="confirmar-remover-login-aluno" ${state.alunoDetalheSalvandoContato ? "disabled" : ""}>Sim, remover login</button>
+              <button type="button" class="btn-secondary" data-action="cancelar-remover-login-aluno">Cancelar</button>
+            </div>
+          </div>` : `
+          <button type="button" class="btn-danger" data-action="remover-login-aluno">${ICONS.trash} Remover login do aluno</button>`}</div>` : ""}
+          <div class="am-perigo-item">${cancelarHtml}</div>
+          <div class="am-perigo-item">${excluirHtml}</div>
+        </div>
+      </div>`;
+
+  const conteudoAba = { dados: abaDados, turmas: abaTurmas, financeiro: abaFinanceiro, responsaveis: abaResponsaveis, saude: abaSaude, acesso: abaAcesso }[aba];
+
+  // O fundo escuro não fecha mais a ficha ao toque: um toque perdido (ou o fim de uma rolagem)
+  // fazia a pessoa perder o que tinha digitado. Fecha só pelo X.
   return `
-  <div class="aluno-modal-backdrop" data-action="fechar-aluno-modal">
-    <div class="aluno-modal" role="dialog" aria-modal="true" aria-label="Ficha do aluno" data-action="noop">
+  <div class="aluno-modal-backdrop aluno-modal-backdrop-ficha">
+    <div class="aluno-modal aluno-modal-ficha" role="dialog" aria-modal="true" aria-label="Ficha do aluno" data-action="noop">
       <div class="aluno-modal-head">
         <div class="ficha-cabecalho-com-foto">
           ${avatarHtml(fotoDoAluno(aluno), aluno.foto, "avatar-foto-grande")}
@@ -11771,97 +12231,14 @@ function alunoDetalheModal(){
         <button type="button" class="secretaria-modal-close" style="color:var(--slate);" data-action="fechar-aluno-modal" aria-label="Fechar">${ICONS.close}</button>
       </div>
 
-      <div class="aluno-modal-section">
-        <h3 class="teacher-label">Contato do aluno</h3>
-        <label class="teacher-label" for="aluno-detalhe-nome" style="display:block;">Nome do aluno</label>
-        <input id="aluno-detalhe-nome" class="teacher-text-input" placeholder="Nome completo" value="${escapeHtml(state.alunoDetalheNomeInput)}" />
-        <label class="teacher-label" for="aluno-detalhe-contato" style="display:block;margin-top:10px;">Contato</label>
-        <input id="aluno-detalhe-contato" class="teacher-text-input" placeholder="WhatsApp (com DDD) ou e-mail" value="${escapeHtml(state.alunoDetalheContatoInput)}" />
-        <label class="teacher-label" for="aluno-detalhe-nascimento" style="display:block;margin-top:10px;">Data de nascimento</label>
-        <input id="aluno-detalhe-nascimento" type="date" class="teacher-text-input" value="${escapeHtml(state.alunoDetalheNascimentoInput)}" />
-        <p class="section-eyebrow" style="margin:6px 0 0;">Com a data preenchida o aluno passa a aparecer na aba "Aniversários".</p>
-        <label class="teacher-label" for="aluno-detalhe-sexo" style="display:block;margin-top:10px;">Aluno(a) é</label>
-        <select id="aluno-detalhe-sexo" class="teacher-text-input">
-          <option value="" ${!state.alunoDetalheSexoInput ? "selected" : ""} disabled>Selecione</option>
-          <option value="masculino" ${state.alunoDetalheSexoInput === "masculino" ? "selected" : ""}>Menino</option>
-          <option value="feminino" ${state.alunoDetalheSexoInput === "feminino" ? "selected" : ""}>Menina</option>
-        </select>
-        <p class="section-eyebrow" style="margin:4px 0 0;">Define a foto padrão que aparece na lista e na ficha.</p>
-        <button type="button" class="teacher-primary-btn" data-action="salvar-aluno-contato" ${state.alunoDetalheSalvandoContato ? "disabled" : ""}>${state.alunoDetalheSalvandoContato ? "Salvando…" : "Salvar nome, contato e data"}</button>
+      <div class="am-aba-barra" role="tablist">
+        ${abas.map(a => `<button type="button" role="tab" aria-selected="${a.key === aba}" class="am-aba${a.key === aba ? " ativa" : ""}" data-action="aluno-modal-aba" data-aba="${a.key}">${a.label}</button>`).join("")}
       </div>
 
-      <div class="aluno-modal-section">
-        <h3 class="teacher-label">Situação na escola</h3>
-        <select id="aluno-sit-situacao" class="teacher-text-input">
-          <option value="ativo" ${state.alunoSitSituacao === "ativo" ? "selected" : ""}>Ativo</option>
-          <option value="inativo" ${state.alunoSitSituacao === "inativo" ? "selected" : ""}>Inativo (pausou ou trancou)</option>
-          <option value="cancelado" ${state.alunoSitSituacao === "cancelado" ? "selected" : ""}>Cancelado (saiu da escola)</option>
-        </select>
-        <label class="teacher-label" for="aluno-sit-matricula" style="display:block;margin-top:10px;">Matriculado em</label>
-        <input id="aluno-sit-matricula" type="date" class="teacher-text-input" value="${escapeHtml(state.alunoSitMatricula)}" />
-        ${state.alunoSitSituacao !== "ativo" ? `
-        <label class="teacher-label" for="aluno-sit-data" style="display:block;margin-top:10px;">${state.alunoSitSituacao === "cancelado" ? "Data do cancelamento" : "Inativo desde"}</label>
-        <input id="aluno-sit-data" type="date" class="teacher-text-input" value="${escapeHtml(state.alunoSitData)}" />
-        <input id="aluno-sit-motivo" class="teacher-text-input" style="margin-top:8px;" placeholder="Motivo (opcional)" value="${escapeHtml(state.alunoSitMotivo)}" />` : ""}
-        <p class="section-eyebrow" style="margin:6px 0 0;">Alimenta a aba Estatísticas (alunos novos, ativos, inativos e cancelamentos).</p>
-        <button type="button" class="teacher-primary-btn" data-action="salvar-situacao-aluno" ${state.alunoSitSalvando ? "disabled" : ""}>${state.alunoSitSalvando ? "Salvando…" : "Salvar situação"}</button>
-        ${state.alunoSitErro ? `<p class="teacher-error" style="color:var(--red);font-size:12.5px;margin-top:8px;">${escapeHtml(state.alunoSitErro)}</p>` : ""}
-        ${state.alunoSitMensagem ? `<p class="teacher-success" style="margin-top:8px;">${escapeHtml(state.alunoSitMensagem)}</p>` : ""}
-      </div>
-
-      <div class="aluno-modal-section">
-        <h3 class="teacher-label">Turmas</h3>
-        ${turmasHtml}
-        ${state.alunoTurmaErro ? `<p class="teacher-error" style="color:var(--red);font-size:12.5px;margin-top:8px;">${escapeHtml(state.alunoTurmaErro)}</p>` : ""}
-        ${state.alunoTurmaMensagem ? `<p class="teacher-success" style="margin-top:8px;">${escapeHtml(state.alunoTurmaMensagem)}</p>` : ""}
-      </div>
-
-      ${contratosAlunoSection(aluno)}
-
-      <div class="aluno-modal-section">
-        <h3 class="teacher-label">Acesso ao app</h3>
-        <p class="section-eyebrow" style="margin:0 0 8px;">${aluno.email ? `Entra com <strong style="color:var(--ink);">${escapeHtml(aluno.email)}</strong>` : "E-mail de acesso não registrado neste cadastro."}</p>
-        <button type="button" class="btn-secondary" data-action="abrir-acesso-usuario" data-tipo="aluno" data-id="${escapeHtml(aluno.id)}" data-uid="${escapeHtml(aluno.uid || "")}" data-nome="${escapeHtml(aluno.nome)}" data-email="${escapeHtml(aluno.email || "")}">${ICONS.key} Trocar senha / gerenciar acesso</button>
-        ${(aluno.uid || aluno.email) ? (state.alunoLoginConfirmando ? `
-        <div class="aluno-modal-confirm" style="margin-top:10px;">
-          <p>Remover o login deste aluno? O cadastro e o histórico continuam; só o e-mail e a senha deixam de funcionar.</p>
-          <div style="display:flex;gap:10px;flex-wrap:wrap;">
-            <button type="button" class="btn-danger" data-action="confirmar-remover-login-aluno" ${state.alunoDetalheSalvandoContato ? "disabled" : ""}>Sim, remover login</button>
-            <button type="button" class="btn-secondary" data-action="cancelar-remover-login-aluno">Cancelar</button>
-          </div>
-        </div>` : `
-        <button type="button" class="btn-secondary" style="margin-top:8px;" data-action="remover-login-aluno">${ICONS.trash} Remover login do aluno</button>`) : ""}
-      </div>
-
-      ${alunoFichaSecretariaHtml(aluno)}
-
-      <div class="aluno-modal-section">
-        <h3 class="teacher-label">Resumo</h3>
-        <p class="section-eyebrow" style="margin:0;">Frequência: ${aluno.presenca.percentual}% · ${aluno.presenca.faltasMes} faltas no mês</p>
-      </div>
-
-      ${financeiroAlunoSection(aluno)}
-
-      <div class="aluno-modal-section">
-        <h3 class="teacher-label">Responsáveis vinculados</h3>
-        ${respHtml}
-      </div>
-
-      <div class="aluno-modal-section">
-        <h3 class="teacher-label">Cadastrar responsável</h3>
-        <input id="aluno-resp-nome" class="teacher-text-input" placeholder="Nome completo do responsável" value="${escapeHtml(state.alunoRespNome)}" />
-        <input id="aluno-resp-contato" class="teacher-text-input" style="margin-top:8px;" placeholder="Contato (telefone ou e-mail) — opcional" value="${escapeHtml(state.alunoRespContato)}" />
-        <div style="margin-top:8px;">${parentescoSelectHtml("aluno-resp-parentesco", state.alunoRespParentesco)}</div>
-        <button type="button" class="teacher-primary-btn" data-action="cadastrar-responsavel-do-aluno" ${state.alunoRespSalvando ? "disabled" : ""}>${state.alunoRespSalvando ? "Salvando…" : "Cadastrar e vincular"}</button>
-        ${state.alunoRespErro ? `<p class="teacher-error" style="color:var(--red);font-size:12.5px;margin-top:8px;">${escapeHtml(state.alunoRespErro)}</p>` : ""}
-        ${state.alunoRespMensagem ? `<p class="teacher-success" style="margin-top:8px;">${escapeHtml(state.alunoRespMensagem)}</p>` : ""}
-      </div>
-
-      ${state.alunoDetalheErro ? `<p class="teacher-error" style="color:var(--red);font-size:12.5px;margin-top:4px;">${escapeHtml(state.alunoDetalheErro)}</p>` : ""}
-      ${state.alunoDetalheMensagem ? `<p class="teacher-success" style="margin-top:4px;">${escapeHtml(state.alunoDetalheMensagem)}</p>` : ""}
-
-      <div class="aluno-modal-section aluno-modal-danger">
-        ${excluirHtml}
+      <div class="aluno-modal-corpo">
+        ${conteudoAba}
+        ${state.alunoDetalheErro ? `<p class="teacher-error" style="color:var(--red);font-size:12.5px;margin-top:12px;">${escapeHtml(state.alunoDetalheErro)}</p>` : ""}
+        ${state.alunoDetalheMensagem ? `<p class="teacher-success" style="margin-top:12px;">${escapeHtml(state.alunoDetalheMensagem)}</p>` : ""}
       </div>
     </div>
   </div>`;
@@ -12730,6 +13107,8 @@ function bindEvents(){
     if(t.id === "profile-name-input"){ state.perfilNomeInput = t.value; return; }
     if(t.id === "aluno-detalhe-nome"){ state.alunoDetalheNomeInput = t.value; return; }
     if(t.id === "aluno-detalhe-contato"){ state.alunoDetalheContatoInput = t.value; return; }
+    if(t.id === "aluno-detalhe-nascimento"){ state.alunoDetalheNascimentoInput = t.value; return; }
+    if(t.id === "aluno-detalhe-sexo"){ state.alunoDetalheSexoInput = t.value; return; }
     if(t.id === "resp-modal-nome"){ state.respModalNomeInput = t.value; return; }
     if(t.id === "resp-modal-contato"){ state.respModalContato = t.value; return; }
     if(t.id === "resp-modal-email"){ state.respModalEmail = t.value; return; }
@@ -12738,6 +13117,9 @@ function bindEvents(){
     if(t.id === "aluno-sit-matricula"){ state.alunoSitMatricula = t.value; return; }
     if(t.id === "aluno-sit-data"){ state.alunoSitData = t.value; return; }
     if(t.id === "aluno-sit-motivo"){ state.alunoSitMotivo = t.value; return; }
+    if(t.id === "aluno-cancel-motivo"){ state.alunoCancelMotivo = t.value; return; }
+    if(t.id === "termino-curso"){ state.terminoModal.curso = t.value; return; }
+    if(t.id === "termino-data"){ state.terminoModal.termino = t.value; return; }
     if(t.id === "aluno-fin-competencia"){ state.alunoFinCompetencia = t.value; return; }
     if(t.id === "aluno-fin-valor"){ state.alunoFinValor = t.value; return; }
     if(t.id === "aluno-fin-vencimento"){ state.alunoFinVencimento = t.value; return; }
@@ -15927,6 +16309,7 @@ function bindEvents(){
         const id = el.dataset.id;
         const aluno = (state.instAlunos || []).find(a => a.id === id);
         state.alunoDetalheId = id;
+        state.alunoModalAba = "dados";
         state.alunoLoginConfirmando = false;
         state.alunoDetalheNomeInput = aluno ? (aluno.nome || "") : "";
         state.alunoDetalheContatoInput = aluno ? (aluno.contato || "") : "";
@@ -15941,6 +16324,8 @@ function bindEvents(){
         state.alunoDetalheErro = "";
         state.alunoDetalheMensagem = "";
         state.alunoExcluirConfirmando = false;
+        state.alunoCancelConfirmando = false;
+        state.alunoCancelMotivo = "";
         state.alunoFinCompetencia = "";
         state.alunoFinValor = "";
         state.alunoFinVencimento = "";
@@ -15971,9 +16356,21 @@ function bindEvents(){
         break;
       }
 
+      case "aluno-modal-aba": {
+        state.alunoModalAba = el.dataset.aba || "dados";
+        state.alunoExcluirConfirmando = false;
+        state.alunoCancelConfirmando = false;
+        state.alunoLoginConfirmando = false;
+        render();
+        const corpoAba = document.querySelector(".aluno-modal-corpo");
+        if(corpoAba) corpoAba.scrollTop = 0;
+        break;
+      }
+
       case "fechar-aluno-modal":
         state.alunoDetalheId = null;
         state.alunoExcluirConfirmando = false;
+        state.alunoCancelConfirmando = false;
         render();
         break;
 
@@ -16468,6 +16865,116 @@ function bindEvents(){
           state.alunoFinSalvando = false;
           render();
         }
+        break;
+      }
+
+      case "iniciar-cancelamento-aluno":
+        state.alunoCancelConfirmando = true;
+        state.alunoCancelMotivo = "";
+        render();
+        break;
+
+      case "desistir-cancelamento-aluno":
+        state.alunoCancelConfirmando = false;
+        render();
+        break;
+
+      case "confirmar-cancelamento-aluno": {
+        const aluno = (state.instAlunos || []).find(a => a.id === state.alunoDetalheId);
+        if(!aluno || state.alunoCancelando) break;
+        state.alunoCancelando = true;
+        state.alunoSitErro = "";
+        state.alunoSitMensagem = "";
+        render();
+        try {
+          const r = await cancelarMatriculaDoAluno(aluno, { motivo: state.alunoCancelMotivo });
+          state.alunoSitSituacao = "cancelado";
+          state.alunoSitData = aluno.situacaoEm;
+          state.alunoSitMotivo = aluno.motivoSaida;
+          state.alunoCancelConfirmando = false;
+          state.alunoSitMensagem = mensagemDeCancelamento(aluno, r);
+        } catch(err){
+          console.error("Erro ao cancelar matrícula:", err);
+          state.alunoSitErro = `Não foi possível cancelar a matrícula agora${err?.code ? ` (${err.code})` : ""}. Tente de novo.`;
+        } finally {
+          state.alunoCancelando = false;
+          render();
+        }
+        break;
+      }
+
+      case "alunos-toggle-cancelados":
+        state.alunosMostrarCancelados = !state.alunosMostrarCancelados;
+        render();
+        break;
+
+      // ---- contrato vencido sem renovação: cancela e encerra o cadastro ----
+      case "renov-cancelar-aluno": {
+        const aluno = (state.instAlunos || []).find(a => a.id === el.dataset.aluno);
+        if(!aluno || state.renovCancelandoId) break;
+        const ok = window.confirm(`${aluno.nome} não renovou o contrato?\n\nA matrícula será cancelada: ele sai de todas as turmas, deixa de entrar na chamada e some das listas.`);
+        if(!ok) break;
+        state.renovCancelandoId = aluno.id;
+        render();
+        try {
+          const r = await cancelarMatriculaDoAluno(aluno, { motivo: "Contrato vencido sem renovação" });
+          state.instituicaoMensagem = mensagemDeCancelamento(aluno, r);
+        } catch(err){
+          console.error("Erro ao cancelar por falta de renovação:", err);
+          state.instituicaoMensagem = `Não foi possível cancelar ${aluno.nome} agora${err?.code ? ` (${err.code})` : ""}. Tente de novo.`;
+        } finally {
+          state.renovCancelandoId = "";
+          render();
+        }
+        break;
+      }
+
+      // ---- aviso de contratos vencendo ----
+      case "aviso-venc-fechar":
+        state.avisoVencDispensado = true;
+        state.instituicaoMensagem = "";
+        render();
+        break;
+
+      case "aviso-venc-ir":
+        state.avisoVencDispensado = true;
+        state.instituicaoMensagem = "";
+        state.instTab = "contratos";
+        state.contratosTab = "renovar";
+        state.renovFiltro = "atencao";
+        garantirPessoasDaUnidade();
+        render();
+        break;
+
+      // ---- término do contrato ----
+      case "termino-abrir":
+        abrirTerminoModal(el.dataset.aluno, el.dataset.mat);
+        break;
+
+      case "termino-fechar":
+        if(state.terminoModal.salvando) break;
+        state.terminoModal = { ...state.terminoModal, aberto: false };
+        render();
+        break;
+
+      case "termino-salvar": {
+        const m = state.terminoModal;
+        if(m.salvando) break;
+        const curso = (m.curso || "").trim();
+        if(!curso){ m.erro = "Informe o curso do contrato."; render(); break; }
+        if(!m.termino || !contratoDataPlausivel(m.termino)){ m.erro = "Informe uma data de término válida."; render(); break; }
+        m.salvando = true; m.erro = "";
+        render();
+        try {
+          await definirTerminoDaMatricula(m.alunoId, m.matId, curso, m.termino);
+          state.instituicaoMensagem = `Término de ${m.alunoNome} registrado: ${formatarDataBr(m.termino)}.`;
+          state.terminoModal = { ...m, aberto: false, salvando: false };
+        } catch(err){
+          console.error("Erro ao registrar o término do contrato:", err);
+          m.salvando = false;
+          m.erro = `Não foi possível salvar agora${err?.code ? ` (${err.code})` : ""}. Tente de novo.`;
+        }
+        render();
         break;
       }
 

@@ -425,6 +425,7 @@ export function criarSolicitacoes(ctx){
     const f = est.form;
     const i = est.inst;
     const bloq = est.salvando ? "disabled" : "";
+    const ativas = i.itens.filter(s => s.ativa !== false).length;
 
     const lista = i.carregando && !i.itens.length
       ? `<p class="section-eyebrow">Carregando…</p>`
@@ -432,10 +433,11 @@ export function criarSolicitacoes(ctx){
           || `<div style="padding:20px;font-size:14px;color:var(--slate);">Nenhuma solicitação criada ainda.</div>`);
 
     return `
-      <h2 class="section-title">Solicitações</h2>
-      <p class="section-eyebrow">Avisos gerais para as famílias. Aparecem no topo do app e na aba Comunicados.</p>
-
-      <div class="card" style="margin-bottom:18px;">
+      <div class="screen-layout screen-layout-solicitacoes">
+      <header class="screen-intro"><div><span class="screen-kicker">Comunicação com as famílias</span><h2 class="section-title">Solicitações</h2>
+      <p class="section-eyebrow">Avisos gerais para as famílias. Aparecem no topo do app e na aba Comunicados.</p></div></header>
+      <div class="sol-columns">
+      <div class="card sol-composer">
         ${est.editandoId ? `<p class="section-eyebrow" style="margin:0 0 10px;color:var(--ink);"><strong>Corrigindo uma solicitação já publicada.</strong> Ao salvar, as famílias passam a ver a versão nova.</p>` : modelosHtml(bloq)}
 
         <label class="teacher-label" for="sol-f-titulo">Título</label>
@@ -461,7 +463,7 @@ export function criarSolicitacoes(ctx){
         ${est.erroForm ? `<p class="teacher-error" style="color:var(--red);font-size:12.5px;margin-top:8px;">${escapeHtml(est.erroForm)}</p>` : ""}
         ${est.msg ? `<p class="teacher-success" style="margin-top:8px;">${escapeHtml(est.msg)}</p>` : ""}
 
-        <div style="display:flex;gap:8px;margin-top:12px;">
+        <div class="sol-form-actions" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;">
           <button type="button" class="teacher-primary-btn" style="margin-top:0;" data-action="sol-salvar" ${bloq}>${est.salvando ? "Salvando…" : (est.editandoId ? "Salvar correção" : "Publicar solicitação")}</button>
           ${est.editandoId
             ? `<button type="button" class="attendance-btn" data-action="sol-editar-cancelar" ${bloq}>Cancelar correção</button>`
@@ -470,9 +472,10 @@ export function criarSolicitacoes(ctx){
         </div>
       </div>
 
-      <p class="section-eyebrow" style="margin-bottom:8px;">Publicadas nesta unidade</p>
+      <section class="sol-publicadas"><div class="sol-publicadas-head"><div><span class="screen-kicker">Mural da unidade</span><h3>Solicitações cadastradas</h3><p>${ativas} ativas · ${i.itens.length - ativas} desativadas</p></div><span class="sol-publicadas-total" aria-label="${i.itens.length} solicitações">${i.itens.length}</span></div>
       ${i.erro ? `<p class="teacher-error" style="color:var(--red);font-size:12.5px;">${escapeHtml(i.erro)}</p>` : ""}
-      ${lista}`;
+      <div class="sol-publicadas-lista">${lista}</div></section>
+      </div></div>`;
   }
 
   /* ================================================================
