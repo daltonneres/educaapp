@@ -1788,6 +1788,9 @@ const state = {
   terminoModal: { aberto: false, alunoId: "", alunoNome: "", matId: "", curso: "", termino: "", salvando: false, erro: "" },  // "Informar término do contrato"
   avisoVencDispensado: false,      // aviso de contratos vencendo: fechado nesta sessão
   renovCancelandoId: "",           // aluno sendo cancelado por falta de renovação
+  renovDesfazendo: "",             // id da matrícula cuja última renovação está sendo desfeita
+  renovDesfazMsg: "",
+  renovDesfazErro: "",
   finStatusSalvandoId: "",      // id da cobrança que está sendo alternada pendente/pago (Financeiro > Consultar boletos)
   finStatusErro: "",
   finCobrancaBusca: "",         // texto digitado na busca de aluno (Financeiro > Lançar cobrança)
@@ -2455,6 +2458,8 @@ function normalizarMatriculas(lista){
       valorCurso: Number(r?.valorCurso) || 0, numParcelas: Number(r?.numParcelas) || 0,
       valorParcela: Number(r?.valorParcela) || 0, reajustePct: Number(r?.reajustePct) || 0,
       contratoId: String(r?.contratoId || ""),
+      geradoId: String(r?.geradoId || ""),   // backup do contrato gerado (contratosGerados/{id})
+      competencias: Array.isArray(r?.competencias) ? r.competencias.map(String) : [],   // mensalidades lançadas na renovação
     })) : [],
   }));
 }
@@ -7262,6 +7267,7 @@ function linhaRenovacaoHtml({ aluno, mat, sit }){
       <div class="pendente-contrato-acoes">
         <button type="button" class="aniversario-btn" data-action="renovar-abrir" data-aluno="${escapeHtml(aluno.id)}" data-mat="${escapeHtml(mat.id)}" data-meses="6">Renovar 6 meses</button>
         <button type="button" class="aniversario-btn" data-action="renovar-abrir" data-aluno="${escapeHtml(aluno.id)}" data-mat="${escapeHtml(mat.id)}" data-meses="12">Renovar 1 ano</button>
+        ${ult ? `<button type="button" class="attendance-btn" title="Apaga o contrato renovado e volta a vigência anterior" data-action="renov-desfazer" data-aluno="${escapeHtml(aluno.id)}" data-mat="${escapeHtml(mat.id)}" ${state.renovDesfazendo ? "disabled" : ""}>${ICONS.trash} ${state.renovDesfazendo === mat.id ? "Excluindo…" : "Excluir última renovação"}</button>` : ""}
         ${sit.tipo === "vencido" ? `<button type="button" class="btn-danger" style="padding:6px 10px;font-size:12.5px;" data-action="renov-cancelar-aluno" data-aluno="${escapeHtml(aluno.id)}" ${state.renovCancelandoId ? "disabled" : ""}>${state.renovCancelandoId === aluno.id ? "Cancelando…" : "Não renovou — cancelar"}</button>` : ""}
       </div>
     </div>`;
@@ -7346,6 +7352,8 @@ function contratosRenovarView(){
           <button type="button" class="renov-filtro ${state.renovFiltro === "todos" ? "active" : ""}" data-action="renov-filtro" data-key="todos">Todas (${todas.length})</button>
         </div>
       </div>
+      ${state.renovDesfazErro ? `<p class="teacher-error" style="color:var(--red);font-size:12.5px;margin:0 0 8px;">${escapeHtml(state.renovDesfazErro)}</p>` : ""}
+      ${state.renovDesfazMsg ? `<p class="teacher-success" style="margin:0 0 8px;">${escapeHtml(state.renovDesfazMsg)}</p>` : ""}
       ${corpoLinhas ? `<div class="pendente-contrato-lista">${corpoLinhas}</div>` : `<p class="contrato-vazio">${vazio}</p>`}
     </div>`;
 }
@@ -9675,6 +9683,7 @@ async function salvarBackupContratoGerado(c){
   if(state.contratosGerados.carregado && state.contratosGerados.escolaId === escolaId){
     state.contratosGerados.itens = [normalizeContratoGerado(ref.id, meta), ...state.contratosGerados.itens];
   }
+  return ref.id;
 }
 
 async function carregarContratosGerados(escolaId, forcar = false){
@@ -10837,13 +10846,20 @@ function cnpjPreferidoDaEscola(){
     : nomeEscola.includes("salto") ? "49.080.272/0001-38" : "";
 }
 
+/* true quando a data de nascimento (AAAA-MM-DD) indica 18 anos ou mais. Sem data = não sabe (false). */
+function alunoEhMaiorDeIdade(nascimentoISO){
+  const idade = idadeEmAnos(nascimentoISO);
+  return idade !== null && idade >= 18;
+}
+
 /* Quando não existe contrato anterior gerado pelo sistema: monta o que dá a partir do cadastro. */
 function baseSinteticaDoAluno(aluno){
   const base = {
     alunoNome: aluno.nome, alunoNascimento: aluno.nascimento || "", contatoAluno: aluno.contato || "",
     respsExtras: [],
   };
-  const resps = (state.gestaoResponsaveis || []).filter(x => (x.alunosIds || []).includes(aluno.id));
+  const resps = alunoEhMaiorDeIdade(aluno.nascimento) ? [] : (state.gestaoResponsaveis || []).filter(x => (x.alunosIds || []).includes(aluno.id));
+  if(alunoEhMaiorDeIdade(aluno.nascimento)) base.semResponsavel = true;
   if(resps[0]){
     base.respNome = resps[0].nome || ""; base.contatoResp = resps[0].contato || "";
     base.respParentesco = resps[0].parentesco || "";
@@ -10916,7 +10932,18 @@ async function carregarBaseRenovacao(){
     if(f){ Object.assign(base, f); r.baseFinanceiro = true; }
   }
   r.cnpj = base.cnpj || cnpjPreferidoDaEscola() || "";
+  // Entrou menor e já fez 18: na renovação ele assina por conta própria, sem dados de responsável.
+  const nascBase = ehSegundo ? (base.aluno2Nascimento || "") : (base.alunoNascimento || "");
+  const nascimento = aluno.nascimento || nascBase;
+  const virouMaior = alunoEhMaiorDeIdade(nascimento);
+  if(virouMaior){
+    base.semResponsavel = true;
+    base.respNome = ""; base.contatoResp = ""; base.respParentesco = ""; base.respsExtras = [];
+    ["respCpf", "respRg", "respEndereco", "respNumero", "respBairro", "respCidade"].forEach(k => { base[k] = ""; });
+  }
   renovacaoAplicarBase(r, base);
+  r.alunoMaiorDeIdade = virouMaior;
+  if(virouMaior) r.semResponsavel = true;
   r.erro = "";
   render();
 }
@@ -10958,7 +10985,7 @@ async function salvarRenovacao(){
   let contratoSalvo = null;
   try {
     // 1) contrato renovado em PDF (se falhar aqui, nada foi gravado ainda)
-    let c = null, arquivo = null;
+    let c = null, arquivo = null, geradoId = "";
     if(r.gerarContrato){
       c = contratoDeRenovacao(r, { hoje });
       arquivo = await gerarPdfDoContrato(c, "renovacao");
@@ -10977,7 +11004,7 @@ async function salvarRenovacao(){
       r.etapa = "Guardando o contrato no sistema…"; render();
       contratoSalvo = await salvarContratoPdf({ alunoId: r.alunoId, escolaId, arquivo, status: "pendente" });
       copiaLocalTxt = contratoSalvo.copiaLocal ? resumoCopiaLocal(contratoSalvo.copiaLocal) : "";
-      try { await salvarBackupContratoGerado(c); }
+      try { geradoId = (await salvarBackupContratoGerado(c)) || ""; }
       catch(err){ console.warn("Backup do contrato renovado falhou:", err?.code || err); copiaLocalTxt += " (O backup em HTML não ficou guardado, mas o PDF está salvo.)"; }
     }
 
@@ -10988,6 +11015,7 @@ async function salvarRenovacao(){
       valorCurso: numeroLimpo(r.valorCurso), numParcelas: Number(r.numParcelas) || 0,
       valorParcela: numeroLimpo(r.valorParcelaDemais), reajustePct: numeroLimpo(r.reajustePct),
       contratoId: contratoSalvo?.id || "",
+      geradoId, competencias: [],
     };
     const existente = atuais.find(m => m.id === r.matriculaId)
       || atuais.find(m => normalizarNome(m.curso) === normalizarNome(r.curso));
@@ -11010,6 +11038,7 @@ async function salvarRenovacao(){
       novasMensalidades = parcelas
         .filter(p => !competencias.has(p.competencia))
         .map(p => normalizeMensalidade({ ...p, status: "pendente", criadoEm: hoje }));
+      registro.competencias = novasMensalidades.map(m => m.competencia);
       if(novasMensalidades.length){
         todasMensalidades = [...atuaisMens, ...novasMensalidades];
         atualizacao["financeiro.mensalidades"] = todasMensalidades;
@@ -11054,6 +11083,113 @@ async function salvarRenovacao(){
   } finally {
     render();
   }
+}
+
+
+/* Desfaz a ÚLTIMA renovação de uma matrícula: apaga o contrato renovado (PDF + backup),
+   devolve a vigência anterior e tira do Financeiro as mensalidades que a renovação lançou
+   (só as que ainda estão pendentes e sem boleto/Pix anexado). */
+async function desfazerRenovacao(alunoId, matId){
+  const escolaId = state.escolaSelecionadaId;
+  const ref = doc(db, "alunos", alunoId);
+  const snap = await getDoc(ref);
+  const dados = snap.data() || {};
+  const atuais = normalizarMatriculas(dados.matriculas);
+  const mat = atuais.find(m => m.id === matId);
+  if(!mat || !mat.renovacoes.length) throw new Error("sem-renovacao");
+  const reg = mat.renovacoes[mat.renovacoes.length - 1];
+
+  // 1) PDF do contrato renovado
+  if(reg.contratoId){
+    let meta = acharContratoSalvo(reg.contratoId);
+    if(!meta){
+      const cs = await getDoc(doc(db, "contratos", reg.contratoId));
+      if(cs.exists()) meta = { id: cs.id, partes: Number(cs.data().partes) || 1 };
+    }
+    if(meta) await excluirContratoSalvo({ ...meta, alunoId, escolaId });
+  }
+
+  // 2) backup do contrato gerado (renovações antigas não guardaram o id: acha pelo aluno + dia + curso)
+  let geradoId = reg.geradoId;
+  if(!geradoId){
+    try {
+      await carregarContratosGerados(escolaId);
+      const alvo = normalizarNome(dados.nome || "");
+      const cand = (state.contratosGerados.itens || []).filter(i =>
+        normalizarNome(i.alunos).includes(alvo) && String(i.geradoEm).slice(0, 10) === reg.em
+        && normalizarNome(i.curso) === normalizarNome(mat.curso));
+      if(cand.length === 1) geradoId = cand[0].id;
+    } catch(err){ console.warn("Não consegui localizar o backup da renovação:", err?.code || err); }
+  }
+  if(geradoId){
+    const batch = writeBatch(db);
+    batch.delete(doc(db, "contratosGeradosHtml", geradoId));
+    batch.delete(doc(db, "contratosGerados", geradoId));
+    await batch.commit();
+    state.contratosGerados.itens = (state.contratosGerados.itens || []).filter(i => i.id !== geradoId);
+  }
+
+  // 3) vigência anterior + histórico + mensalidades que a renovação lançou
+  const lista = atuais.map(m => m.id === matId
+    ? { ...m, termino: reg.de || m.termino, renovacoes: m.renovacoes.slice(0, -1) } : m);
+  const atualizacao = { matriculas: lista };
+  let mensRestantes = null;
+  if(reg.competencias.length && Array.isArray(dados.financeiro?.mensalidades)){
+    const comp = new Set(reg.competencias);
+    const todas = dados.financeiro.mensalidades.map(normalizeMensalidade);
+    mensRestantes = todas.filter(m => !(comp.has(m.competencia) && m.status === "pendente"
+      && !m.boletoPdfDados && !m.boletoArquivoId && !m.pixCopiaCola && !m.codigoBarras && !m.linkPagamento));
+    if(mensRestantes.length !== todas.length) atualizacao["financeiro.mensalidades"] = mensRestantes;
+    else mensRestantes = null;
+  }
+  await updateDoc(ref, atualizacao);
+  const local = (state.instAlunos || []).find(a => a.id === alunoId);
+  if(local){
+    local.matriculas = lista;
+    if(mensRestantes){ local.financeiro = local.financeiro || {}; local.financeiro.mensalidades = mensRestantes; }
+  }
+  try { await sincronizarResumoContratos(alunoId, escolaId); }
+  catch(err){ console.warn("Não consegui atualizar o resumo de contratos:", err?.code || err); }
+  carregarContratosDaEscola(escolaId, true);
+  return { reg, mensRemovidas: mensRestantes ? reg.competencias.length : 0 };
+}
+
+/* Seção "Renovações" da ficha do aluno: renovar e desfazer a última renovação. */
+function renovacoesAlunoSection(aluno){
+  const mats = aluno.matriculas || [];
+  const ocupado = !!state.renovDesfazendo;
+  const blocos = mats.map(m => {
+    const ult = m.renovacoes[m.renovacoes.length - 1];
+    const hist = m.renovacoes.length
+      ? `<div style="margin-top:6px;display:flex;flex-direction:column;gap:3px;">${m.renovacoes.map((x, i) =>
+          `<span class="renov-historico">${i === m.renovacoes.length - 1 ? "▸ " : ""}Renovado em ${escapeHtml(formatarDataBr(x.em))} (+${x.meses} ${x.meses === 1 ? "mês" : "meses"})${x.ate ? ` · até ${escapeHtml(formatarDataBr(x.ate))}` : ""}</span>`).join("")}</div>`
+      : `<p class="section-eyebrow" style="margin:4px 0 0;">Nenhuma renovação registrada.</p>`;
+    return `
+      <div class="contrato-aviso" style="margin-bottom:10px;">
+        <strong>${escapeHtml(m.curso || "Curso")}</strong>
+        <span style="display:block;font-size:12.5px;">${m.termino ? `Vigência até ${escapeHtml(formatarDataBr(m.termino))}` : "Sem data de término"}</span>
+        ${hist}
+        <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px;">
+          <button type="button" class="aniversario-btn" data-action="renovar-abrir" data-aluno="${escapeHtml(aluno.id)}" data-mat="${escapeHtml(m.id)}" data-meses="6">Renovar 6 meses</button>
+          <button type="button" class="aniversario-btn" data-action="renovar-abrir" data-aluno="${escapeHtml(aluno.id)}" data-mat="${escapeHtml(m.id)}" data-meses="12">Renovar 1 ano</button>
+          ${ult ? `<button type="button" class="attendance-btn" data-action="renov-desfazer" data-aluno="${escapeHtml(aluno.id)}" data-mat="${escapeHtml(m.id)}" ${ocupado ? "disabled" : ""}>${ICONS.trash} ${state.renovDesfazendo === m.id ? "Desfazendo…" : "Excluir última renovação"}</button>` : ""}
+        </div>
+      </div>`;
+  }).join("");
+  const vazio = mats.length ? "" : `
+      <div class="contrato-aviso">Nenhum contrato com vigência registrada.
+        <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px;">
+          <button type="button" class="aniversario-btn" data-action="renovar-abrir" data-aluno="${escapeHtml(aluno.id)}" data-mat="" data-meses="6">Registrar e renovar 6 meses</button>
+          <button type="button" class="aniversario-btn" data-action="renovar-abrir" data-aluno="${escapeHtml(aluno.id)}" data-mat="" data-meses="12">Registrar e renovar 1 ano</button>
+        </div>
+      </div>`;
+  return `
+      <div class="aluno-modal-section">
+        <h3 class="teacher-label">Renovações</h3>
+        ${blocos}${vazio}
+        ${state.renovDesfazErro ? `<p class="teacher-error" style="color:var(--red);font-size:12.5px;margin-top:8px;">${escapeHtml(state.renovDesfazErro)}</p>` : ""}
+        ${state.renovDesfazMsg ? `<p class="teacher-success" style="margin-top:8px;">${escapeHtml(state.renovDesfazMsg)}</p>` : ""}
+      </div>`;
 }
 
 /* Dados do último contrato gerado para o aluno (CPF, RG, endereço, CNPJ…),
@@ -12157,6 +12293,7 @@ function alunoDetalheModal(){
         ${state.alunoTurmaErro ? `<p class="teacher-error" style="color:var(--red);font-size:12.5px;margin-top:8px;">${escapeHtml(state.alunoTurmaErro)}</p>` : ""}
         ${state.alunoTurmaMensagem ? `<p class="teacher-success" style="margin-top:8px;">${escapeHtml(state.alunoTurmaMensagem)}</p>` : ""}
       </div>
+      ${renovacoesAlunoSection(aluno)}
       ${contratosAlunoSection(aluno)}`;
 
   const abaFinanceiro = `
@@ -15654,6 +15791,16 @@ function bindEvents(){
         render();
         break;
 
+      case "renov-sem-responsavel": {
+        const r = state.renovacao;
+        r.base = r.base || {};
+        r.base.semResponsavel = !r.base.semResponsavel;
+        if(r.base.semResponsavel){ r.base.respNome = ""; r.base.respCpf = ""; r.base.respRg = ""; r.base.respsExtras = []; }
+        r.erro = "";
+        render();
+        break;
+      }
+
       case "renov-financeiro":
         state.renovacao.lancarFinanceiro = !state.renovacao.lancarFinanceiro;
         render();
@@ -15668,6 +15815,32 @@ function bindEvents(){
       case "renov-salvar":
         await salvarRenovacao();
         break;
+
+      case "renov-desfazer": {
+        if(state.renovDesfazendo) break;
+        const aluno = (state.instAlunos || []).find(a => a.id === el.dataset.aluno);
+        const mat = (aluno?.matriculas || []).find(m => m.id === el.dataset.mat);
+        const ult = mat?.renovacoes?.[mat.renovacoes.length - 1];
+        if(!aluno || !mat || !ult) break;
+        const aviso = `Excluir a última renovação de ${aluno.nome} (${mat.curso || "curso"}), feita em ${formatarDataBr(ult.em)}?\n\n`
+          + `• A vigência volta para ${ult.de ? formatarDataBr(ult.de) : "a data anterior"}.\n`
+          + `• O contrato renovado (PDF e backup) é apagado.\n`
+          + (ult.competencias?.length ? `• As mensalidades lançadas nessa renovação que ainda estão pendentes e sem boleto anexado saem do Financeiro.` : `• As mensalidades não são mexidas (essa renovação não registrou quais lançou).`);
+        if(!confirm(aviso)) break;
+        state.renovDesfazendo = mat.id; state.renovDesfazErro = ""; state.renovDesfazMsg = "";
+        render();
+        try {
+          const { mensRemovidas } = await desfazerRenovacao(aluno.id, mat.id);
+          state.renovDesfazMsg = `Renovação excluída. Vigência de volta para ${ult.de ? formatarDataBr(ult.de) : "a data anterior"}.`
+            + (mensRemovidas ? ` ${mensRemovidas} mensalidade(s) removida(s) do Financeiro.` : "");
+        } catch(err){
+          console.error("Erro ao desfazer renovação:", err);
+          state.renovDesfazErro = `Não consegui excluir a renovação${err?.code ? ` (${err.code})` : ""}. Tente de novo.`;
+        }
+        state.renovDesfazendo = "";
+        render();
+        break;
+      }
 
       // ---- cópia dos contratos neste computador ----
       case "local-pasta-escolher": {

@@ -2468,11 +2468,16 @@ export function renovacaoModal(r, { cursos = [] } = {}){
           ${avisoBase}
           <div class="contrato-linha">${selectRenov("CNPJ da empresa (escolha qual vai assinar a renovação)", "cnpj", r.cnpj, empresasOpcoes, { largura: "380px" })}</div>
           ${b.cnpj && r.cnpj && b.cnpj !== r.cnpj ? `<p class="renov-aviso is-alerta">O contrato anterior foi feito com o CNPJ ${esc(b.cnpj)}; a renovação sairá com o CNPJ escolhido acima.</p>` : ""}
-          <details class="renov-contratante" ${faltaContratante || r.baseSintetica ? "open" : ""}>
+          <details class="renov-contratante" ${faltaContratante || r.baseSintetica || r.alunoMaiorDeIdade ? "open" : ""}>
             <summary>Dados do contratante (conferir)</summary>
+            ${r.alunoMaiorDeIdade && b.semResponsavel ? `<p class="renov-aviso is-alerta" style="margin-top:8px;">${esc(r.alunoNome)} já tem 18 anos ou mais: o contrato sai em nome dele, sem responsável. Se ainda precisar de responsável, desmarque a caixa abaixo.</p>` : ""}
+            <label class="responsavel-vinculo-item" style="margin:8px 0;">
+              <input type="checkbox" data-action="renov-sem-responsavel" ${b.semResponsavel ? "checked" : ""} />
+              <span>Aluno maior de idade — assina o próprio contrato (sem responsável)</span>
+            </label>
             <div class="contrato-linha" style="margin-top:8px;">
-              ${campoRenov("Responsável", "base.respNome", b.respNome, { largura: "240px" })}
-              ${campoRenov("CPF do responsável", "base.respCpf", b.respCpf, { largura: "170px" })}
+              ${b.semResponsavel ? "" : campoRenov("Responsável", "base.respNome", b.respNome, { largura: "240px" })}
+              ${b.semResponsavel ? "" : campoRenov("CPF do responsável", "base.respCpf", b.respCpf, { largura: "170px" })}
               ${campoRenov("CPF do aluno", "base.alunoCpf", b.alunoCpf, { largura: "170px" })}
             </div>
             <div class="contrato-linha">
