@@ -61,6 +61,8 @@
    turmas/{turmaId}      (turmas de um professor — coleção própria)
      nome, horario, sala, escola, escolaId, disciplina, professorId
      descricao?: string     // texto livre, editado na aba "Cursos e turmas"
+     desativada?: boolean, desativadaEm?, desativadaMotivo?   // turma VIP (1 aluno só) cujo aluno foi
+                // cancelado: some da tela do professor, continua na secretaria. Reativa se o aluno voltar a "ativo".
      alunos: [nomes]
      encontros: [{ dia: 0–6 (0 = domingo), inicio: "HH:MM", fim: "HH:MM" }]   // aba Horários;
                 // `horario` (texto) continua sendo gravado a partir dele. Turmas antigas
@@ -2406,7 +2408,9 @@ async function carregarDadosDoPerfil(){
       : (perfil.disciplina ? [perfil.disciplina] : []);
     const q = query(collection(db, "turmas"), where("professorId", "==", state.authUser.uid));
     const snaps = await getDocs(q);
-    state.data.professorTurmas = snaps.docs.map(d => ({ id: d.id, ...d.data(), alunos: d.data().alunos || [] }));
+    state.data.professorTurmas = snaps.docs
+      .map(d => ({ id: d.id, ...d.data(), alunos: d.data().alunos || [] }))
+      .filter(t => !t.desativada);   // turma VIP de aluno cancelado some da tela do professor
     state.professorTab = "inicio";   // a primeira tela é o Início (chamadas de hoje, próxima aula, atalhos)
     state.professorTurmaId = null;
     state.screen = "professor";
@@ -7070,6 +7074,7 @@ async function cancelarMatriculaDoAluno(aluno, { motivo = "", data = "" } = {}){
   Object.assign(aluno, dados);
 
   let turmasOk = true;
+  let vipDesativadas = 0;
   try {
     const alvoNome = normalizarNome(aluno.nome);
     // homônimo ainda ativo na unidade: não mexe nas turmas, pra não tirar o aluno errado
@@ -7077,10 +7082,21 @@ async function cancelarMatriculaDoAluno(aluno, { motivo = "", data = "" } = {}){
     if(!homonimo){
       const turmasSnap = await getDocs(query(collection(db, "turmas"), where("escolaId", "==", escolaId)));
       await Promise.all(turmasSnap.docs.map(async d => {
-        const gravados = (d.data().alunos || []).filter(n => normalizarNome(n) === alvoNome);
+        const todos = d.data().alunos || [];
+        const gravados = todos.filter(n => normalizarNome(n) === alvoNome);
         if(!gravados.length) return;
-        await updateDoc(d.ref, { alunos: arrayRemove(...gravados) });
         const local = (state.instTurmas || []).find(t => t.id === d.id);
+        if(todos.length === 1){
+          // Turma VIP (só esse aluno): não apaga nem esvazia. Fica DESATIVADA — some da tela do
+          // professor (ver carregamento do perfil), mas continua na secretaria pra gerenciar.
+          const marca = { desativada: true, desativadaEm: dados.situacaoEm, desativadaMotivo: "Aluno VIP cancelado" };
+          await updateDoc(d.ref, marca);
+          if(local) Object.assign(local, marca);
+          vipDesativadas++;
+          return;
+        }
+        // Turma com vários alunos: o aluno só sai da turma.
+        await updateDoc(d.ref, { alunos: arrayRemove(...gravados) });
         if(local) local.alunos = (local.alunos || []).filter(n => normalizarNome(n) !== alvoNome);
       }));
     } else {
@@ -7093,12 +7109,25 @@ async function cancelarMatriculaDoAluno(aluno, { motivo = "", data = "" } = {}){
   try {
     await updateDoc(doc(db, "escolas", escolaId), { alunos: arrayRemove(resumoAntigo) });
   } catch(_e){ /* resumo da escola: não bloqueia o cancelamento */ }
-  return { turmasOk };
+  return { turmasOk, vipDesativadas };
+}
+
+/* Aluno VIP voltou a ficar ativo: reativa a turma dele (só 1 aluno) que foi desativada no cancelamento. */
+async function reativarTurmasVipDoAluno(aluno){
+  const alvoNome = normalizarNome(aluno.nome);
+  const turmas = (state.instTurmas || []).filter(t => t.desativada && (t.alunos || []).length === 1 && normalizarNome(t.alunos[0]) === alvoNome);
+  await Promise.all(turmas.map(async t => {
+    await updateDoc(doc(db, "turmas", t.id), { desativada: false, desativadaEm: "", desativadaMotivo: "" });
+    t.desativada = false; t.desativadaEm = ""; t.desativadaMotivo = "";
+  }));
+  return turmas.length;
 }
 
 function mensagemDeCancelamento(aluno, r){
   return `Matrícula de ${aluno.nome} cancelada.` + (r.turmasOk
-    ? " Ele saiu das turmas e deixou de entrar na chamada."
+    ? (r.vipDesativadas
+        ? " A turma VIP dele foi desativada: saiu da tela do professor e continua disponível para a secretaria."
+        : " Ele saiu das turmas e deixou de entrar na chamada.")
     : " Atenção: não consegui tirar o nome das turmas (ou há outro aluno ativo com o mesmo nome). Confira na ficha, em “Turmas”.");
 }
 
@@ -12154,7 +12183,7 @@ function alunoDetalheModal(){
         <div class="aluno-modal-resp-item" style="align-items:flex-start;">
           <span>
             <span style="font-weight:600;color:var(--ink);font-size:13.5px;display:block;">${escapeHtml(t.nome)}</span>
-            <span style="color:var(--slate);font-size:12px;">${escapeHtml([t.disciplina, t.horario, t.sala ? `Sala ${t.sala}` : ""].filter(Boolean).join(" · ") || "—")}</span>
+            <span style="color:var(--slate);font-size:12px;">${escapeHtml([t.disciplina, t.horario, t.sala ? `Sala ${t.sala}` : "", t.desativada ? "Desativada (VIP cancelado)" : ""].filter(Boolean).join(" · ") || "—")}</span>
           </span>
           <button type="button" class="attendance-btn" data-action="remover-aluno-da-turma" data-turma="${escapeHtml(t.id)}" aria-label="Tirar da turma" title="Tirar da turma" ${state.alunoTurmaSalvando ? "disabled" : ""}>${ICONS.close}</button>
         </div>`).join("")}</div>`
@@ -16993,10 +17022,19 @@ function bindEvents(){
         state.alunoSitMensagem = "";
         render();
         try {
+          const situacaoAntes = aluno.situacao;
           await updateDoc(doc(db, "alunos", aluno.id), dados);
           Object.assign(aluno, dados);
           state.alunoSitData = dados.situacaoEm;
           state.alunoSitMensagem = "Situação salva.";
+          if(situacao === "cancelado" && situacaoAntes !== "cancelado"){
+            // mesma regra do botão "Cancelar matrícula": sai da turma / desativa a turma VIP
+            const r = await cancelarMatriculaDoAluno(aluno, { motivo: dados.motivoSaida, data: dados.situacaoEm });
+            state.alunoSitMensagem = mensagemDeCancelamento(aluno, r);
+          } else if(situacaoAntes === "cancelado" && situacao === "ativo"){
+            const n = await reativarTurmasVipDoAluno(aluno);
+            if(n) state.alunoSitMensagem = "Situação salva. A turma VIP dele foi reativada e voltou para o professor.";
+          }
         } catch(err){
           state.alunoSitErro = `Não foi possível salvar a situação agora${err.code ? ` (${err.code})` : ""}. Tente de novo.`;
         } finally {
